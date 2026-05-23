@@ -1,0 +1,23 @@
+{
+  "name": "aladj-site",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Site de l'association À l'assaut des jeux (ALADJ) — ludothèque, soirées, comptes membres",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "lucide-react": "^0.383.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.3.1"
+  }
+}
