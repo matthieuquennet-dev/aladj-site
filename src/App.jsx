@@ -111,21 +111,21 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame) {
+function mapGame(row, ratingsByGame, nameById = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = r.value; });
   return {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
-    source: row.source || "manuel", ownerId: row.owner_id, ownerName: row.profiles?.name || "Membre",
+    source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
-function mapEvent(row, playersByEvent) {
+function mapEvent(row, playersByEvent, nameById = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, min: row.min_players, max: row.max_players,
-    notes: row.notes || "", hostId: row.host_id, hostName: row.profiles?.name || "Membre",
-    players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: p.profiles?.name || "Membre" })),
+    notes: row.notes || "", hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
+    players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     createdAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -142,21 +142,29 @@ function AppProvider({ children }) {
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
     try {
+      // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
+      // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
+      // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
-        supabase.from("games").select("*, profiles(name)"),
+        supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
-        supabase.from("events").select("*, profiles(name)"),
-        supabase.from("event_players").select("*, profiles(name)"),
+        supabase.from("events").select("*"),
+        supabase.from("event_players").select("*"),
       ]);
+
+      // table de correspondance id -> nom
+      const nameById = {};
+      (profiles || []).forEach((p) => { nameById[p.id] = p.name; });
+
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
       const playersByEvent = {};
       (eps || []).forEach((p) => { (playersByEvent[p.event_id] ||= []).push(p); });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame)));
-      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent)));
+      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById)));
+      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById)));
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
