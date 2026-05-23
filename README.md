@@ -6,7 +6,7 @@ Application React + Supabase : page d'accueil, agenda des soirées (calendrier a
 
 ## 🚀 Installation
 
-**Vous débutez ?** Suivez le **`GUIDE-INSTALLATION.md`** : il détaille tout pas à pas (Supabase + GitHub + Vercel), sans connaissances techniques requises. ~30-45 min.
+**Vous débutez ?** Suivez le **`GUIDE-INSTALLATION.md`** : il détaille tout pas à pas (Supabase + GitHub + Vercel), sans connaissances techniques requises.  ~30-45 min.
 
 ## 🧑‍💻 Pour développeurs — démarrage rapide
 
