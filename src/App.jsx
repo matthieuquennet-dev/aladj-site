@@ -273,6 +273,12 @@ function AppProvider({ children }) {
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
+    // invités ajoutés dès la création
+    if (d.invites && d.invites.length) {
+      await supabase.from("event_guests").insert(
+        d.invites.map((inv) => ({ event_id: data.id, guest_name: inv.name, member_id: inv.memberId || null, added_by: currentUser.id }))
+      );
+    }
     await loadData();
     return { event: data };
   }, [currentUser, loadData]);
@@ -522,7 +528,7 @@ function Toast({ msg, onDone }) {
    ============================================================================= */
 const NAV = [
   { key: "accueil", label: "Accueil", icon: Home },
-  { key: "soirees", label: "Soirées", icon: Calendar },
+  { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
   { key: "ma-ludo", label: "Ma ludothèque", icon: BookOpen, auth: true },
 ];
@@ -702,7 +708,7 @@ function AuthModal({ mode, onClose, setToast }) {
           <div style={{ display: "grid", gap: 8 }}>
             {[
               { v: "decideur", t: "Membre décisionnaire", d: "Cotisation 30 €/an · voix délibérative en AG", icon: Crown },
-              { v: "membre", t: "Membre non décisionnaire", d: "Gratuit · accès aux soirées et à la ludothèque", icon: Heart },
+              { v: "membre", t: "Membre non décisionnaire", d: "Gratuit · accès aux moments jeux et à la ludothèque", icon: Heart },
             ].map((o) => {
               const Icon = o.icon; const active = form.role === o.v;
               return (
@@ -758,7 +764,7 @@ function HomePage({ setPage, onAuth }) {
 
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
-    { icon: Calendar, c: C.red, t: "Des soirées toute l'année", d: "Proposez ou rejoignez des soirées jeux à Gouville-sur-Mer et dans le Coutançais." },
+    { icon: Calendar, c: C.red, t: "Des moments jeux toute l'année", d: "Proposez ou rejoignez des moments jeux à Gouville-sur-Mer et dans le Coutançais." },
     { icon: Users, c: C.amber, t: "Une communauté conviviale", d: "Joueurs débutants ou aguerris, on partage le plaisir du jeu sans prise de tête." },
     { icon: Trophy, c: C.purple, t: "Découvertes & classements", d: "Le top des jeux préférés de l'asso, et des classements sur-mesure pour vos tablées." },
   ];
@@ -785,14 +791,14 @@ function HomePage({ setPage, onAuth }) {
           </p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             {!currentUser && <Btn variant="amber" size="lg" onClick={() => onAuth("register")}><Sparkles size={19} /> Rejoindre l'asso</Btn>}
-            <Btn variant="teal" size="lg" onClick={() => setPage("soirees")}><Calendar size={19} /> Voir les soirées</Btn>
+            <Btn variant="teal" size="lg" onClick={() => setPage("soirees")}><Calendar size={19} /> Voir les moments jeux</Btn>
             <Btn size="lg" onClick={() => setPage("ludotheque")} style={{ background: "rgba(255,255,255,.12)", border: "2px solid rgba(255,255,255,.3)", color: "#fff" }}>
               <Library size={19} /> La ludothèque
             </Btn>
           </div>
 
           <div style={{ display: "flex", gap: "clamp(20px,5vw,64px)", justifyContent: "center", marginTop: 56, flexWrap: "wrap" }}>
-            {[[games.length, "jeux partagés"], [users.length, "membres"], [events.length, "soirées"], ["2010", "depuis"]].map(([n, l], i) => (
+            {[[games.length, "jeux partagés"], [users.length, "membres"], [events.length, "moments jeux"], ["2010", "depuis"]].map(([n, l], i) => (
               <div key={i} style={{ textAlign: "center" }}>
                 <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 38, color: "#fff", lineHeight: 1 }}>{n}</div>
                 <div style={{ color: "rgba(255,255,255,.6)", fontSize: 14, marginTop: 4 }}>{l}</div>
@@ -825,11 +831,11 @@ function HomePage({ setPage, onAuth }) {
       {/* PROCHAINES SOIRÉES */}
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "56px 24px 20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
-          <SectionTitle kicker="Agenda" title="Les 3 prochaines soirées" noMargin />
+          <SectionTitle kicker="Agenda" title="Les 3 prochains moments jeux" noMargin />
           <Btn variant="soft" size="sm" onClick={() => setPage("soirees")}>Tout voir <ArrowRight size={15} /></Btn>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginTop: 32 }}>
-          {upcoming.length === 0 && <EmptyHint icon={Calendar} text="Aucune soirée programmée pour l'instant." />}
+          {upcoming.length === 0 && <EmptyHint icon={Calendar} text="Aucun moment jeux programmé pour l'instant." />}
           {upcoming.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setPage("soirees")} />)}
         </div>
       </section>
@@ -839,14 +845,14 @@ function HomePage({ setPage, onAuth }) {
         <SectionTitle kicker="Adhésion" title="Comment nous rejoindre" />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 36 }}>
           <PlanCard color={C.amber} crown title="Membre décisionnaire" price="30 €" period="/ an"
-            features={["Voix délibérative en assemblée générale", "Participe aux décisions de l'asso", "Accès complet à la ludothèque", "Crée et rejoint les soirées", "Note les jeux et exporte sa ludothèque"]}
+            features={["Voix délibérative en assemblée générale", "Participe aux décisions de l'asso", "Accès complet à la ludothèque", "Crée et rejoint les moments jeux", "Note les jeux et exporte sa ludothèque"]}
             cta={currentUser ? null : "Adhérer"} onCta={() => onAuth("register")} />
           <PlanCard color={C.teal} title="Membre non décisionnaire" price="Gratuit" period=""
-            features={["Accès à la ludothèque de l'asso", "Participe et crée des soirées", "Note les jeux de l'association", "Gère sa ludothèque personnelle", "Pas de voix délibérative en AG"]}
+            features={["Accès à la ludothèque de l'asso", "Participe et crée des moments jeux", "Note les jeux de l'association", "Gère sa ludothèque personnelle", "Pas de voix délibérative en AG"]}
             cta={currentUser ? null : "Créer un compte"} onCta={() => onAuth("register")} />
         </div>
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 640, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
-          <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. Une pièce d'identité peut être demandée à l'entrée des soirées (réservé aux +16 ans).
+          <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. Une pièce d'identité peut être demandée à l'entrée des moments jeux (réservé aux +16 ans).
         </p>
       </section>
     </div>
@@ -896,7 +902,7 @@ function EmptyHint({ icon: Icon, text }) {
    CARTES SOIRÉE
    ============================================================================= */
 function EventCardMini({ e, onOpen }) {
-  const filled = e.players.length;
+  const filled = e.players.length + (e.guests?.length || 0);
   const reached = filled >= e.min;
   return (
     <button onClick={onOpen} style={{
@@ -933,6 +939,7 @@ function EventCardMini({ e, onOpen }) {
 function EventsPage({ onAuth, setToast }) {
   const { events, currentUser, addEvent, toggleJoin, removeEvent } = useApp();
   const [showCreate, setShowCreate] = useState(false);
+  const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
   const [selected, setSelected] = useState(null);
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
@@ -963,10 +970,10 @@ function EventsPage({ onAuth, setToast }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 30 }}>
         <div>
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Agenda</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Les soirées jeux</h1>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Les moments jeux</h1>
         </div>
         {currentUser
-          ? <Btn variant="amber" size="lg" onClick={() => setShowCreate(true)}><Plus size={18} /> Proposer une soirée</Btn>
+          ? <Btn variant="amber" size="lg" onClick={() => setShowCreate(true)}><Plus size={18} /> Proposer un moment jeux</Btn>
           : <Btn variant="ghost" onClick={() => onAuth("login")}><LogIn size={16} /> Connectez-vous pour proposer</Btn>}
       </div>
 
@@ -984,17 +991,26 @@ function EventsPage({ onAuth, setToast }) {
           {cal.map((cell, i) => {
             if (!cell) return <div key={i} />;
             const isToday = cell.iso === new Date().toISOString().slice(0, 10);
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const isPast = cell.iso < todayIso;
             const hasEv = cell.events.length > 0;
+            // clic : sur un événement → ouvre sa fiche ; sur case vide future → crée à cette date
+            const handleClick = () => {
+              if (hasEv) { setSelected(cell.events[0].id); return; }
+              if (!isPast && currentUser) { setPresetDate(cell.iso); setShowCreate(true); }
+            };
+            const clickable = hasEv || (!isPast && currentUser);
             return (
-              <button key={i} onClick={() => hasEv && setSelected(cell.events[0].id)} style={{
+              <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} style={{
                 aspectRatio: "1", border: isToday ? `2px solid ${C.amber}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
-                cursor: hasEv ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative",
+                cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", opacity: isPast && !hasEv ? 0.5 : 1,
               }}>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: isToday ? C.amber : C.navy }}>{cell.d}</span>
                 {cell.events.slice(0, 2).map((e) => {
-                  const reached = e.players.length >= e.min;
+                  const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
                   return <span key={e.id} style={{ width: "82%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: reached ? C.teal : C.red, borderRadius: 5, padding: "1px 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.time}</span>;
                 })}
+                {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
               </button>
             );
           })}
@@ -1007,12 +1023,12 @@ function EventsPage({ onAuth, setToast }) {
       {/* LISTE À VENIR */}
       <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: "0 0 18px" }}>À venir</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
-        {sorted.length === 0 && <EmptyHint icon={Calendar} text="Aucune soirée à venir. Proposez-en une !" />}
+        {sorted.length === 0 && <EmptyHint icon={Calendar} text="Aucun moment jeux à venir. Proposez-en un !" />}
         {sorted.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setSelected(e.id)} />)}
       </div>
 
-      {showCreate && <CreateEventModal onClose={() => setShowCreate(false)} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setToast("Soirée créée !"); return {}; }} />}
-      {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Soirée supprimée."); }} onAuth={onAuth} />}
+      {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); return {}; }} />}
+      {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Moment jeux supprimé."); }} onAuth={onAuth} />}
     </div>
   );
 }
@@ -1023,17 +1039,23 @@ function Legend({ color, label, outline }) {
   </span>;
 }
 
-/* ---- Modale création soirée (fond rouge/vert dynamique) ---- */
-function CreateEventModal({ onClose, onCreate }) {
-  const { currentUser } = useApp();
+/* ---- Modale création moment jeux (fond rouge/vert dynamique) ---- */
+function CreateEventModal({ onClose, onCreate, presetDate }) {
+  const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
-  const [f, setF] = useState({ date: today, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 3, max: 6, notes: "", joinSelf: true, useDeadline: false, deadlineDate: today, deadlineTime: "18:00" });
+  const startDate = presetDate || today;
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 3, max: 6, notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [invites, setInvites] = useState([]); // {name, memberId|null}
+  const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // le "fond" reflète : si je m'inscris (joinSelf), le quorum est-il atteint ?
-  const startCount = f.joinSelf ? 1 : 0;
+  // le "fond" reflète : moi (si joinSelf) + invités ajoutés
+  const startCount = (f.joinSelf ? 1 : 0) + invites.length;
   const reached = startCount >= Number(f.min);
+
+  const addInvite = (name, memberId) => { setInvites((arr) => [...arr, { name, memberId }]); setShowInvite(false); };
+  const removeInvite = (idx) => setInvites((arr) => arr.filter((_, i) => i !== idx));
 
   const submit = async () => {
     setErr("");
@@ -1047,14 +1069,14 @@ function CreateEventModal({ onClose, onCreate }) {
     const res = await onCreate({
       date: f.date, time: f.time, place: f.place.trim(),
       min: Number(f.min), max: Number(f.max), notes: f.notes.trim(),
-      joinSelf: f.joinSelf, deadline,
+      joinSelf: f.joinSelf, deadline, invites,
     });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
 
   return (
-    <Modal open onClose={onClose} title="Proposer une soirée jeux" width={580}>
+    <Modal open onClose={onClose} title="Proposer un moment jeux" width={580}>
       {/* bandeau d'état dynamique */}
       <div style={{
         borderRadius: 16, padding: "18px 20px", marginBottom: 22, color: "#fff", transition: "background .4s",
@@ -1066,7 +1088,7 @@ function CreateEventModal({ onClose, onCreate }) {
         </div>
         <div>
           <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
-            {reached ? "Quorum atteint — la soirée est lancée !" : "En attente de joueurs"}
+            {reached ? "Quorum atteint — c'est lancé !" : "En attente de joueurs"}
           </div>
           <div style={{ fontSize: 13.5, opacity: .9 }}>
             {reached ? `Avec ${startCount} inscrit(s), le minimum de ${f.min} est couvert.` : `Il manque ${Math.max(0, f.min - startCount)} joueur(s) pour atteindre le minimum.`}
@@ -1087,13 +1109,32 @@ function CreateEventModal({ onClose, onCreate }) {
       {/* m'inscrire moi-même */}
       <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(30,138,138,.07)", marginBottom: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={f.joinSelf} onChange={(e) => setF({ ...f, joinSelf: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.teal }} />
-        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Je m'inscris à cette soirée</span>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Je m'inscris à ce moment jeux</span>
       </label>
+
+      {/* invités dès la création */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: invites.length ? 10 : 0 }}>
+          {invites.map((inv, idx) => (
+            <span key={idx} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(107,58,122,.1)", padding: "6px 12px", borderRadius: 999 }}>
+              <span style={{ width: 22, height: 22, borderRadius: 6, background: C.purple, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{inv.name[0].toUpperCase()}</span>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{inv.name}</span>
+              {inv.memberId && <span style={{ fontSize: 10, color: C.purple }}>(membre)</span>}
+              <button onClick={() => removeInvite(idx)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#a07ab0", display: "grid", placeItems: "center" }}><X size={13} /></button>
+            </span>
+          ))}
+        </div>
+        {!showInvite ? (
+          <Btn size="sm" variant="soft" onClick={() => setShowInvite(true)}><UserPlus size={15} /> Ajouter un invité</Btn>
+        ) : (
+          <GuestAdderInline users={users} excludeIds={invites.map((i) => i.memberId).filter(Boolean)} onAdd={addInvite} onCancel={() => setShowInvite(false)} />
+        )}
+      </div>
 
       {/* date limite de validation */}
       <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(232,163,23,.1)", marginBottom: f.useDeadline ? 12 : 14, cursor: "pointer" }}>
         <input type="checkbox" checked={f.useDeadline} onChange={(e) => setF({ ...f, useDeadline: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.amber }} />
-        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Fixer une date limite (la soirée disparaît si le minimum n'est pas atteint à temps)</span>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Fixer une date limite (le moment jeux disparaît si le minimum n'est pas atteint à temps)</span>
       </label>
       {f.useDeadline && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -1107,7 +1148,7 @@ function CreateEventModal({ onClose, onCreate }) {
           style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
       </Field>
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
-      <Btn full size="lg" variant={reached ? "teal" : "amber"} onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Créer la soirée</>}</Btn>
+      <Btn full size="lg" variant={reached ? "teal" : "amber"} onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Créer le moment jeux</>}</Btn>
     </Modal>
   );
 }
@@ -1146,7 +1187,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`, position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}><X size={18} /></button>
-          <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Soirée confirmée</> : "En attente de joueurs"}</Badge>
+          <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
@@ -1159,7 +1200,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           {deadlineStr && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: reached ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: reached ? C.teal : "#9a7b2a", fontWeight: 600 }}>
               <Clock size={15} />
-              {reached ? "Quorum atteint, la soirée est maintenue." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
+              {reached ? "Quorum atteint, le moment jeux est maintenu." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
             </div>
           )}
 
@@ -1269,6 +1310,45 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Variante "inline" : collecte un invité sans toucher la base (pour la création) ---- */
+function GuestAdderInline({ users, excludeIds = [], onAdd, onCancel }) {
+  const [mode, setMode] = useState("guest");
+  const [name, setName] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const availableMembers = users.filter((u) => !excludeIds.includes(u.id));
+
+  const submit = () => {
+    if (mode === "member" && memberId) {
+      const m = users.find((u) => u.id === memberId);
+      onAdd(m.name, memberId);
+    } else if (mode === "guest" && name.trim()) {
+      onAdd(name.trim(), null);
+    }
+  };
+
+  return (
+    <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 14, padding: 14, border: "1px solid rgba(107,58,122,.2)" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 10 }}>
+        {[["guest", "Invité sans compte"], ["member", "Membre du site"]].map(([k, lbl]) => (
+          <button key={k} type="button" onClick={() => setMode(k)} style={{ flex: 1, padding: "7px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, background: mode === k ? C.purple : "transparent", color: mode === k ? "#fff" : "#9c8d79" }}>{lbl}</button>
+        ))}
+      </div>
+      {mode === "guest" ? (
+        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Nom de l'invité (ex. conjoint, enfant...)" style={{ marginBottom: 10 }} />
+      ) : (
+        <select value={memberId} onChange={(e) => setMemberId(e.target.value)} style={{ ...inputStyle, marginBottom: 10, cursor: "pointer" }}>
+          <option value="">Choisir un membre...</option>
+          {availableMembers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn size="sm" variant="teal" onClick={submit} disabled={mode === "guest" ? !name.trim() : !memberId}><Check size={14} /> Ajouter</Btn>
+        <Btn size="sm" variant="soft" onClick={onCancel}>Annuler</Btn>
       </div>
     </div>
   );
@@ -1596,7 +1676,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Classement sur-mesure</h3>
             </div>
             <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 14px" }}>
-              Choisissez les membres présents à votre soirée pour trouver le jeu qui plaira au plus grand nombre.
+              Choisissez les membres présents à votre moment jeux pour trouver le jeu qui plaira au plus grand nombre.
             </p>
             <Btn full variant="teal" onClick={() => setShowCustomRank(true)}><Filter size={16} /> Composer ma tablée</Btn>
           </div>
