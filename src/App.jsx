@@ -4,7 +4,7 @@ import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
-  ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle
+  ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 
@@ -121,11 +121,14 @@ function mapGame(row, ratingsByGame, nameById = {}) {
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
-function mapEvent(row, playersByEvent, nameById = {}) {
+function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, min: row.min_players, max: row.max_players,
     notes: row.notes || "", hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
+    deadline: row.deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
+    guests: (guestsByEvent[row.id] || []).map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
+    comments: (commentsByEvent[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     createdAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -145,12 +148,14 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
         supabase.from("events").select("*"),
         supabase.from("event_players").select("*"),
+        supabase.from("event_guests").select("*"),
+        supabase.from("event_comments").select("*").order("created_at"),
       ]);
 
       // table de correspondance id -> nom
@@ -161,10 +166,14 @@ function AppProvider({ children }) {
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
       const playersByEvent = {};
       (eps || []).forEach((p) => { (playersByEvent[p.event_id] ||= []).push(p); });
+      const guestsByEvent = {};
+      (guests || []).forEach((g) => { (guestsByEvent[g.event_id] ||= []).push(g); });
+      const commentsByEvent = {};
+      (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin })));
       setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById)));
-      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById)));
+      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -260,13 +269,64 @@ function AppProvider({ children }) {
   const addEvent = useCallback(async (d) => {
     const { data, error } = await supabase.from("events").insert({
       event_date: d.date, event_time: d.time, place: d.place, min_players: d.min, max_players: d.max,
-      notes: d.notes || "", host_id: currentUser.id,
+      notes: d.notes || "", host_id: currentUser.id, deadline: d.deadline || null,
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
     await loadData();
     return { event: data };
   }, [currentUser, loadData]);
+
+  const updateEvent = useCallback(async (id, patch) => {
+    const { error } = await supabase.from("events").update({
+      event_date: patch.date, event_time: patch.time, place: patch.place,
+      min_players: patch.min, max_players: patch.max, notes: patch.notes || "", deadline: patch.deadline || null,
+    }).eq("id", id);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  // ---- Invités nommés (membres avec compte OU personnes sans compte) ----
+  const addGuest = useCallback(async (eventId, guestName, memberId = null) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("event_guests").insert({
+      event_id: eventId, guest_name: guestName.trim(), member_id: memberId, added_by: currentUser.id,
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const removeGuest = useCallback(async (guestId) => {
+    await supabase.from("event_guests").delete().eq("id", guestId);
+    await loadData();
+  }, [loadData]);
+
+  // ---- Commentaires de soirée ----
+  const addComment = useCallback(async (eventId, content) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("event_comments").insert({
+      event_id: eventId, author_id: currentUser.id, content: content.trim(),
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const updateComment = useCallback(async (commentId, content) => {
+    const { error } = await supabase.from("event_comments").update({
+      content: content.trim(), updated_at: new Date().toISOString(),
+    }).eq("id", commentId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  const removeComment = useCallback(async (commentId) => {
+    await supabase.from("event_comments").delete().eq("id", commentId);
+    await loadData();
+  }, [loadData]);
 
   const toggleJoin = useCallback(async (eventId) => {
     if (!currentUser) return;
@@ -281,7 +341,9 @@ function AppProvider({ children }) {
 
   const value = {
     ready, fatalError, users, games, events, currentUser,
-    register, login, logout, addGame, updateGame, removeGame, rateGame, addEvent, toggleJoin, removeEvent, reload: loadData,
+    register, login, logout, addGame, updateGame, removeGame, rateGame,
+    addEvent, updateEvent, toggleJoin, removeEvent,
+    addGuest, removeGuest, addComment, updateComment, removeComment, reload: loadData,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -290,6 +352,17 @@ function gameStats(g) {
   const vals = Object.values(g.ratings || {});
   const count = vals.length;
   return { count, avg: count ? vals.reduce((a, b) => a + b, 0) / count : 0 };
+}
+
+// Une soirée est visible sauf si sa date limite (deadline) est passée
+// ET que le quorum (min joueurs) n'est pas atteint.
+function isEventVisible(e) {
+  if (!e.deadline) return true; // pas de limite → toujours visible
+  const now = Date.now();
+  const limit = new Date(e.deadline).getTime();
+  if (now < limit) return true; // limite pas encore atteinte
+  const totalPlayers = (e.players?.length || 0) + (e.guests?.length || 0);
+  return totalPlayers >= e.min; // après la limite : visible seulement si quorum atteint
 }
 /* =============================================================================
    COMPOSANTS UI
@@ -550,7 +623,8 @@ function Navbar({ page, setPage, onAuth }) {
 function AuthModal({ mode, onClose, setToast }) {
   const { login, register } = useApp();
   const [tab, setTab] = useState(mode || "login");
-  const [form, setForm] = useState({ name: "", email: "", pwd: "", role: "decideur" });
+  const [form, setForm] = useState({ name: "", email: "", pwd: "", pwd2: "", role: "decideur" });
+  const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
@@ -563,6 +637,7 @@ function AuthModal({ mode, onClose, setToast }) {
     else {
       if (!form.name.trim()) { setErr("Indiquez votre nom ou pseudo."); setBusy(false); return; }
       if (form.pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); setBusy(false); return; }
+      if (form.pwd !== form.pwd2) { setErr("Les deux mots de passe ne correspondent pas."); setBusy(false); return; }
       res = await register(form);
     }
     setBusy(false);
@@ -598,9 +673,29 @@ function AuthModal({ mode, onClose, setToast }) {
         <TextInput type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="vous@exemple.fr" />
       </Field>
       <Field label="Mot de passe" hint={tab === "register" ? "Au moins 6 caractères." : undefined}>
-        <TextInput type="password" value={form.pwd} onChange={(e) => setForm({ ...form, pwd: e.target.value })} placeholder="••••••••"
-          onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <div style={{ position: "relative" }}>
+          <TextInput type={showPwd ? "text" : "password"} value={form.pwd} onChange={(e) => setForm({ ...form, pwd: e.target.value })} placeholder="••••••••"
+            onKeyDown={(e) => e.key === "Enter" && tab === "login" && submit()} style={{ paddingRight: 44 }} />
+          <button type="button" onClick={() => setShowPwd(!showPwd)} aria-label={showPwd ? "Masquer" : "Afficher"}
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+            {showPwd ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        </div>
       </Field>
+
+      {tab === "register" && (
+        <Field label="Confirmer le mot de passe">
+          <div style={{ position: "relative" }}>
+            <TextInput type={showPwd ? "text" : "password"} value={form.pwd2} onChange={(e) => setForm({ ...form, pwd2: e.target.value })} placeholder="••••••••"
+              onKeyDown={(e) => e.key === "Enter" && submit()} style={{ paddingRight: 44 }} />
+            {form.pwd2 && (
+              <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}>
+                {form.pwd === form.pwd2 ? <Check size={18} color={C.teal} /> : <X size={18} color={C.red} />}
+              </span>
+            )}
+          </div>
+        </Field>
+      )}
 
       {tab === "register" && (
         <Field label="Type d'adhésion" hint="Le statut peut être ajusté ensuite par le bureau.">
@@ -658,7 +753,7 @@ function HomePage({ setPage, onAuth }) {
   const { events, games, users, currentUser } = useApp();
   const upcoming = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    return [...events].filter((e) => e.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
+    return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
   }, [events]);
 
   const strongPoints = [
@@ -843,7 +938,7 @@ function EventsPage({ onAuth, setToast }) {
 
   const sorted = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    return [...events].filter((e) => e.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   }, [events]);
 
   const selectedEvent = events.find((e) => e.id === selected);
@@ -916,7 +1011,7 @@ function EventsPage({ onAuth, setToast }) {
         {sorted.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setSelected(e.id)} />)}
       </div>
 
-      {showCreate && <CreateEventModal onClose={() => setShowCreate(false)} onCreate={async (d) => { await addEvent(d); setShowCreate(false); setToast("Soirée créée !"); }} />}
+      {showCreate && <CreateEventModal onClose={() => setShowCreate(false)} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setToast("Soirée créée !"); return {}; }} />}
       {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Soirée supprimée."); }} onAuth={onAuth} />}
     </div>
   );
@@ -932,17 +1027,30 @@ function Legend({ color, label, outline }) {
 function CreateEventModal({ onClose, onCreate }) {
   const { currentUser } = useApp();
   const today = new Date().toISOString().slice(0, 10);
-  const [f, setF] = useState({ date: today, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 3, max: 6, notes: "", startPlayers: 1 });
+  const [f, setF] = useState({ date: today, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 3, max: 6, notes: "", joinSelf: true, useDeadline: false, deadlineDate: today, deadlineTime: "18:00" });
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  // le "fond" reflète : si je crée et que je m'inscris (startPlayers), le quorum est-il atteint ?
-  const reached = Number(f.startPlayers) >= Number(f.min);
+  // le "fond" reflète : si je m'inscris (joinSelf), le quorum est-il atteint ?
+  const startCount = f.joinSelf ? 1 : 0;
+  const reached = startCount >= Number(f.min);
 
-  const submit = () => {
+  const submit = async () => {
+    setErr("");
     if (!f.date || !f.time || !f.place.trim()) { setErr("Renseignez la date, l'heure et le lieu."); return; }
     if (Number(f.min) > Number(f.max)) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
-    const players = Number(f.startPlayers) >= 1 ? [{ id: currentUser.id, name: currentUser.name }] : [];
-    onCreate({ date: f.date, time: f.time, place: f.place.trim(), min: Number(f.min), max: Number(f.max), hostName: currentUser.name, hostId: currentUser.id, notes: f.notes.trim(), players });
+    let deadline = null;
+    if (f.useDeadline && f.deadlineDate && f.deadlineTime) {
+      deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
+    }
+    setBusy(true);
+    const res = await onCreate({
+      date: f.date, time: f.time, place: f.place.trim(),
+      min: Number(f.min), max: Number(f.max), notes: f.notes.trim(),
+      joinSelf: f.joinSelf, deadline,
+    });
+    setBusy(false);
+    if (res?.error) setErr(res.error);
   };
 
   return (
@@ -961,7 +1069,7 @@ function CreateEventModal({ onClose, onCreate }) {
             {reached ? "Quorum atteint — la soirée est lancée !" : "En attente de joueurs"}
           </div>
           <div style={{ fontSize: 13.5, opacity: .9 }}>
-            {reached ? `Avec ${f.startPlayers} inscrit(s), le minimum de ${f.min} est couvert.` : `Il manque ${Math.max(0, f.min - f.startPlayers)} joueur(s) pour atteindre le minimum.`}
+            {reached ? `Avec ${startCount} inscrit(s), le minimum de ${f.min} est couvert.` : `Il manque ${Math.max(0, f.min - startCount)} joueur(s) pour atteindre le minimum.`}
           </div>
         </div>
       </div>
@@ -971,28 +1079,66 @@ function CreateEventModal({ onClose, onCreate }) {
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       </div>
       <Field label="Lieu"><TextInput value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} placeholder="Ex. Local ALADJ — Gouville-sur-Mer" /></Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} max={30} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
         <Field label="Joueurs max."><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
-        <Field label="Déjà inscrits" hint="Vous compris"><TextInput type="number" min={0} max={f.max} value={f.startPlayers} onChange={(e) => setF({ ...f, startPlayers: e.target.value })} /></Field>
       </div>
+
+      {/* m'inscrire moi-même */}
+      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(30,138,138,.07)", marginBottom: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.joinSelf} onChange={(e) => setF({ ...f, joinSelf: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.teal }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Je m'inscris à cette soirée</span>
+      </label>
+
+      {/* date limite de validation */}
+      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(232,163,23,.1)", marginBottom: f.useDeadline ? 12 : 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.useDeadline} onChange={(e) => setF({ ...f, useDeadline: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.amber }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Fixer une date limite (la soirée disparaît si le minimum n'est pas atteint à temps)</span>
+      </label>
+      {f.useDeadline && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Valable jusqu'au"><TextInput type="date" min={today} max={f.date} value={f.deadlineDate} onChange={(e) => setF({ ...f, deadlineDate: e.target.value })} /></Field>
+          <Field label="à"><TextInput type="time" value={f.deadlineTime} onChange={(e) => setF({ ...f, deadlineTime: e.target.value })} /></Field>
+        </div>
+      )}
+
       <Field label="Note (jeux prévus, ambiance...)" hint="Facultatif">
         <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="On sort les gros jeux de gestion ? Apéro partagé..."
           style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
       </Field>
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
-      <Btn full size="lg" variant={reached ? "teal" : "amber"} onClick={submit}><Plus size={18} /> Créer la soirée</Btn>
+      <Btn full size="lg" variant={reached ? "teal" : "amber"} onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Créer la soirée</>}</Btn>
     </Modal>
   );
 }
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser } = useApp();
-  const reached = e.players.length >= e.min;
-  const full = e.players.length >= e.max;
+  const { currentUser, users, addGuest, removeGuest, addComment, updateComment, removeComment } = useApp();
+  const totalCount = e.players.length + (e.guests?.length || 0);
+  const reached = totalCount >= e.min;
+  const full = totalCount >= e.max;
   const isIn = currentUser && e.players.some((p) => p.id === currentUser.id);
+  const isParticipant = currentUser && (isIn || e.hostId === currentUser.id);
   const canManage = currentUser && (currentUser.id === e.hostId || currentUser.admin);
+
+  const [showGuest, setShowGuest] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const deadlineStr = e.deadline ? new Date(e.deadline) : null;
+  const deadlinePassed = deadlineStr && Date.now() > deadlineStr.getTime();
+
+  const submitComment = async () => {
+    if (!commentText.trim()) return;
+    setBusy(true); await addComment(e.id, commentText); setBusy(false); setCommentText("");
+  };
+  const saveEdit = async () => {
+    if (!editText.trim()) return;
+    await updateComment(editingId, editText); setEditingId(null); setEditText("");
+  };
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
@@ -1009,45 +1155,165 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
 
         <div style={{ padding: 26 }}>
+          {/* date limite */}
+          {deadlineStr && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: reached ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: reached ? C.teal : "#9a7b2a", fontWeight: 600 }}>
+              <Clock size={15} />
+              {reached ? "Quorum atteint, la soirée est maintenue." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
+            </div>
+          )}
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
-              {e.players.length} / {e.max} joueurs
+              {totalCount} / {e.max} participants
             </span>
             <span style={{ fontSize: 13.5, color: reached ? C.teal : C.red, fontWeight: 700 }}>
-              {reached ? "Minimum atteint ✓" : `Encore ${e.min - e.players.length} pour valider`}
+              {reached ? "Minimum atteint ✓" : `Encore ${e.min - totalCount} pour valider`}
             </span>
           </div>
           <div style={{ height: 12, borderRadius: 99, background: "#eee4d2", overflow: "hidden", marginBottom: 6, position: "relative" }}>
-            <div style={{ height: "100%", width: `${Math.min(100, (e.players.length / e.max) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
+            <div style={{ height: "100%", width: `${Math.min(100, (totalCount / e.max) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
             <div style={{ position: "absolute", top: 0, bottom: 0, left: `${(e.min / e.max) * 100}%`, width: 2, background: C.navy, opacity: .4 }} />
           </div>
           <div style={{ fontSize: 11.5, color: "#9c8d79", marginBottom: 18 }}>↑ le repère indique le minimum requis ({e.min})</div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
-            {e.players.length === 0 && <span style={{ color: "#a89a86", fontSize: 14 }}>Personne inscrit pour l'instant.</span>}
+          {/* participants inscrits + invités */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            {totalCount === 0 && <span style={{ color: "#a89a86", fontSize: 14 }}>Personne inscrit pour l'instant.</span>}
             {e.players.map((p) => (
               <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                 <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span>
               </span>
             ))}
+            {(e.guests || []).map((g) => {
+              const canRemoveGuest = currentUser && (g.addedBy === currentUser.id || canManage);
+              return (
+                <span key={g.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(107,58,122,.1)", padding: "6px 12px", borderRadius: 999 }}>
+                  <span style={{ width: 24, height: 24, borderRadius: 7, background: C.purple, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
+                  {g.memberId && <span style={{ fontSize: 10.5, color: C.purple }}>(membre)</span>}
+                  {canRemoveGuest && <button onClick={() => removeGuest(g.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#a07ab0", display: "grid", placeItems: "center" }}><X size={14} /></button>}
+                </span>
+              );
+            })}
           </div>
+
+          {/* ajouter un invité (participants + créateur) */}
+          {isParticipant && (
+            <div style={{ marginBottom: 18 }}>
+              {!showGuest ? (
+                <Btn size="sm" variant="soft" onClick={() => setShowGuest(true)}><UserPlus size={15} /> Ajouter un invité</Btn>
+              ) : (
+                <GuestAdder users={users} currentEvent={e} onAdd={addGuest} onDone={() => setShowGuest(false)} />
+              )}
+            </div>
+          )}
 
           {e.notes && <div style={{ background: "rgba(232,163,23,.1)", borderRadius: 13, padding: "12px 16px", marginBottom: 18, fontSize: 14, color: "#6e5e42", lineHeight: 1.5 }}><b style={{ fontFamily: "'Fredoka',sans-serif", color: C.amber }}>Note :</b> {e.notes}</div>}
 
           <div style={{ fontSize: 13, color: "#9c8d79", marginBottom: 16 }}>Proposée par <b style={{ color: C.navy }}>{e.hostName}</b></div>
 
           {currentUser ? (
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
               <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={!isIn && full} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
                 {isIn ? <><X size={17} /> Me retirer</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
               </Btn>
               {canManage && <Btn variant="danger" size="lg" onClick={() => onRemove(e.id)}><Trash2 size={17} /></Btn>}
             </div>
           ) : (
-            <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }}><LogIn size={18} /> Se connecter pour participer</Btn>
+            <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }} style={{ marginBottom: 22 }}><LogIn size={18} /> Se connecter pour participer</Btn>
           )}
+
+          {/* COMMENTAIRES */}
+          <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18 }}>
+            <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px" }}>💬 Discussion ({(e.comments || []).length})</h4>
+            <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+              {(e.comments || []).length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun commentaire. Lancez la discussion !</span>}
+              {(e.comments || []).map((c) => {
+                const mine = currentUser && c.authorId === currentUser.id;
+                const edited = c.updatedAt && c.createdAt && new Date(c.updatedAt).getTime() - new Date(c.createdAt).getTime() > 2000;
+                return (
+                  <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span>
+                      {mine && editingId !== c.id && (
+                        <span style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
+                          <button onClick={() => removeComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+                        </span>
+                      )}
+                    </div>
+                    {editingId === c.id ? (
+                      <div>
+                        <textarea value={editText} onChange={(ev) => setEditText(ev.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="teal" onClick={saveEdit}><Check size={14} /> Enregistrer</Btn>
+                          <Btn size="sm" variant="soft" onClick={() => setEditingId(null)}>Annuler</Btn>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {currentUser ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                <textarea value={commentText} onChange={(ev) => setCommentText(ev.target.value)} rows={1} placeholder="Écrire un commentaire..." style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
+                <Btn variant="teal" onClick={submitComment} disabled={busy || !commentText.trim()}>{busy ? <Loader2 size={16} className="aladj-spin" /> : "Envoyer"}</Btn>
+              </div>
+            ) : (
+              <span style={{ fontSize: 13, color: "#a89a86" }}>Connectez-vous pour commenter.</span>
+            )}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Sous-composant : ajouter un invité (membre OU sans compte) ---- */
+function GuestAdder({ users, currentEvent, onAdd, onDone }) {
+  const [mode, setMode] = useState("guest"); // "guest" (sans compte) | "member"
+  const [name, setName] = useState("");
+  const [memberId, setMemberId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // membres pas déjà inscrits/invités
+  const alreadyIn = new Set([...currentEvent.players.map((p) => p.id), ...(currentEvent.guests || []).map((g) => g.memberId).filter(Boolean)]);
+  const availableMembers = users.filter((u) => !alreadyIn.has(u.id));
+
+  const submit = async () => {
+    setBusy(true);
+    if (mode === "member" && memberId) {
+      const m = users.find((u) => u.id === memberId);
+      await onAdd(currentEvent.id, m.name, memberId);
+    } else if (mode === "guest" && name.trim()) {
+      await onAdd(currentEvent.id, name.trim(), null);
+    }
+    setBusy(false); onDone();
+  };
+
+  return (
+    <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 14, padding: 14, border: "1px solid rgba(107,58,122,.2)" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#fff", padding: 4, borderRadius: 10 }}>
+        {[["guest", "Invité sans compte"], ["member", "Membre du site"]].map(([k, lbl]) => (
+          <button key={k} onClick={() => setMode(k)} style={{ flex: 1, padding: "7px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, background: mode === k ? C.purple : "transparent", color: mode === k ? "#fff" : "#9c8d79" }}>{lbl}</button>
+        ))}
+      </div>
+      {mode === "guest" ? (
+        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Nom de l'invité (ex. conjoint, enfant...)" style={{ marginBottom: 10 }} />
+      ) : (
+        <select value={memberId} onChange={(e) => setMemberId(e.target.value)} style={{ ...inputStyle, marginBottom: 10, cursor: "pointer" }}>
+          <option value="">Choisir un membre...</option>
+          {availableMembers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn size="sm" variant="teal" onClick={submit} disabled={busy || (mode === "guest" ? !name.trim() : !memberId)}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Ajouter</>}</Btn>
+        <Btn size="sm" variant="soft" onClick={onDone}>Annuler</Btn>
       </div>
     </div>
   );
