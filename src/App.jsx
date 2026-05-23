@@ -48,10 +48,33 @@ const MECHANIC_SUGGESTIONS = [
    qui relaie les requêtes vers BoardGameGeek. Cela évite le blocage "CORS" du
    navigateur. La traduction passe par /api/translate.
    ============================================================================= */
+// Appel BGG depuis le NAVIGATEUR via un proxy CORS public (BGG bloque les serveurs cloud).
+// On essaie plusieurs proxies, puis en dernier recours la fonction serveur /api/bgg.
+async function fetchBggXml(bggUrl) {
+  const proxies = [
+    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  ];
+  for (const make of proxies) {
+    try {
+      const res = await fetch(make(bggUrl));
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.includes("<")) return text;
+      }
+    } catch (e) { /* proxy suivant */ }
+  }
+  // dernier recours : la fonction serveur (peut être bloquée par BGG)
+  const action = bggUrl.includes("/search") ? "search" : "thing";
+  const sp = new URL(bggUrl).searchParams;
+  const fallback = action === "search" ? `/api/bgg?action=search&query=${encodeURIComponent(sp.get("query") || "")}` : `/api/bgg?action=thing&id=${sp.get("id") || ""}`;
+  const res = await fetch(fallback);
+  if (!res.ok) throw new Error("BoardGameGeek indisponible");
+  return await res.text();
+}
+
 async function bggSearch(query) {
-  const res = await fetch(`/api/bgg?action=search&query=${encodeURIComponent(query)}`);
-  if (!res.ok) throw new Error("Recherche BGG indisponible");
-  const text = await res.text();
+  const text = await fetchBggXml(`https://boardgamegeek.com/xmlapi2/search?type=boardgame&query=${encodeURIComponent(query)}`);
   const xml = new DOMParser().parseFromString(text, "text/xml");
   return Array.from(xml.querySelectorAll("item")).slice(0, 12).map((it) => ({
     id: it.getAttribute("id"),
@@ -61,9 +84,7 @@ async function bggSearch(query) {
 }
 
 async function bggDetails(id) {
-  const res = await fetch(`/api/bgg?action=thing&id=${id}`);
-  if (!res.ok) throw new Error("Fiche BGG indisponible");
-  const text = await res.text();
+  const text = await fetchBggXml(`https://boardgamegeek.com/xmlapi2/thing?id=${id}&stats=1`);
   const xml = new DOMParser().parseFromString(text, "text/xml");
   const it = xml.querySelector("item");
   if (!it) throw new Error("Jeu introuvable");
