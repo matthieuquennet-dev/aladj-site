@@ -48,8 +48,9 @@ const MECHANIC_SUGGESTIONS = [
    qui relaie les requêtes vers BoardGameGeek. Cela évite le blocage "CORS" du
    navigateur. La traduction passe par /api/translate.
    ============================================================================= */
-// Récupère le XML de BGG. On essaie D'ABORD notre fonction serveur (fiable, c'est notre
-// infrastructure), PUIS des proxies CORS publics en secours si elle échoue.
+// Récupère le XML de BGG en essayant plusieurs voies d'accès dans l'ordre.
+// BGG bloque les appels directs depuis serveurs/proxies surchargés, donc on multiplie
+// les chances : notre fonction serveur, puis plusieurs proxies CORS publics.
 async function fetchBggXml(bggUrl) {
   const action = bggUrl.includes("/search") ? "search" : "thing";
   const sp = new URL(bggUrl).searchParams;
@@ -57,31 +58,29 @@ async function fetchBggXml(bggUrl) {
     ? `/api/bgg?action=search&query=${encodeURIComponent(sp.get("query") || "")}`
     : `/api/bgg?action=thing&id=${sp.get("id") || ""}`;
 
-  // 1) notre fonction serveur
+  const isValid = (t) => t && t.includes("<") && (t.includes("<item") || t.includes("<items"));
+
+  // 1) notre fonction serveur (sur l'URL de production)
   try {
     const res = await fetch(own);
-    if (res.ok) {
-      const text = await res.text();
-      if (text && text.includes("<")) return text;
-    }
-  } catch (e) { /* on tente les proxies */ }
+    if (res.ok) { const t = await res.text(); if (isValid(t)) return t; }
+  } catch (e) { /* suivant */ }
 
-  // 2) proxies CORS publics (secours)
+  // 2) plusieurs proxies CORS publics (on prend le premier qui répond correctement)
   const proxies = [
     (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
     (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+    (u) => `https://proxy.cors.sh/${u}`,
+    (u) => `https://cors-anywhere.herokuapp.com/${u}`,
   ];
   for (const make of proxies) {
     try {
       const res = await fetch(make(bggUrl));
-      if (res.ok) {
-        const text = await res.text();
-        if (text && text.includes("<")) return text;
-      }
+      if (res.ok) { const t = await res.text(); if (isValid(t)) return t; }
     } catch (e) { /* proxy suivant */ }
   }
-  throw new Error("BoardGameGeek indisponible");
+  throw new Error("BGG_UNAVAILABLE");
 }
 
 async function bggSearch(query) {
@@ -1784,18 +1783,18 @@ function CustomRankModal({ onClose, onOpenGame }) {
 function AddGameFlow({ onClose, setToast }) {
   const { addGame } = useApp();
   const [mode, setMode] = useState("choose"); // choose | bgg | manual
+  const [prefillName, setPrefillName] = useState("");
   return (
     <Modal open onClose={onClose} title="Ajouter un jeu à la ludothèque" width={640}>
       {mode === "choose" && (
         <div style={{ display: "grid", gap: 12 }}>
           <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 4px", lineHeight: 1.5 }}>Comment souhaitez-vous ajouter ce jeu ? L'import récupère automatiquement la fiche (joueurs, durée, image, mécaniques) et traduit la description en français.</p>
           <SourceBtn icon={Globe} color={C.teal} title="Importer depuis BoardGameGeek" desc="Recherche dans la plus grande base mondiale + traduction auto en français." onClick={() => setMode("bgg")} />
-          <SourceBtn icon={Search} color={C.purple} title="Importer depuis TricTrac" desc="Recherche par nom (via la base mondiale, fiches en français)." onClick={() => setMode("bgg")} badge="Recherche FR" />
-          <SourceBtn icon={PenLine} color={C.amber} title="Saisir manuellement" desc="Remplissez vous-même la fiche du jeu." onClick={() => setMode("manual")} />
+          <SourceBtn icon={PenLine} color={C.amber} title="Saisir manuellement" desc="Remplissez vous-même la fiche du jeu (toujours disponible)." onClick={() => { setPrefillName(""); setMode("manual"); }} />
         </div>
       )}
-      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onDone={async (data) => { await addGame({ ...data, source: "BoardGameGeek" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
-      {mode === "manual" && <ManualForm onBack={() => setMode("choose")} onDone={async (data) => { await addGame({ ...data, source: "manuel" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
+      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { await addGame({ ...data, source: "BoardGameGeek" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
+      {mode === "manual" && <ManualForm prefillName={prefillName} onBack={() => setMode("choose")} onDone={async (data) => { await addGame({ ...data, source: "manuel" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
     </Modal>
   );
 }
@@ -1817,39 +1816,44 @@ function SourceBtn({ icon: Icon, color, title, desc, onClick, badge }) {
   );
 }
 
-function BggImport({ onBack, onDone }) {
+function BggImport({ onBack, onDone, onManual }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [failed, setFailed] = useState(false); // l'import a échoué → proposer le manuel
   const [importing, setImporting] = useState(null);
   const [translating, setTranslating] = useState(false);
   const [preview, setPreview] = useState(null);
 
   const search = async () => {
     if (!q.trim()) return;
-    setLoading(true); setErr(""); setResults([]);
+    setLoading(true); setErr(""); setFailed(false); setResults([]);
     try {
       const r = await bggSearch(q.trim());
       if (r.length === 0) setErr("Aucun résultat. Essayez un autre nom (souvent le titre anglais fonctionne mieux).");
       setResults(r);
     } catch (e) {
-      setErr("Impossible de joindre BoardGameGeek. Réessayez ou saisissez le jeu manuellement.");
+      setErr("BoardGameGeek est momentanément inaccessible (cela arrive parfois). Vous pouvez réessayer dans un instant, ou saisir le jeu manuellement — c'est tout aussi rapide.");
+      setFailed(true);
     }
     setLoading(false);
   };
 
   const pick = async (id) => {
-    setImporting(id); setErr("");
+    setImporting(id); setErr(""); setFailed(false);
     try {
       const d = await bggDetails(id);
       setTranslating(true);
-      const desc = await translateText(d.desc);
+      let desc = d.desc;
+      try { desc = await translateText(d.desc); } catch (e) { /* on garde la VO si la trad échoue */ }
       const mechanics = translateMechanics(d.mechanics);
       setTranslating(false);
       setPreview({ ...d, desc, mechanics });
     } catch (e) {
-      setErr("Échec de l'import de ce jeu.");
+      setErr("Impossible de récupérer cette fiche pour le moment. Réessayez ou saisissez-la manuellement.");
+      setFailed(true);
+      setTranslating(false);
     }
     setImporting(null);
   };
@@ -1886,6 +1890,11 @@ function BggImport({ onBack, onDone }) {
       </div>
       {translating && <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.teal, fontSize: 13.5, marginBottom: 12, fontWeight: 600 }}><Loader2 size={15} className="aladj-spin" /> Traduction de la fiche en français...</div>}
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, marginBottom: 14, lineHeight: 1.5 }}>{err}</div>}
+      {failed && (
+        <Btn full variant="amber" onClick={() => onManual(q.trim())} style={{ marginBottom: 14 }}>
+          <PenLine size={16} /> Saisir « {q.trim() || "ce jeu"} » manuellement
+        </Btn>
+      )}
       <div style={{ display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
         {results.map((r) => (
           <button key={r.id} onClick={() => pick(r.id)} disabled={importing} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, border: "1px solid #ece2d0", background: "#fff", cursor: "pointer", textAlign: "left" }}>
@@ -1902,8 +1911,8 @@ function BggImport({ onBack, onDone }) {
 }
 const backLinkStyle = { background: "none", border: "none", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, marginBottom: 14, padding: 0, fontSize: 14 };
 
-function ManualForm({ onBack, onDone }) {
-  const [f, setF] = useState({ name: "", year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
+function ManualForm({ onBack, onDone, prefillName = "" }) {
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
   const [err, setErr] = useState("");
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
   const submit = () => {
