@@ -48,12 +48,29 @@ const MECHANIC_SUGGESTIONS = [
    qui relaie les requêtes vers BoardGameGeek. Cela évite le blocage "CORS" du
    navigateur. La traduction passe par /api/translate.
    ============================================================================= */
-// Appel BGG depuis le NAVIGATEUR via un proxy CORS public (BGG bloque les serveurs cloud).
-// On essaie plusieurs proxies, puis en dernier recours la fonction serveur /api/bgg.
+// Récupère le XML de BGG. On essaie D'ABORD notre fonction serveur (fiable, c'est notre
+// infrastructure), PUIS des proxies CORS publics en secours si elle échoue.
 async function fetchBggXml(bggUrl) {
+  const action = bggUrl.includes("/search") ? "search" : "thing";
+  const sp = new URL(bggUrl).searchParams;
+  const own = action === "search"
+    ? `/api/bgg?action=search&query=${encodeURIComponent(sp.get("query") || "")}`
+    : `/api/bgg?action=thing&id=${sp.get("id") || ""}`;
+
+  // 1) notre fonction serveur
+  try {
+    const res = await fetch(own);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.includes("<")) return text;
+    }
+  } catch (e) { /* on tente les proxies */ }
+
+  // 2) proxies CORS publics (secours)
   const proxies = [
-    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
     (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
   ];
   for (const make of proxies) {
     try {
@@ -64,13 +81,7 @@ async function fetchBggXml(bggUrl) {
       }
     } catch (e) { /* proxy suivant */ }
   }
-  // dernier recours : la fonction serveur (peut être bloquée par BGG)
-  const action = bggUrl.includes("/search") ? "search" : "thing";
-  const sp = new URL(bggUrl).searchParams;
-  const fallback = action === "search" ? `/api/bgg?action=search&query=${encodeURIComponent(sp.get("query") || "")}` : `/api/bgg?action=thing&id=${sp.get("id") || ""}`;
-  const res = await fetch(fallback);
-  if (!res.ok) throw new Error("BoardGameGeek indisponible");
-  return await res.text();
+  throw new Error("BoardGameGeek indisponible");
 }
 
 async function bggSearch(query) {
