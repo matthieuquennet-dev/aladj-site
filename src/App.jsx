@@ -233,13 +233,12 @@ function AppProvider({ children }) {
   }, [loadData]);
 
   /* ---- Charger le profil du membre connecté ---- */
-  useEffect(() => {
-    (async () => {
-      if (!authUser) { setCurrentUser(null); return; }
-      const { data } = await supabase.from("profiles").select("*").eq("id", authUser.id).single();
-      if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin });
-    })();
+  const loadCurrentUser = useCallback(async () => {
+    if (!authUser) { setCurrentUser(null); return; }
+    const { data } = await supabase.from("profiles").select("*").eq("id", authUser.id).single();
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, shareLibrary: data.share_library !== false });
   }, [authUser]);
+  useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
   /* ---- Abonnement temps réel : recharge quand la base change ---- */
   useEffect(() => {
@@ -302,6 +301,7 @@ function AppProvider({ children }) {
   const setShareLibrary = useCallback(async (value) => {
     if (!currentUser) return;
     await supabase.from("profiles").update({ share_library: value }).eq("id", currentUser.id);
+    setCurrentUser((u) => u ? { ...u, shareLibrary: value } : u);
     await loadData();
   }, [currentUser, loadData]);
 
@@ -584,6 +584,7 @@ function TextInput(props) {
 function ImageField({ value, onChange }) {
   const [err, setErr] = useState("");
   const [working, setWorking] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
   const fileRef = React.useRef(null);
 
   // Redimensionne (max 800px de côté) et recompresse en JPEG pour alléger l'image.
@@ -635,25 +636,62 @@ function ImageField({ value, onChange }) {
     if (fileRef.current) fileRef.current.value = ""; // permet de réimporter le même fichier
   };
 
+  // Télécharge une image depuis une URL, la convertit et la stocke localement.
+  // Indispensable pour BGG, qui bloque l'affichage direct de ses images (hotlinking).
+  const importFromUrl = async (rawUrl) => {
+    const url = rawUrl.trim();
+    if (!url || !/^https?:\/\//i.test(url)) { setErr("Adresse invalide."); return; }
+    setErr(""); setWorking(true);
+    // on tente plusieurs voies pour récupérer l'image malgré les blocages
+    const tries = [
+      url,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+    ];
+    for (const u of tries) {
+      try {
+        const res = await fetch(u);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        if (!blob.type.startsWith("image/")) continue;
+        const file = new File([blob], "image", { type: blob.type });
+        const compressed = await compressImage(file);
+        onChange(compressed);
+        setWorking(false);
+        return;
+      } catch (e) { /* voie suivante */ }
+    }
+    setWorking(false);
+    setErr("Impossible de récupérer cette image. Téléchargez-la sur votre appareil puis utilisez « Importer ».");
+  };
+
   const isLocal = value && value.startsWith("data:");
 
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <TextInput value={isLocal ? "" : value} onChange={(e) => onChange(e.target.value)} placeholder="https://... (adresse d'une image)" style={{ flex: 1 }} disabled={isLocal || working} />
-        <Btn variant="soft" size="md" onClick={() => fileRef.current?.click()} type="button" disabled={working}>
-          {working ? <Loader2 size={15} className="aladj-spin" /> : <><Download size={15} style={{ transform: "rotate(180deg)" }} /> Importer</>}
-        </Btn>
-        <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+        <TextInput value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="Coller l'adresse d'une image (https://...)" style={{ flex: 1 }} disabled={working}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); importFromUrl(urlInput); } }} />
+        <Btn variant="soft" size="md" onClick={() => importFromUrl(urlInput)} type="button" disabled={working || !urlInput.trim()}>Charger</Btn>
       </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ flex: 1, height: 1, background: "#ece2d0" }} />
+        <span style={{ fontSize: 12, color: "#a89a86" }}>ou</span>
+        <span style={{ flex: 1, height: 1, background: "#ece2d0" }} />
+      </div>
+      <Btn variant="soft" size="md" onClick={() => fileRef.current?.click()} type="button" disabled={working} full>
+        {working ? <Loader2 size={15} className="aladj-spin" /> : <><Download size={15} style={{ transform: "rotate(180deg)" }} /> Importer depuis mon appareil</>}
+      </Btn>
+      <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+
       {value && !working && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(0,0,0,.03)", borderRadius: 10, padding: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(0,0,0,.03)", borderRadius: 10, padding: 8, marginTop: 8 }}>
           <img src={value} alt="aperçu" style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8 }} />
-          <span style={{ fontSize: 12.5, color: "#8a7c6a", flex: 1 }}>{isLocal ? "Image importée et optimisée automatiquement" : "Image depuis une adresse web"}</span>
-          <button type="button" onClick={() => onChange("")} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 6 }}><X size={16} /></button>
+          <span style={{ fontSize: 12.5, color: "#8a7c6a", flex: 1 }}>Image enregistrée et optimisée ✓</span>
+          <button type="button" onClick={() => { onChange(""); setUrlInput(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 6 }}><X size={16} /></button>
         </div>
       )}
-      {working && <div style={{ fontSize: 12.5, color: C.teal }}>Optimisation de l'image en cours...</div>}
+      {working && <div style={{ fontSize: 12.5, color: C.teal, marginTop: 8 }}>Traitement de l'image en cours...</div>}
       {err && <div style={{ color: C.red, fontSize: 12.5, marginTop: 6 }}>{err}</div>}
     </div>
   );
@@ -1684,12 +1722,19 @@ function GuestAdder({ users, currentEvent, onAdd, onDone }) {
 function GameCover({ g, size = "md" }) {
   const heights = { sm: 56, md: 150, lg: 220 };
   const h = heights[size];
-  if (g.img) {
-    return <div style={{ height: h, background: `#11202f url(${g.img}) center/cover`, borderRadius: size === "sm" ? 10 : 0 }} />;
-  }
-  // placeholder coloré
+  const [imgError, setImgError] = useState(false);
+  // placeholder coloré (utilisé si pas d'image OU si l'image ne charge pas)
   const palette = [C.teal, C.amber, C.red, C.purple, C.navy];
   const col = palette[(g.name.charCodeAt(0) + (g.name.length || 0)) % palette.length];
+
+  if (g.img && !imgError) {
+    return (
+      <div style={{ height: h, position: "relative", borderRadius: size === "sm" ? 10 : 0, overflow: "hidden", background: "#11202f" }}>
+        <img src={g.img} alt={g.name} onError={() => setImgError(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+      </div>
+    );
+  }
   return (
     <div style={{ height: h, background: `linear-gradient(135deg, ${col}, ${col}cc)`, display: "grid", placeItems: "center", borderRadius: size === "sm" ? 10 : 0, position: "relative", overflow: "hidden" }}>
       <Dice color="rgba(255,255,255,.25)" n={(g.name.length % 6) + 1} style={{ position: "absolute", width: h * 0.55, right: -h * 0.1, bottom: -h * 0.12, transform: "rotate(12deg)" }} />
@@ -1833,7 +1878,10 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 }
 
 function EditGameModal({ g, onClose, onSave }) {
+  const { currentUser, toggleGameShared } = useApp();
   const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", ") });
+  const [shared, setShared] = useState(g.shared !== false);
+  const isOwner = currentUser && currentUser.id === g.ownerId;
   return (
     <Modal open onClose={onClose} title="Modifier le jeu" width={560}>
       <Field label="Nom"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -1846,7 +1894,19 @@ function EditGameModal({ g, onClose, onSave }) {
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
       <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
-      <Btn full size="lg" onClick={() => onSave({ ...f, year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", mechanics: f.mechanics.split(",").map((s) => s.trim()).filter(Boolean) })}><Check size={18} /> Enregistrer</Btn>
+      {isOwner && (
+        <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 12, background: shared ? "rgba(30,138,138,.08)" : "rgba(120,110,95,.08)", marginBottom: 16, cursor: "pointer" }}>
+          <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.teal }} />
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+            Partager ce jeu dans la ludothèque commune
+            <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", fontWeight: 400 }}>Décochez pour le garder uniquement dans votre ludothèque personnelle.</span>
+          </span>
+        </label>
+      )}
+      <Btn full size="lg" onClick={async () => {
+        if (isOwner && shared !== (g.shared !== false)) await toggleGameShared(g.id, shared);
+        onSave({ ...f, year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", mechanics: f.mechanics.split(",").map((s) => s.trim()).filter(Boolean) });
+      }}><Check size={18} /> Enregistrer</Btn>
     </Modal>
   );
 }
