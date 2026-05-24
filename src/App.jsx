@@ -147,6 +147,7 @@ function mapGame(row, ratingsByGame, nameById = {}) {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
+    shared: row.shared !== false,
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -208,7 +209,7 @@ function AppProvider({ children }) {
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
       setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
     } catch (e) {
@@ -290,6 +291,19 @@ function AppProvider({ children }) {
   }, [loadData]);
 
   const removeGame = useCallback(async (id) => { await supabase.from("games").delete().eq("id", id); await loadData(); }, [loadData]);
+
+  // Partage : (dé)partager un jeu précis dans la ludothèque commune
+  const toggleGameShared = useCallback(async (id, shared) => {
+    await supabase.from("games").update({ shared }).eq("id", id);
+    await loadData();
+  }, [loadData]);
+
+  // Partage : réglage global du membre (partager toute sa ludothèque ou non)
+  const setShareLibrary = useCallback(async (value) => {
+    if (!currentUser) return;
+    await supabase.from("profiles").update({ share_library: value }).eq("id", currentUser.id);
+    await loadData();
+  }, [currentUser, loadData]);
 
   const rateGame = useCallback(async (id, value) => {
     if (!currentUser) return;
@@ -385,6 +399,7 @@ function AppProvider({ children }) {
   const value = {
     ready, fatalError, users, games, events, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
+    toggleGameShared, setShareLibrary,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment, reload: loadData,
   };
@@ -406,6 +421,66 @@ function isEventVisible(e) {
   if (now < limit) return true; // limite pas encore atteinte
   const totalPlayers = (e.players?.length || 0) + (e.guests?.length || 0);
   return totalPlayers >= e.min; // après la limite : visible seulement si quorum atteint
+}
+
+// Moteur de recommandations : propose des jeux non notés par l'utilisateur,
+// en combinant (a) les goûts des membres aux profils proches, (b) les mécaniques qu'il aime.
+function recommendGames(games, currentUserId) {
+  if (!currentUserId) return [];
+  const myRatings = {}; // gameId -> ma note
+  games.forEach((g) => { const v = g.ratings?.[currentUserId]; if (v) myRatings[g.id] = v; });
+  const ratedIds = new Set(Object.keys(myRatings));
+
+  // --- (a) Similarité entre membres : qui note comme moi sur les jeux qu'on a en commun ?
+  const otherUsers = {};
+  games.forEach((g) => {
+    Object.entries(g.ratings || {}).forEach(([uid, val]) => {
+      if (uid === currentUserId) return;
+      (otherUsers[uid] ||= []).push({ gameId: g.id, val });
+    });
+  });
+  const similarity = {}; // uid -> score de proximité (0..1)
+  Object.entries(otherUsers).forEach(([uid, theirRatings]) => {
+    let sum = 0, n = 0;
+    theirRatings.forEach(({ gameId, val }) => {
+      if (myRatings[gameId] != null) { sum += Math.abs(myRatings[gameId] - val); n++; }
+    });
+    // proximité = inverse de l'écart moyen (sur échelle 0-5) ; n>0 requis
+    if (n > 0) similarity[uid] = 1 - (sum / n) / 5;
+  });
+
+  // --- (b) Mécaniques que j'apprécie (présentes dans mes jeux bien notés ≥ 4)
+  const likedMech = {};
+  games.forEach((g) => {
+    if ((myRatings[g.id] || 0) >= 4) (g.mechanics || []).forEach((m) => { likedMech[m] = (likedMech[m] || 0) + 1; });
+  });
+  const maxMech = Math.max(1, ...Object.values(likedMech));
+
+  // --- Score de chaque jeu candidat (non noté par moi)
+  const candidates = games.filter((g) => !ratedIds.has(g.id));
+  const scored = candidates.map((g) => {
+    // composante "profils similaires" : moyenne pondérée des notes des autres par leur proximité
+    let wSum = 0, wTot = 0;
+    Object.entries(g.ratings || {}).forEach(([uid, val]) => {
+      if (uid === currentUserId) return;
+      const sim = similarity[uid];
+      if (sim != null && sim > 0) { wSum += sim * val; wTot += sim; }
+    });
+    const peerScore = wTot > 0 ? (wSum / wTot) / 5 : 0; // 0..1
+    // composante "mécaniques aimées"
+    const mechHits = (g.mechanics || []).reduce((s, m) => s + (likedMech[m] || 0), 0);
+    const mechScore = Math.min(1, mechHits / (maxMech * 2)); // 0..1
+    // dominante profils (0.7) + appoint mécaniques (0.3) ; petit bonus si bien noté globalement
+    const globalAvg = gameStats(g).avg / 5;
+    const score = wTot > 0 ? (0.7 * peerScore + 0.3 * mechScore) : (0.5 * mechScore + 0.3 * globalAvg);
+    return { game: g, score, hasSignal: wTot > 0 || mechHits > 0 };
+  });
+
+  return scored
+    .filter((s) => s.hasSignal && s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((s) => s.game);
 }
 /* =============================================================================
    COMPOSANTS UI
@@ -1625,34 +1700,51 @@ function GameCover({ g, size = "md" }) {
   );
 }
 
-function GameCard({ g, onOpen }) {
+function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
   const { avg, count } = gameStats(g);
+  const isShared = g.shared !== false;
   return (
-    <button onClick={onOpen} style={{ textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(18,41,63,.12)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
-      <div style={{ position: "relative" }}>
-        <GameCover g={g} />
-        <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
-          <Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(1) : "—"}
+    <div style={{ position: "relative" }}>
+      <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
+        onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(18,41,63,.12)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
+        <div style={{ position: "relative" }}>
+          <GameCover g={g} />
+          <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+            <Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(1) : "—"}
+          </div>
         </div>
-      </div>
-      <div style={{ padding: 16 }}>
-        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 4px", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</h3>
-        <div style={{ display: "flex", gap: 10, color: "#8a7c6a", fontSize: 12.5, marginBottom: 10, flexWrap: "wrap" }}>
-          {g.min && <span><Users size={12} style={{ verticalAlign: "-1px" }} /> {g.min}{g.max && g.max !== g.min ? `-${g.max}` : ""}</span>}
-          {g.time && <span><Clock size={12} style={{ verticalAlign: "-1px" }} /> {g.time} min</span>}
-          {g.year && <span>{g.year}</span>}
+        <div style={{ padding: 16 }}>
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 4px", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</h3>
+          <div style={{ display: "flex", gap: 10, color: "#8a7c6a", fontSize: 12.5, marginBottom: 10, flexWrap: "wrap" }}>
+            {g.min && <span><Users size={12} style={{ verticalAlign: "-1px" }} /> {g.min}{g.max && g.max !== g.min ? `-${g.max}` : ""}</span>}
+            {g.time && <span><Clock size={12} style={{ verticalAlign: "-1px" }} /> {g.time} min</span>}
+            {g.year && <span>{g.year}</span>}
+          </div>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+            {(g.mechanics || []).slice(0, 2).map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez <b style={{ color: C.teal }}>{g.ownerName}</b></span>
+            <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{count} vote{count > 1 ? "s" : ""}</span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
-          {(g.mechanics || []).slice(0, 2).map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
-          <span style={{ fontSize: 12, color: "#9c8d79" }}>chez <b style={{ color: C.teal }}>{g.ownerName}</b></span>
-          <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{count} vote{count > 1 ? "s" : ""}</span>
-        </div>
-      </div>
-    </button>
+      </button>
+      {/* Badge de partage (uniquement sur mes propres jeux) */}
+      {myGame && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleShare(!isShared); }}
+          title={!globalShare ? "Votre ludothèque est privée (réglage global)" : isShared ? "Partagé dans la ludothèque commune — cliquez pour rendre privé" : "Privé — cliquez pour partager"}
+          disabled={!globalShare}
+          style={{
+            position: "absolute", top: 10, left: 10, border: "none", borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700,
+            cursor: globalShare ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 5,
+            background: !globalShare ? "rgba(120,110,95,.85)" : isShared ? "rgba(30,138,138,.92)" : "rgba(120,110,95,.85)", color: "#fff",
+          }}>
+          {!globalShare ? <><EyeOff size={12} /> Privé</> : isShared ? <><Check size={12} /> Partagé</> : <><EyeOff size={12} /> Privé</>}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1789,14 +1881,26 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showCustomRank, setShowCustomRank] = useState(false);
 
+  // Jeux réellement visibles dans la ludothèque commune :
+  // le propriétaire partage sa ludothèque ET le jeu lui-même est partagé.
+  const sharedById = useMemo(() => {
+    const m = {};
+    users.forEach((u) => { m[u.id] = u.shareLibrary !== false; });
+    return m;
+  }, [users]);
+  const communGames = useMemo(
+    () => games.filter((g) => g.shared !== false && sharedById[g.ownerId] !== false),
+    [games, sharedById]
+  );
+
   const allMechanics = useMemo(() => {
     const s = new Set();
-    games.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
+    communGames.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
     return [...s].sort((a, b) => a.localeCompare(b, "fr"));
-  }, [games]);
+  }, [communGames]);
 
   const filtered = useMemo(() => {
-    let list = games.filter((g) => {
+    let list = communGames.filter((g) => {
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (g.mechanics || []).includes(mech);
       return okQ && okM;
@@ -1805,9 +1909,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [games, q, mech, sort]);
+  }, [communGames, q, mech, sort]);
 
-  const top = useMemo(() => rankGames(games).filter((g) => g._count > 0).slice(0, 5), [games]);
+  const top = useMemo(() => rankGames(communGames).filter((g) => g._count > 0).slice(0, 5), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
   return (
@@ -2122,12 +2226,13 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser } = useApp();
+  const { games, currentUser, setShareLibrary, toggleGameShared } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
 
   const mine = useMemo(() => games.filter((g) => g.ownerId === currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [games, currentUser]);
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
+  const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
 
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -2191,11 +2296,50 @@ function MyLudoPage({ setToast, setPage }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 28 }}>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
         <StatCard icon={Library} color={C.teal} n={mine.length} label="jeux apportés" />
         <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" />
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
+
+      {/* Interrupteur global de partage de la ludothèque */}
+      <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderRadius: 14, background: currentUser.shareLibrary !== false ? "rgba(30,138,138,.08)" : "rgba(181,40,58,.07)", border: "1px solid #ece2d0", marginBottom: 28, cursor: "pointer" }}>
+        <input type="checkbox" checked={currentUser.shareLibrary !== false} onChange={(e) => setShareLibrary(e.target.checked)} style={{ width: 20, height: 20, accentColor: C.teal, flexShrink: 0 }} />
+        <span>
+          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>
+            {currentUser.shareLibrary !== false ? "Ma ludothèque est partagée avec l'association" : "Ma ludothèque est privée"}
+          </span>
+          <span style={{ display: "block", fontSize: 13, color: "#8a7c6a", marginTop: 2 }}>
+            {currentUser.shareLibrary !== false
+              ? "Vos jeux apparaissent dans la ludothèque commune. Vous pouvez en exclure certains individuellement ci-dessous."
+              : "Aucun de vos jeux n'apparaît dans la ludothèque commune, quels que soient les réglages par jeu."}
+          </span>
+        </span>
+      </label>
+
+      {/* Recommandations : jeux qui pourraient plaire */}
+      {recommendations.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <SectionTitle kicker="Suggestions" title="Des jeux qui pourraient vous plaire" noMargin />
+          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "8px 0 16px" }}>D'après vos notes, les goûts des membres proches de vous et les mécaniques que vous appréciez.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+            {recommendations.map((g) => {
+              const st = gameStats(g);
+              return (
+                <button key={g.id} onClick={() => setSelected(g.id)} style={{ textAlign: "left", border: "1px solid #efe6d6", borderRadius: 14, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
+                  <div style={{ aspectRatio: "1.4", background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                    {!g.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 22 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
+                  </div>
+                  <div style={{ padding: "9px 11px" }}>
+                    <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
+                    <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {g.ownerName}{st.count > 0 ? ` · ★ ${st.avg.toFixed(1)}` : ""}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {mine.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "rgba(26,58,92,.03)", borderRadius: 20, border: "2px dashed #e0d4bf" }}>
@@ -2206,7 +2350,7 @@ function MyLudoPage({ setToast, setPage }) {
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-          {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} />)}
+          {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} />)}
         </div>
       )}
 
