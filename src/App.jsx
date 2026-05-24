@@ -174,6 +174,14 @@ function AppProvider({ children }) {
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
     try {
+      // Ménage automatique : on supprime les moments jeux dont la date est passée
+      // de plus d'un an (pas d'historique au-delà de 12 mois). Se fait discrètement
+      // au chargement du site, donc pas besoin de mécanisme serveur permanent.
+      const oneYearAgo = new Date();
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+      const cutoff = oneYearAgo.toISOString().slice(0, 10);
+      try { await supabase.from("events").delete().lt("event_date", cutoff); } catch (e) { /* sans gravité */ }
+
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
@@ -871,6 +879,11 @@ function HomePage({ setPage, onAuth }) {
     const today = new Date().toISOString().slice(0, 10);
     return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
   }, [events]);
+  // nombre de moments à venir (pour le compteur d'accueil)
+  const upcomingCount = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return events.filter((e) => e.date >= today && isEventVisible(e)).length;
+  }, [events]);
 
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
@@ -909,9 +922,9 @@ function HomePage({ setPage, onAuth }) {
 
           <div style={{ display: "flex", gap: "clamp(20px,5vw,64px)", justifyContent: "center", marginTop: 56, flexWrap: "wrap" }}>
             {[
-              { n: games.length, l: "jeux partagés", onClick: () => setPage("ludo") },
+              { n: games.length, l: "jeux partagés", onClick: () => setPage("ludotheque") },
               { n: users.length, l: "membres", onClick: () => setShowMembers(true) },
-              { n: events.length, l: "moments jeux", onClick: () => setPage("soirees") },
+              { n: upcomingCount, l: "moments à venir", onClick: () => setPage("soirees") },
               { n: "2010", l: "depuis", onClick: null },
             ].map((s, i) => (
               <div key={i} onClick={s.onClick || undefined} style={{ textAlign: "center", cursor: s.onClick ? "pointer" : "default", transition: "transform .15s", ...(s.onClick ? {} : {}) }}
