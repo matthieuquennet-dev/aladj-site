@@ -48,31 +48,29 @@ const MECHANIC_SUGGESTIONS = [
    qui relaie les requêtes vers BoardGameGeek. Cela évite le blocage "CORS" du
    navigateur. La traduction passe par /api/translate.
    ============================================================================= */
-// Récupère le XML de BGG en essayant plusieurs voies d'accès dans l'ordre.
-// BGG bloque les appels directs depuis serveurs/proxies surchargés, donc on multiplie
-// les chances : notre fonction serveur, puis plusieurs proxies CORS publics.
+// Récupère le XML de BGG. On passe par notre fonction serveur /api/bgg qui ajoute
+// le jeton d'authentification BGG (obligatoire désormais). Proxies en ultime secours.
 async function fetchBggXml(bggUrl) {
-  const action = bggUrl.includes("/search") ? "search" : "thing";
-  const sp = new URL(bggUrl).searchParams;
-  const own = action === "search"
-    ? `/api/bgg?action=search&query=${encodeURIComponent(sp.get("query") || "")}`
-    : `/api/bgg?action=thing&id=${sp.get("id") || ""}`;
+  const u = new URL(bggUrl);
+  const route = u.pathname.includes("/search") ? "search" : "thing";
+  const sp = u.searchParams;
+  const params = new URLSearchParams();
+  params.set("path", route);
+  for (const [k, v] of sp.entries()) params.set(k, v);
+  const own = `/api/bgg?${params.toString()}`;
 
   const isValid = (t) => t && t.includes("<") && (t.includes("<item") || t.includes("<items"));
 
-  // 1) notre fonction serveur (sur l'URL de production)
+  // 1) notre fonction serveur authentifiée (la voie principale)
   try {
     const res = await fetch(own);
     if (res.ok) { const t = await res.text(); if (isValid(t)) return t; }
-  } catch (e) { /* suivant */ }
+  } catch (e) { /* secours */ }
 
-  // 2) plusieurs proxies CORS publics (on prend le premier qui répond correctement)
+  // 2) proxies CORS publics (secours si le serveur échoue)
   const proxies = [
-    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
-    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    (u) => `https://proxy.cors.sh/${u}`,
-    (u) => `https://cors-anywhere.herokuapp.com/${u}`,
+    (x) => `https://api.allorigins.win/raw?url=${encodeURIComponent(x)}`,
+    (x) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(x)}`,
   ];
   for (const make of proxies) {
     try {
@@ -499,6 +497,85 @@ function TextInput(props) {
     onBlur={(e) => (e.target.style.borderColor = "#e6dcc9")} />;
 }
 
+/* ---- Champ image : URL OU import d'un fichier local (jpg, png...) avec compression auto ---- */
+function ImageField({ value, onChange }) {
+  const [err, setErr] = useState("");
+  const [working, setWorking] = useState(false);
+  const fileRef = React.useRef(null);
+
+  // Redimensionne (max 800px de côté) et recompresse en JPEG pour alléger l'image.
+  const compressImage = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 800;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width >= height) { height = Math.round(height * MAX / width); width = MAX; }
+          else { width = Math.round(width * MAX / height); height = MAX; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, width, height); // fond blanc pour les PNG transparents
+        ctx.drawImage(img, 0, 0, width, height);
+        // qualité 0.8 ; on réduit si l'image reste trop lourde
+        let quality = 0.8;
+        let dataUrl = canvas.toDataURL("image/jpeg", quality);
+        while (dataUrl.length > 250 * 1024 && quality > 0.4) { // vise < ~250 Ko
+          quality -= 0.1;
+          dataUrl = canvas.toDataURL("image/jpeg", quality);
+        }
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error("Image illisible"));
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => reject(new Error("Lecture impossible"));
+    reader.readAsDataURL(file);
+  });
+
+  const handleFile = async (e) => {
+    setErr("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setErr("Choisissez un fichier image (jpg, png...)."); return; }
+    setWorking(true);
+    try {
+      const compressed = await compressImage(file); // remplace automatiquement l'ancienne valeur
+      onChange(compressed);
+    } catch (e) {
+      setErr("Impossible de traiter cette image. Essayez une autre, ou utilisez une adresse web.");
+    }
+    setWorking(false);
+    if (fileRef.current) fileRef.current.value = ""; // permet de réimporter le même fichier
+  };
+
+  const isLocal = value && value.startsWith("data:");
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <TextInput value={isLocal ? "" : value} onChange={(e) => onChange(e.target.value)} placeholder="https://... (adresse d'une image)" style={{ flex: 1 }} disabled={isLocal || working} />
+        <Btn variant="soft" size="md" onClick={() => fileRef.current?.click()} type="button" disabled={working}>
+          {working ? <Loader2 size={15} className="aladj-spin" /> : <><Download size={15} style={{ transform: "rotate(180deg)" }} /> Importer</>}
+        </Btn>
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+      </div>
+      {value && !working && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(0,0,0,.03)", borderRadius: 10, padding: 8 }}>
+          <img src={value} alt="aperçu" style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 8 }} />
+          <span style={{ fontSize: 12.5, color: "#8a7c6a", flex: 1 }}>{isLocal ? "Image importée et optimisée automatiquement" : "Image depuis une adresse web"}</span>
+          <button type="button" onClick={() => onChange("")} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 6 }}><X size={16} /></button>
+        </div>
+      )}
+      {working && <div style={{ fontSize: 12.5, color: C.teal }}>Optimisation de l'image en cours...</div>}
+      {err && <div style={{ color: C.red, fontSize: 12.5, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
 /* ---- Modale ---- */
 function Modal({ open, onClose, children, title, width = 560 }) {
   useEffect(() => {
@@ -788,6 +865,8 @@ function Dice({ color, n, style }) {
 
 function HomePage({ setPage, onAuth }) {
   const { events, games, users, currentUser } = useApp();
+  const [showMembers, setShowMembers] = useState(false);
+  const [viewMemberId, setViewMemberId] = useState(null); // pour consulter la ludothèque d'un membre
   const upcoming = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
@@ -829,10 +908,17 @@ function HomePage({ setPage, onAuth }) {
           </div>
 
           <div style={{ display: "flex", gap: "clamp(20px,5vw,64px)", justifyContent: "center", marginTop: 56, flexWrap: "wrap" }}>
-            {[[games.length, "jeux partagés"], [users.length, "membres"], [events.length, "moments jeux"], ["2010", "depuis"]].map(([n, l], i) => (
-              <div key={i} style={{ textAlign: "center" }}>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 38, color: "#fff", lineHeight: 1 }}>{n}</div>
-                <div style={{ color: "rgba(255,255,255,.6)", fontSize: 14, marginTop: 4 }}>{l}</div>
+            {[
+              { n: games.length, l: "jeux partagés", onClick: () => setPage("ludo") },
+              { n: users.length, l: "membres", onClick: () => setShowMembers(true) },
+              { n: events.length, l: "moments jeux", onClick: () => setPage("soirees") },
+              { n: "2010", l: "depuis", onClick: null },
+            ].map((s, i) => (
+              <div key={i} onClick={s.onClick || undefined} style={{ textAlign: "center", cursor: s.onClick ? "pointer" : "default", transition: "transform .15s", ...(s.onClick ? {} : {}) }}
+                onMouseEnter={(e) => { if (s.onClick) e.currentTarget.style.transform = "translateY(-3px)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 38, color: "#fff", lineHeight: 1, textDecoration: s.onClick ? "underline" : "none", textDecorationColor: "rgba(255,255,255,.3)", textUnderlineOffset: 6 }}>{s.n}</div>
+                <div style={{ color: "rgba(255,255,255,.6)", fontSize: 14, marginTop: 4 }}>{s.l}</div>
               </div>
             ))}
           </div>
@@ -886,7 +972,81 @@ function HomePage({ setPage, onAuth }) {
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. Une pièce d'identité peut être demandée à l'entrée des moments jeux (réservé aux +16 ans).
         </p>
       </section>
+
+      {showMembers && <MembersModal onClose={() => setShowMembers(false)} onPickMember={(id) => { setShowMembers(false); setViewMemberId(id); }} />}
+      {viewMemberId && <MemberLibraryModal memberId={viewMemberId} onClose={() => setViewMemberId(null)} />}
     </div>
+  );
+}
+
+/* ---- Pop-up : liste des membres, couleur selon statut ---- */
+function MembersModal({ onClose, onPickMember }) {
+  const { users } = useApp();
+  const sorted = [...users].sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <Modal open onClose={onClose} title={`Les membres de l'association (${users.length})`} width={460}>
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, fontSize: 12.5, color: "#8a7c6a" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.amber }} /> Décisionnaire</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.teal }} /> Non décisionnaire</span>
+      </div>
+      <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
+        {sorted.map((m) => {
+          const color = m.role === "decideur" ? C.amber : C.teal;
+          return (
+            <button key={m.id} onClick={() => onPickMember(m.id)} style={{
+              display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 13, border: "1px solid #efe6d6",
+              background: "#fff", cursor: "pointer", textAlign: "left", transition: "background .15s",
+            }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0,0,0,.02)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+              <span style={{ width: 38, height: 38, borderRadius: 11, background: color, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>{m.name[0].toUpperCase()}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>{m.name}</span>
+                <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}</span>
+              </span>
+              <ChevronRight size={18} color="#c9bba6" />
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>Cliquez sur un membre pour voir sa ludothèque.</p>
+    </Modal>
+  );
+}
+
+/* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
+function MemberLibraryModal({ memberId, onClose }) {
+  const { games, users } = useApp();
+  const member = users.find((u) => u.id === memberId);
+  const theirGames = games.filter((g) => g.ownerId === memberId).sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <Modal open onClose={onClose} title={member ? `Ludothèque de ${member.name}` : "Ludothèque"} width={620}>
+      {theirGames.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
+          <Gamepad2 size={40} style={{ opacity: .4, marginBottom: 12 }} />
+          <p style={{ fontSize: 14.5 }}>Ce membre n'a pas encore ajouté de jeu.</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "60vh", overflowY: "auto", padding: 2 }}>
+          {theirGames.map((g) => {
+            const st = gameStats(g);
+            return (
+              <div key={g.id} style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #efe6d6", background: "#fff" }}>
+                <div style={{ aspectRatio: "1", background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.amber},${C.red})`, display: "grid", placeItems: "center" }}>
+                  {!g.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 26 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
+                </div>
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, lineHeight: 1.2 }}>{g.name}</div>
+                  <div style={{ fontSize: 12, color: "#9c8d79", marginTop: 4, display: "flex", gap: 8 }}>
+                    {g.min && <span>{g.min}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.</span>}
+                    {g.time && <span>{g.time} min</span>}
+                  </div>
+                  {st.count > 0 && <div style={{ marginTop: 6, fontSize: 12, color: C.amber, fontWeight: 700 }}>★ {st.avg.toFixed(1)} <span style={{ color: "#b6a78f", fontWeight: 400 }}>({st.count})</span></div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1579,7 +1739,7 @@ function EditGameModal({ g, onClose, onSave }) {
       </div>
       <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
-      <Field label="Image (URL)"><TextInput value={f.img} onChange={(e) => setF({ ...f, img: e.target.value })} /></Field>
+      <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
       <Btn full size="lg" onClick={() => onSave({ ...f, year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", mechanics: f.mechanics.split(",").map((s) => s.trim()).filter(Boolean) })}><Check size={18} /> Enregistrer</Btn>
     </Modal>
@@ -1937,7 +2097,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
           })}
         </div>
       </Field>
-      <Field label="Image (URL)" hint="Facultatif — collez l'adresse d'une image du jeu"><TextInput value={f.img} onChange={(e) => setF({ ...f, img: e.target.value })} placeholder="https://..." /></Field>
+      <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation & mécaniques"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} placeholder="Décrivez le jeu, son thème, ses mécaniques..." style={{ ...inputStyle, resize: "vertical" }} /></Field>
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter le jeu</Btn>
