@@ -18,6 +18,19 @@ const C = {
   red: "#B5283A", purple: "#6B3A7A", cream: "#FBF7EF", paper: "#FFFEFB", ink: "#22303C",
 };
 
+// Groupes Signal de l'association (lien d'invitation + description)
+const SIGNAL_GROUPS = [
+  { name: "Organisation jeux", color: "#1E8A8A", icon: Calendar,
+    desc: "Pour organiser et s'inscrire aux moments jeux de l'association.",
+    url: "https://signal.group/#CjQKIBiXldDw1Py1MFhQA8ksSS6NhCItoUDOjzN13FH2-MtoEhCwJT2eW-qLyOg4bKiEnLw3" },
+  { name: "Blabla", color: "#6B3A7A", icon: Heart,
+    desc: "Pour nos discussions informelles, papoter et partager entre membres.",
+    url: "https://signal.group/#CjQKIOeZ5C6Pezkiq6idGK_KNZDTsLvRYQbQeO9kg3CNrilxEhCiajWWCRHgI-Fe19To7xOj" },
+  { name: "Achat", color: "#E8A317", icon: Library,
+    desc: "Pour organiser nos achats groupés de jeux.",
+    url: "https://signal.group/#CjQKIOtkwx38mqzrzsVU6YdZoezItFjjVZtgVFAD-w2ZMe7iEhAHRKOSRBFHEKXBTkZNmVED" },
+];
+
 /* ---------- Utilitaires ---------- */
 const slug = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
@@ -1099,6 +1112,30 @@ function HomePage({ setPage, onAuth }) {
         </p>
       </section>
 
+      {/* ---- Conversations Signal ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 80px" }}>
+        <SectionTitle kicker="Rester en contact" title="Nos conversations Signal" center />
+        <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 15, margin: "10px auto 36px", maxWidth: 620, lineHeight: 1.6 }}>
+          La vie de l'association se passe sur Signal. Rejoignez les groupes qui vous intéressent en cliquant sur le bouton, ou en scannant le QR code avec votre téléphone.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22 }}>
+          {SIGNAL_GROUPS.map((grp) => (
+            <div key={grp.name} style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 20, padding: 26, textAlign: "center", boxShadow: "0 4px 16px rgba(18,41,63,.05)", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ width: 52, height: 52, borderRadius: 15, background: grp.color, display: "grid", placeItems: "center", marginBottom: 14 }}>
+                <grp.icon size={26} color="#fff" />
+              </div>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, margin: "0 0 6px" }}>{grp.name}</h3>
+              <p style={{ color: "#8a7c6a", fontSize: 13.5, lineHeight: 1.5, margin: "0 0 18px", flex: 1 }}>{grp.desc}</p>
+              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=8&data=${encodeURIComponent(grp.url)}`} alt={`QR code ${grp.name}`}
+                style={{ width: 140, height: 140, borderRadius: 12, border: "1px solid #ece2d0", marginBottom: 16 }} />
+              <a href={grp.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", width: "100%" }}>
+                <Btn full variant="primary" size="md" style={{ background: grp.color, borderColor: grp.color }}><ExternalLink size={16} /> Rejoindre</Btn>
+              </a>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {showMembers && <MembersModal onClose={() => setShowMembers(false)} onPickMember={(id) => { setShowMembers(false); setViewMemberId(id); }} />}
       {viewMemberId && <MemberLibraryModal memberId={viewMemberId} onClose={() => setViewMemberId(null)} />}
     </div>
@@ -1257,6 +1294,7 @@ function EventsPage({ onAuth, setToast }) {
   const { events, currentUser, addEvent, toggleJoin, removeEvent } = useApp();
   const [showCreate, setShowCreate] = useState(false);
   const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
+  const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
   const [selected, setSelected] = useState(null);
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
@@ -1344,7 +1382,8 @@ function EventsPage({ onAuth, setToast }) {
         {sorted.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setSelected(e.id)} />)}
       </div>
 
-      {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); return {}; }} />}
+      {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); setJustCreated(d); return {}; }} />}
+      {justCreated && <ShareEventModal event={justCreated} onClose={() => setJustCreated(null)} />}
       {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Moment jeux supprimé."); }} onAuth={onAuth} />}
     </div>
   );
@@ -1629,6 +1668,60 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ---- Modale : partager le moment jeux sur Signal (message prêt à copier) ---- */
+function ShareEventModal({ event, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const orga = SIGNAL_GROUPS.find((g) => g.name === "Organisation jeux");
+  const siteUrl = "https://aladj-site.vercel.app";
+
+  const deadlineTxt = event.deadline
+    ? `\n⏳ À valider avant le ${formatDateFr(new Date(event.deadline).toISOString().slice(0,10))} à ${new Date(event.deadline).toTimeString().slice(0,5)}`
+    : "";
+  const message =
+`🎲 Nouveau moment jeux !
+
+📅 ${formatDateFr(event.date)} à ${event.time}
+📍 ${event.place}
+👥 ${event.min} à ${event.max} joueurs${deadlineTxt}${event.notes ? `\n📝 ${event.notes}` : ""}
+
+➡️ Inscriptions et détails : ${siteUrl}`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch (e) {
+      // repli : sélection manuelle
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Partager ce moment jeux" width={520}>
+      <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 16px", lineHeight: 1.5 }}>
+        Votre moment jeux est créé ! Copiez ce message et collez-le dans le groupe Signal « Organisation jeux » pour prévenir les membres.
+      </p>
+      <div style={{ background: "rgba(26,58,92,.04)", border: "1px solid #ece2d0", borderRadius: 13, padding: 16, fontSize: 13.5, color: "#3a3a3a", whiteSpace: "pre-line", lineHeight: 1.5, marginBottom: 16, fontFamily: "'Nunito',sans-serif" }}>
+        {message}
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Btn variant={copied ? "teal" : "primary"} size="lg" onClick={copy} style={{ flex: 1 }}>
+          {copied ? <><Check size={17} /> Copié !</> : <><PenLine size={17} /> Copier le message</>}
+        </Btn>
+        {orga && (
+          <a href={orga.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", flex: 1 }}>
+            <Btn variant="soft" size="lg" full><ExternalLink size={17} /> Ouvrir Signal</Btn>
+          </a>
+        )}
+      </div>
+      <button onClick={onClose} style={{ width: "100%", marginTop: 12, background: "none", border: "none", color: "#9c8d79", cursor: "pointer", fontSize: 13.5, fontFamily: "'Nunito',sans-serif" }}>
+        Plus tard
+      </button>
+    </Modal>
   );
 }
 
