@@ -52,7 +52,12 @@ const MECHANIC_SUGGESTIONS = [
   "Gestion de ressources", "Deck-building", "Contrôle de zone", "Enchères", "Bluff",
   "Combat", "Set collection", "Programmation", "Déduction", "Narration", "Mémoire",
   "Stop ou encore", "Combos", "Négociation", "Stratégie", "Familial", "Ambiance",
-];
+  "Rôles cachés", "Enquête", "Jeu en équipe", "Placement", "Gestion", "Roll'n'write",
+  "Flip'n'write", "Jeu de plis", "Jeu de défausse", "Jeu de cartes", "JCC (jeu de cartes à collectionner)",
+  "JCE (jeu de cartes évolutif)", "Party game", "Escape game", "Legacy", "Gestion de main",
+  "Majorité", "Course", "Exploration", "Construction de moteur", "Tuiles à connecter",
+  "Paris", "Mise", "Asymétrique", "Temps réel", "Adresse / dextérité", "Quiz / culture",
+].sort((a, b) => a.localeCompare(b, "fr"));
 
 /* =============================================================================
    IMPORT BoardGameGeek
@@ -1276,10 +1281,10 @@ function EventCardMini({ e, onOpen }) {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#6e6256", fontSize: 14 }}>
           <Users size={16} color={reached ? C.teal : C.red} />
-          <b style={{ color: reached ? C.teal : C.red }}>{filled}</b> joueur{filled > 1 ? "s" : ""} · min {e.min} / max {e.max}
+          <b style={{ color: reached ? C.teal : C.red }}>{filled}</b> joueur{filled > 1 ? "s" : ""} · min {e.min}{e.max ? ` / max ${e.max}` : " · sans limite"}
         </div>
         <div style={{ marginTop: 12, height: 7, borderRadius: 99, background: "#eee4d2", overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${Math.min(100, (filled / e.max) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
+          <div style={{ height: "100%", width: `${e.max ? Math.min(100, (filled / e.max) * 100) : (reached ? 100 : (filled / Math.max(e.min, 1)) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
         </div>
         <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 8 }}>Proposée par {e.hostName}</div>
       </div>
@@ -1400,7 +1405,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 3, max: 6, notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -1416,7 +1421,9 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
   const submit = async () => {
     setErr("");
     if (!f.date || !f.time || !f.place.trim()) { setErr("Renseignez la date, l'heure et le lieu."); return; }
-    if (Number(f.min) > Number(f.max)) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
+    const minN = Number(f.min) || 1;
+    const maxN = f.max === "" || f.max == null ? null : Number(f.max); // null = pas de limite
+    if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) {
       deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
@@ -1424,7 +1431,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     setBusy(true);
     const res = await onCreate({
       date: f.date, time: f.time, place: f.place.trim(),
-      min: Number(f.min), max: Number(f.max), notes: f.notes.trim(),
+      min: minN, max: maxN, notes: f.notes.trim(),
       joinSelf: f.joinSelf, deadline, invites,
     });
     setBusy(false);
@@ -1459,7 +1466,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
       <Field label="Lieu"><TextInput value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} placeholder="Ex. Local ALADJ — Gouville-sur-Mer" /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} max={30} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
-        <Field label="Joueurs max."><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
+        <Field label="Joueurs max." hint="Laisser vide = illimité"><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="illimité" /></Field>
       </div>
 
       {/* m'inscrire moi-même */}
@@ -1511,15 +1518,16 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser, users, addGuest, removeGuest, addComment, updateComment, removeComment } = useApp();
+  const { currentUser, users, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent } = useApp();
   const totalCount = e.players.length + (e.guests?.length || 0);
   const reached = totalCount >= e.min;
-  const full = totalCount >= e.max;
+  const full = e.max ? totalCount >= e.max : false;
   const isIn = currentUser && e.players.some((p) => p.id === currentUser.id);
   const isParticipant = currentUser && (isIn || e.hostId === currentUser.id);
   const canManage = currentUser && (currentUser.id === e.hostId || currentUser.admin);
 
   const [showGuest, setShowGuest] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
@@ -1562,17 +1570,17 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
-              {totalCount} / {e.max} participants
+              {totalCount}{e.max ? ` / ${e.max}` : ""} participant{totalCount > 1 ? "s" : ""}{!e.max ? " · sans limite" : ""}
             </span>
             <span style={{ fontSize: 13.5, color: reached ? C.teal : C.red, fontWeight: 700 }}>
               {reached ? "Minimum atteint ✓" : `Encore ${e.min - totalCount} pour valider`}
             </span>
           </div>
           <div style={{ height: 12, borderRadius: 99, background: "#eee4d2", overflow: "hidden", marginBottom: 6, position: "relative" }}>
-            <div style={{ height: "100%", width: `${Math.min(100, (totalCount / e.max) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
-            <div style={{ position: "absolute", top: 0, bottom: 0, left: `${(e.min / e.max) * 100}%`, width: 2, background: C.navy, opacity: .4 }} />
+            <div style={{ height: "100%", width: `${e.max ? Math.min(100, (totalCount / e.max) * 100) : (reached ? 100 : (totalCount / Math.max(e.min, 1)) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
+            {e.max ? <div style={{ position: "absolute", top: 0, bottom: 0, left: `${(e.min / e.max) * 100}%`, width: 2, background: C.navy, opacity: .4 }} /> : null}
           </div>
-          <div style={{ fontSize: 11.5, color: "#9c8d79", marginBottom: 18 }}>↑ le repère indique le minimum requis ({e.min})</div>
+          <div style={{ fontSize: 11.5, color: "#9c8d79", marginBottom: 18 }}>{e.max ? `↑ le repère indique le minimum requis (${e.min})` : `Minimum requis : ${e.min} joueur${e.min > 1 ? "s" : ""}`}</div>
 
           {/* participants inscrits + invités */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -1616,6 +1624,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={!isIn && full} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
                 {isIn ? <><X size={17} /> Me retirer</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
               </Btn>
+              {canManage && <Btn variant="soft" size="lg" onClick={() => setShowEdit(true)}><Edit3 size={17} /></Btn>}
               {canManage && <Btn variant="danger" size="lg" onClick={() => onRemove(e.id)}><Trash2 size={17} /></Btn>}
             </div>
           ) : (
@@ -1667,7 +1676,63 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           </div>
         </div>
       </div>
+      {showEdit && <EditEventModal e={e} onClose={() => setShowEdit(false)} onSave={async (patch) => { await updateEvent(e.id, patch); setShowEdit(false); }} />}
     </div>
+  );
+}
+
+/* ---- Modale : modifier un moment jeux (créateur/admin) ---- */
+function EditEventModal({ e, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: e.date, time: e.time, place: e.place, min: e.min, max: e.max || "",
+    notes: e.notes || "",
+    useDeadline: !!e.deadline,
+    deadlineDate: e.deadline ? new Date(e.deadline).toISOString().slice(0, 10) : e.date,
+    deadlineTime: e.deadline ? new Date(e.deadline).toTimeString().slice(0, 5) : "18:00",
+  });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setErr("");
+    if (!f.date || !f.time || !f.place.trim()) { setErr("Renseignez la date, l'heure et le lieu."); return; }
+    const minN = Number(f.min) || 1;
+    const maxN = f.max === "" || f.max == null ? null : Number(f.max);
+    if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
+    let deadline = null;
+    if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
+    setBusy(true);
+    const res = await onSave({ date: f.date, time: f.time, place: f.place.trim(), min: minN, max: maxN, notes: f.notes.trim(), deadline });
+    setBusy(false);
+    if (res?.error) setErr(res.error);
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <Modal open onClose={onClose} title="Modifier le moment jeux" width={540}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="Jour"><TextInput type="date" value={f.date} onChange={(ev) => setF({ ...f, date: ev.target.value })} /></Field>
+        <Field label="Heure"><TextInput type="time" value={f.time} onChange={(ev) => setF({ ...f, time: ev.target.value })} /></Field>
+      </div>
+      <Field label="Lieu"><TextInput value={f.place} onChange={(ev) => setF({ ...f, place: ev.target.value })} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="Joueurs min."><TextInput type="number" min={1} value={f.min} onChange={(ev) => setF({ ...f, min: ev.target.value })} /></Field>
+        <Field label="Joueurs max." hint="Vide = illimité"><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="illimité" /></Field>
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(232,163,23,.1)", marginBottom: f.useDeadline ? 12 : 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.useDeadline} onChange={(ev) => setF({ ...f, useDeadline: ev.target.checked })} style={{ width: 18, height: 18, accentColor: C.amber }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Date limite de validation</span>
+      </label>
+      {f.useDeadline && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Valable jusqu'au"><TextInput type="date" value={f.deadlineDate} onChange={(ev) => setF({ ...f, deadlineDate: ev.target.value })} /></Field>
+          <Field label="à"><TextInput type="time" value={f.deadlineTime} onChange={(ev) => setF({ ...f, deadlineTime: ev.target.value })} /></Field>
+        </div>
+      )}
+      <Field label="Note"><textarea value={f.notes} onChange={(ev) => setF({ ...f, notes: ev.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer les modifications</>}</Btn>
+    </Modal>
   );
 }
 
