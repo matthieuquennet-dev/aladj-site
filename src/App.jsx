@@ -158,7 +158,7 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = r.value; });
   return {
@@ -166,6 +166,7 @@ function mapGame(row, ratingsByGame, nameById = {}) {
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     shared: row.shared !== false,
+    comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -204,7 +205,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -212,6 +213,7 @@ function AppProvider({ children }) {
         supabase.from("event_players").select("*"),
         supabase.from("event_guests").select("*"),
         supabase.from("event_comments").select("*").order("created_at"),
+        supabase.from("game_comments").select("*").order("created_at"),
       ]);
 
       // table de correspondance id -> nom
@@ -226,9 +228,11 @@ function AppProvider({ children }) {
       (guests || []).forEach((g) => { (guestsByEvent[g.event_id] ||= []).push(g); });
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
+      const commentsByGame = {};
+      (gameComments || []).forEach((c) => { (commentsByGame[c.game_id] ||= []).push(c); });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById)));
+      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
     } catch (e) {
       console.error(e);
@@ -403,6 +407,27 @@ function AppProvider({ children }) {
     await loadData();
   }, [loadData]);
 
+  // ---- Commentaires de jeux (mêmes règles que ceux des moments) ----
+  const addGameComment = useCallback(async (gameId, content) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("game_comments").insert({ game_id: gameId, author_id: currentUser.id, content: content.trim() });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const updateGameComment = useCallback(async (commentId, content) => {
+    const { error } = await supabase.from("game_comments").update({ content: content.trim(), updated_at: new Date().toISOString() }).eq("id", commentId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  const removeGameComment = useCallback(async (commentId) => {
+    await supabase.from("game_comments").delete().eq("id", commentId);
+    await loadData();
+  }, [loadData]);
+
   const toggleJoin = useCallback(async (eventId) => {
     if (!currentUser) return;
     const ev = events.find((e) => e.id === eventId);
@@ -419,7 +444,8 @@ function AppProvider({ children }) {
     register, login, logout, addGame, updateGame, removeGame, rateGame,
     toggleGameShared, setShareLibrary,
     addEvent, updateEvent, toggleJoin, removeEvent,
-    addGuest, removeGuest, addComment, updateComment, removeComment, reload: loadData,
+    addGuest, removeGuest, addComment, updateComment, removeComment,
+    addGameComment, updateGameComment, removeGameComment, reload: loadData,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -2030,8 +2056,75 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         )}
       </div>
 
+      {/* commentaires sur le jeu */}
+      <GameComments g={g} onAuth={onAuth} onClose={onClose} />
+
       {editing && <EditGameModal g={g} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
     </Modal>
+  );
+}
+
+/* ---- Section commentaires d'une fiche de jeu (signés, modifiables) ---- */
+function GameComments({ g, onAuth, onClose }) {
+  const { currentUser, addGameComment, updateGameComment, removeGameComment } = useApp();
+  const [text, setText] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const list = g.comments || [];
+
+  const submit = async () => {
+    if (!text.trim()) return;
+    setBusy(true); await addGameComment(g.id, text); setBusy(false); setText("");
+  };
+  const saveEdit = async () => {
+    if (!editText.trim()) return;
+    await updateGameComment(editingId, editText); setEditingId(null); setEditText("");
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
+      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px" }}>💬 Avis & commentaires ({list.length})</h4>
+      <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+        {list.length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun commentaire pour l'instant. Partagez votre avis sur ce jeu !</span>}
+        {list.map((c) => {
+          const mine = currentUser && c.authorId === currentUser.id;
+          const edited = c.updatedAt && c.createdAt && new Date(c.updatedAt).getTime() - new Date(c.createdAt).getTime() > 2000;
+          return (
+            <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span>
+                {mine && editingId !== c.id && (
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
+                    <button onClick={() => removeGameComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+                  </span>
+                )}
+              </div>
+              {editingId === c.id ? (
+                <div>
+                  <textarea value={editText} onChange={(ev) => setEditText(ev.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn size="sm" variant="teal" onClick={saveEdit}><Check size={14} /> Enregistrer</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setEditingId(null)}>Annuler</Btn>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {currentUser ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <textarea value={text} onChange={(ev) => setText(ev.target.value)} rows={1} placeholder="Votre avis sur ce jeu..." style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
+          <Btn variant="teal" onClick={submit} disabled={busy || !text.trim()}>{busy ? <Loader2 size={16} className="aladj-spin" /> : "Publier"}</Btn>
+        </div>
+      ) : (
+        <span style={{ fontSize: 13, color: "#a89a86" }}>Connectez-vous pour laisser un commentaire.</span>
+      )}
+    </div>
   );
 }
 
