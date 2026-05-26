@@ -172,7 +172,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}) {
 }
 function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}) {
   return {
-    id: row.id, date: row.event_date, time: row.event_time, place: row.place, min: row.min_players, max: row.max_players,
+    id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
     deadline: row.deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
@@ -189,6 +189,7 @@ function AppProvider({ children }) {
   const [users, setUsers] = useState([]);
   const [games, setGames] = useState([]);
   const [events, setEvents] = useState([]);
+  const [places, setPlaces] = useState([]);
   const [fatalError, setFatalError] = useState(null);
 
   /* ---- Chargement des données partagées ---- */
@@ -205,7 +206,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -214,6 +215,7 @@ function AppProvider({ children }) {
         supabase.from("event_guests").select("*"),
         supabase.from("event_comments").select("*").order("created_at"),
         supabase.from("game_comments").select("*").order("created_at"),
+        supabase.from("places").select("*").order("name"),
       ]);
 
       // table de correspondance id -> nom
@@ -234,6 +236,7 @@ function AppProvider({ children }) {
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
       setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
+      setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -341,7 +344,7 @@ function AppProvider({ children }) {
   /* ---- Soirées ---- */
   const addEvent = useCallback(async (d) => {
     const { data, error } = await supabase.from("events").insert({
-      event_date: d.date, event_time: d.time, place: d.place, min_players: d.min, max_players: d.max,
+      event_date: d.date, event_time: d.time, place: d.place, place_id: d.placeId || null, min_players: d.min, max_players: d.max,
       notes: d.notes || "", host_id: currentUser.id, deadline: d.deadline || null,
     }).select().single();
     if (error) return { error: error.message };
@@ -358,7 +361,7 @@ function AppProvider({ children }) {
 
   const updateEvent = useCallback(async (id, patch) => {
     const { error } = await supabase.from("events").update({
-      event_date: patch.date, event_time: patch.time, place: patch.place,
+      event_date: patch.date, event_time: patch.time, place: patch.place, place_id: patch.placeId || null,
       min_players: patch.min, max_players: patch.max, notes: patch.notes || "", deadline: patch.deadline || null,
     }).eq("id", id);
     if (error) return { error: error.message };
@@ -428,6 +431,26 @@ function AppProvider({ children }) {
     await loadData();
   }, [loadData]);
 
+  // ---- Lieux réutilisables (partagés entre tous) ----
+  const addPlace = useCallback(async (data) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data: row, error } = await supabase.from("places").insert({
+      name: data.name.trim(), address: data.address?.trim() || "", access_info: data.accessInfo?.trim() || "", created_by: currentUser.id,
+    }).select().single();
+    if (error) return { error: error.message };
+    await loadData();
+    return { id: row.id };
+  }, [currentUser, loadData]);
+
+  const updatePlace = useCallback(async (id, data) => {
+    const { error } = await supabase.from("places").update({
+      name: data.name.trim(), address: data.address?.trim() || "", access_info: data.accessInfo?.trim() || "",
+    }).eq("id", id);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
   const toggleJoin = useCallback(async (eventId) => {
     if (!currentUser) return;
     const ev = events.find((e) => e.id === eventId);
@@ -440,12 +463,13 @@ function AppProvider({ children }) {
   const removeEvent = useCallback(async (id) => { await supabase.from("events").delete().eq("id", id); await loadData(); }, [loadData]);
 
   const value = {
-    ready, fatalError, users, games, events, currentUser,
+    ready, fatalError, users, games, events, places, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
     toggleGameShared, setShareLibrary,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment,
-    addGameComment, updateGameComment, removeGameComment, reload: loadData,
+    addGameComment, updateGameComment, removeGameComment,
+    addPlace, updatePlace, reload: loadData,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -1427,11 +1451,78 @@ function Legend({ color, label, outline }) {
 }
 
 /* ---- Modale création moment jeux (fond rouge/vert dynamique) ---- */
+/* ---- Sélecteur de lieu : choisir un lieu enregistré ou en créer un ---- */
+function PlaceSelector({ value, placeId, onChange }) {
+  // value = texte libre du lieu ; placeId = id du lieu enregistré (ou null)
+  const { places, addPlace, currentUser } = useApp();
+  const [mode, setMode] = useState(placeId ? "existing" : "free"); // "existing" | "free" | "new"
+  const [newPlace, setNewPlace] = useState({ name: "", address: "", accessInfo: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const createNew = async () => {
+    setErr("");
+    if (!newPlace.name.trim()) { setErr("Donnez un nom au lieu."); return; }
+    setBusy(true);
+    const res = await addPlace(newPlace);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    onChange({ place: newPlace.name.trim(), placeId: res.id });
+    setMode("existing");
+    setNewPlace({ name: "", address: "", accessInfo: "" });
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, marginBottom: 6 }}>Lieu</label>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => setMode("existing")} style={tabStyle(mode === "existing")}>Lieu enregistré</button>
+        <button type="button" onClick={() => { setMode("free"); onChange({ place: value, placeId: null }); }} style={tabStyle(mode === "free")}>Saisie libre</button>
+        <button type="button" onClick={() => setMode("new")} style={tabStyle(mode === "new")}>+ Nouveau lieu</button>
+      </div>
+
+      {mode === "existing" && (
+        places.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#a89a86", margin: 0 }}>Aucun lieu enregistré pour l'instant. Créez-en un avec « + Nouveau lieu ».</p>
+        ) : (
+          <select value={placeId || ""} onChange={(e) => { const p = places.find((x) => x.id === e.target.value); onChange({ place: p ? p.name : "", placeId: p ? p.id : null }); }} style={{ ...inputStyle, cursor: "pointer" }}>
+            <option value="">— Choisir un lieu —</option>
+            {places.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )
+      )}
+
+      {mode === "free" && (
+        <TextInput value={value} onChange={(e) => onChange({ place: e.target.value, placeId: null })} placeholder="Ex. Local ALADJ — Gouville-sur-Mer" />
+      )}
+
+      {mode === "new" && (
+        <div style={{ background: "rgba(30,138,138,.06)", borderRadius: 13, padding: 14 }}>
+          <Field label="Nom du lieu"><TextInput value={newPlace.name} onChange={(e) => setNewPlace({ ...newPlace, name: e.target.value })} placeholder="Ex. Chez Justine - Régneville" /></Field>
+          <Field label="Adresse exacte" hint="Facultatif"><TextInput value={newPlace.address} onChange={(e) => setNewPlace({ ...newPlace, address: e.target.value })} placeholder="12 rue des Jeux, 50590 Régneville" /></Field>
+          <Field label="Accès & stationnement" hint="Comment se garer / accéder">
+            <textarea value={newPlace.accessInfo} onChange={(e) => setNewPlace({ ...newPlace, accessInfo: e.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} placeholder="Parking devant la maison, sonner au portail bleu..." />
+          </Field>
+          {err && <div style={{ color: C.red, fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+          <Btn size="sm" variant="teal" onClick={createNew} disabled={busy}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Créer ce lieu</>}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+function tabStyle(active) {
+  return {
+    padding: "6px 12px", borderRadius: 9, border: "1px solid " + (active ? C.teal : "#e6dcc9"),
+    background: active ? C.teal : "#fff", color: active ? "#fff" : "#6e6256",
+    fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, cursor: "pointer",
+  };
+}
+
 function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -1456,7 +1547,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     }
     setBusy(true);
     const res = await onCreate({
-      date: f.date, time: f.time, place: f.place.trim(),
+      date: f.date, time: f.time, place: f.place.trim(), placeId: f.placeId,
       min: minN, max: maxN, notes: f.notes.trim(),
       joinSelf: f.joinSelf, deadline, invites,
     });
@@ -1489,7 +1580,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
         <Field label="Jour"><TextInput type="date" min={today} value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       </div>
-      <Field label="Lieu"><TextInput value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} placeholder="Ex. Local ALADJ — Gouville-sur-Mer" /></Field>
+      <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} max={30} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
         <Field label="Joueurs max." hint="Laisser vide = illimité"><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="illimité" /></Field>
@@ -1544,7 +1635,9 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser, users, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent } = useApp();
+  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent } = useApp();
+  const linkedPlace = e.placeId ? places.find((p) => p.id === e.placeId) : null;
+  const [showPlace, setShowPlace] = useState(false);
   const totalCount = e.players.length + (e.guests?.length || 0);
   const reached = totalCount >= e.min;
   const full = e.max ? totalCount >= e.max : false;
@@ -1581,7 +1674,13 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
-            <span style={{ display: "flex", gap: 6, alignItems: "center" }}><MapPin size={16} /> {e.place}</span>
+            {linkedPlace ? (
+              <button onClick={() => setShowPlace(true)} style={{ display: "flex", gap: 6, alignItems: "center", background: "rgba(255,255,255,.18)", border: "none", borderRadius: 8, padding: "3px 10px", cursor: "pointer", color: "#fff", fontSize: 14.5, fontFamily: "'Nunito',sans-serif", textDecoration: "underline", textUnderlineOffset: 3 }} title="Voir les infos d'accès">
+                <MapPin size={16} /> {e.place} <Info size={13} />
+              </button>
+            ) : (
+              <span style={{ display: "flex", gap: 6, alignItems: "center" }}><MapPin size={16} /> {e.place}</span>
+            )}
           </div>
         </div>
 
@@ -1703,6 +1802,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
       </div>
       {showEdit && <EditEventModal e={e} onClose={() => setShowEdit(false)} onSave={async (patch) => { await updateEvent(e.id, patch); setShowEdit(false); }} />}
+      {showPlace && linkedPlace && <PlaceInfoModal place={linkedPlace} onClose={() => setShowPlace(false)} />}
     </div>
   );
 }
@@ -1710,7 +1810,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 /* ---- Modale : modifier un moment jeux (créateur/admin) ---- */
 function EditEventModal({ e, onClose, onSave }) {
   const [f, setF] = useState({
-    date: e.date, time: e.time, place: e.place, min: e.min, max: e.max || "",
+    date: e.date, time: e.time, place: e.place, placeId: e.placeId || null, min: e.min, max: e.max || "",
     notes: e.notes || "",
     useDeadline: !!e.deadline,
     deadlineDate: e.deadline ? new Date(e.deadline).toISOString().slice(0, 10) : e.date,
@@ -1728,7 +1828,7 @@ function EditEventModal({ e, onClose, onSave }) {
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
     setBusy(true);
-    const res = await onSave({ date: f.date, time: f.time, place: f.place.trim(), min: minN, max: maxN, notes: f.notes.trim(), deadline });
+    const res = await onSave({ date: f.date, time: f.time, place: f.place.trim(), placeId: f.placeId, min: minN, max: maxN, notes: f.notes.trim(), deadline });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
@@ -1740,7 +1840,7 @@ function EditEventModal({ e, onClose, onSave }) {
         <Field label="Jour"><TextInput type="date" value={f.date} onChange={(ev) => setF({ ...f, date: ev.target.value })} /></Field>
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(ev) => setF({ ...f, time: ev.target.value })} /></Field>
       </div>
-      <Field label="Lieu"><TextInput value={f.place} onChange={(ev) => setF({ ...f, place: ev.target.value })} /></Field>
+      <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} value={f.min} onChange={(ev) => setF({ ...f, min: ev.target.value })} /></Field>
         <Field label="Joueurs max." hint="Vide = illimité"><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="illimité" /></Field>
@@ -1812,6 +1912,52 @@ function ShareEventModal({ event, onClose }) {
       <button onClick={onClose} style={{ width: "100%", marginTop: 12, background: "none", border: "none", color: "#9c8d79", cursor: "pointer", fontSize: 13.5, fontFamily: "'Nunito',sans-serif" }}>
         Plus tard
       </button>
+    </Modal>
+  );
+}
+
+/* ---- Modale : infos d'accès d'un lieu (+ édition par le créateur/admin) ---- */
+function PlaceInfoModal({ place, onClose }) {
+  const { currentUser, updatePlace } = useApp();
+  const canEdit = currentUser && (currentUser.id === place.createdBy || currentUser.admin);
+  const [editing, setEditing] = useState(false);
+  const [f, setF] = useState({ name: place.name, address: place.address, accessInfo: place.accessInfo });
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true); await updatePlace(place.id, f); setBusy(false); setEditing(false);
+  };
+
+  return (
+    <Modal open onClose={onClose} title={editing ? "Modifier le lieu" : place.name} width={480}>
+      {editing ? (
+        <div>
+          <Field label="Nom du lieu"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+          <Field label="Adresse exacte"><TextInput value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+          <Field label="Accès & stationnement"><textarea value={f.accessInfo} onChange={(e) => setF({ ...f, accessInfo: e.target.value })} rows={3} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="teal" onClick={save} disabled={busy}>{busy ? <Loader2 size={16} className="aladj-spin" /> : <><Check size={16} /> Enregistrer</>}</Btn>
+            <Btn variant="soft" onClick={() => setEditing(false)}>Annuler</Btn>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {place.address && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, marginBottom: 3 }}><MapPin size={14} style={{ verticalAlign: "-2px" }} /> Adresse</div>
+              <div style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.5 }}>{place.address}</div>
+            </div>
+          )}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, marginBottom: 3 }}>🅿️ Accès & stationnement</div>
+            <div style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{place.accessInfo || "Pas d'information d'accès pour ce lieu."}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 14, marginTop: 4 }}>
+            <span style={{ fontSize: 12.5, color: "#9c8d79" }}>Lieu créé par {place.createdByName}</span>
+            {canEdit && <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier</Btn>}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
