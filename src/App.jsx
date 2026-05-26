@@ -577,22 +577,33 @@ function MeepleIcon({ size = 22, color = C.navy }) {
 
 /* ---- Étoiles de notation ---- */
 function Stars({ value = 0, onRate, size = 18, readOnly = false }) {
-  const [hover, setHover] = useState(0);
+  const [hover, setHover] = useState(0); // valeur survolée (peut être .5)
+  const shown = hover || value; // valeur affichée
   return (
     <span style={{ display: "inline-flex", gap: 2 }} onMouseLeave={() => setHover(0)}>
       {[1, 2, 3, 4, 5].map((n) => {
-        const active = (hover || value) >= n;
+        const full = shown >= n;        // étoile pleine
+        const half = !full && shown >= n - 0.5; // demi-étoile
         return (
-          <button key={n} type="button" disabled={readOnly}
-            onMouseEnter={() => !readOnly && setHover(n)}
-            onClick={() => !readOnly && onRate && onRate(n)}
-            style={{
-              background: "none", border: "none", padding: 0, cursor: readOnly ? "default" : "pointer",
-              lineHeight: 0, transition: "transform .12s", transform: hover === n ? "scale(1.2)" : "scale(1)",
-            }}
-            aria-label={`${n} étoile${n > 1 ? "s" : ""}`}>
-            <Star size={size} fill={active ? C.amber : "none"} color={active ? C.amber : "#cdb9a0"} strokeWidth={1.8} />
-          </button>
+          <span key={n} style={{ position: "relative", lineHeight: 0, display: "inline-block", transition: "transform .12s", transform: (hover && Math.ceil(hover) === n) ? "scale(1.15)" : "scale(1)" }}>
+            {/* étoile de fond (vide) */}
+            <Star size={size} fill="none" color="#cdb9a0" strokeWidth={1.8} />
+            {/* remplissage (plein ou moitié gauche) */}
+            {(full || half) && (
+              <span style={{ position: "absolute", top: 0, left: 0, width: half ? "50%" : "100%", height: "100%", overflow: "hidden", lineHeight: 0 }}>
+                <Star size={size} fill={C.amber} color={C.amber} strokeWidth={1.8} />
+              </span>
+            )}
+            {/* zones cliquables : moitié gauche = n-0.5, moitié droite = n */}
+            {!readOnly && (
+              <>
+                <button type="button" aria-label={`${n - 0.5} étoile`} onMouseEnter={() => setHover(n - 0.5)} onClick={() => onRate && onRate(n - 0.5)}
+                  style={{ position: "absolute", top: 0, left: 0, width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
+                <button type="button" aria-label={`${n} étoiles`} onMouseEnter={() => setHover(n)} onClick={() => onRate && onRate(n)}
+                  style={{ position: "absolute", top: 0, left: "50%", width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
+              </>
+            )}
+          </span>
         );
       })}
     </span>
@@ -1459,6 +1470,7 @@ function PlaceSelector({ value, placeId, onChange }) {
   const [newPlace, setNewPlace] = useState({ name: "", address: "", accessInfo: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [editPlace, setEditPlace] = useState(null); // lieu en cours de modification
 
   const createNew = async () => {
     setErr("");
@@ -1471,6 +1483,8 @@ function PlaceSelector({ value, placeId, onChange }) {
     setMode("existing");
     setNewPlace({ name: "", address: "", accessInfo: "" });
   };
+
+  const selectedPlace = placeId ? places.find((p) => p.id === placeId) : null;
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -1485,10 +1499,20 @@ function PlaceSelector({ value, placeId, onChange }) {
         places.length === 0 ? (
           <p style={{ fontSize: 13, color: "#a89a86", margin: 0 }}>Aucun lieu enregistré pour l'instant. Créez-en un avec « + Nouveau lieu ».</p>
         ) : (
-          <select value={placeId || ""} onChange={(e) => { const p = places.find((x) => x.id === e.target.value); onChange({ place: p ? p.name : "", placeId: p ? p.id : null }); }} style={{ ...inputStyle, cursor: "pointer" }}>
-            <option value="">— Choisir un lieu —</option>
-            {places.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <div>
+            <select value={placeId || ""} onChange={(e) => { const p = places.find((x) => x.id === e.target.value); onChange({ place: p ? p.name : "", placeId: p ? p.id : null }); }} style={{ ...inputStyle, cursor: "pointer" }}>
+              <option value="">— Choisir un lieu —</option>
+              {places.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {selectedPlace && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "#8a7c6a" }}>
+                {selectedPlace.accessInfo ? <span>🅿️ Infos d'accès renseignées</span> : <span>Pas encore d'infos d'accès</span>}
+                <button type="button" onClick={() => setEditPlace(selectedPlace)} style={{ background: "none", border: "none", color: C.teal, cursor: "pointer", fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
+                  <Edit3 size={13} /> Modifier ce lieu
+                </button>
+              </div>
+            )}
+          </div>
         )
       )}
 
@@ -1507,6 +1531,8 @@ function PlaceSelector({ value, placeId, onChange }) {
           <Btn size="sm" variant="teal" onClick={createNew} disabled={busy}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Créer ce lieu</>}</Btn>
         </div>
       )}
+
+      {editPlace && <PlaceInfoModal place={editPlace} onClose={() => setEditPlace(null)} startEditing />}
     </div>
   );
 }
@@ -1917,10 +1943,10 @@ function ShareEventModal({ event, onClose }) {
 }
 
 /* ---- Modale : infos d'accès d'un lieu (+ édition par le créateur/admin) ---- */
-function PlaceInfoModal({ place, onClose }) {
+function PlaceInfoModal({ place, onClose, startEditing = false }) {
   const { currentUser, updatePlace } = useApp();
   const canEdit = currentUser && (currentUser.id === place.createdBy || currentUser.admin);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing && canEdit);
   const [f, setF] = useState({ name: place.name, address: place.address, accessInfo: place.accessInfo });
   const [busy, setBusy] = useState(false);
 
@@ -2130,8 +2156,8 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const canManage = currentUser && (currentUser.id === g.ownerId || currentUser.admin);
   const [editing, setEditing] = useState(false);
 
-  // distribution des notes
-  const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: Object.values(g.ratings || {}).filter((v) => v === n).length }));
+  // distribution des notes (les demi-notes sont regroupées avec l'entier supérieur : 4,5 → ligne 5)
+  const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: Object.values(g.ratings || {}).filter((v) => Math.ceil(v) === n).length }));
 
   return (
     <Modal open onClose={onClose} title={g.name} width={620}>
@@ -2148,7 +2174,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       <div style={{ display: "flex", gap: 20, alignItems: "center", background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 42, color: C.amber, lineHeight: 1 }}>{count ? avg.toFixed(1) : "—"}</div>
-          <Stars value={Math.round(avg)} readOnly size={15} />
+          <Stars value={Math.round(avg * 2) / 2} readOnly size={15} />
           <div style={{ fontSize: 12, color: "#9c8d79", marginTop: 3 }}>{count} avis</div>
         </div>
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -2169,7 +2195,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         {currentUser ? (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>Votre note {myRating ? `: ${myRating}/5` : ""}</span>
-            <Stars value={myRating} size={26} onRate={async (v) => { await rateGame(g.id, v); setToast(v === myRating ? "Note retirée" : `Noté ${v}/5 !`); }} />
+            <Stars value={myRating} size={26} onRate={async (v) => { await rateGame(g.id, v); setToast(v === myRating ? "Note retirée" : `Noté ${String(v).replace(".", ",")}/5 !`); }} />
           </div>
         ) : (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
