@@ -2627,6 +2627,8 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const { games, users, currentUser } = useApp();
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
+  const [players, setPlayers] = useState("");
+  const [duration, setDuration] = useState("");
   const [sort, setSort] = useState("note");
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -2659,15 +2661,30 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     let list = communGames.filter((g) => {
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (g.mechanics || []).includes(mech);
-      return okQ && okM;
+      // filtre nombre de joueurs : le jeu accepte-t-il ce nombre ? (entre min et max)
+      let okP = true;
+      if (players) {
+        const want = Number(players);
+        const min = Number(g.min) || 1;
+        const max = g.max ? Number(g.max) : Infinity;
+        okP = (players === "7") ? max >= 7 : (want >= min && want <= max);
+      }
+      // filtre durée : durée du jeu sous le seuil choisi
+      let okD = true;
+      if (duration) {
+        const t = Number(g.time) || 0;
+        if (duration === "121") okD = t > 120;
+        else okD = t > 0 && t <= Number(duration);
+      }
+      return okQ && okM && okP && okD;
     });
     if (sort === "note") list = rankGames(list);
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [communGames, q, mech, sort]);
+  }, [communGames, q, mech, players, duration, sort]);
 
-  const top = useMemo(() => rankGames(communGames).filter((g) => g._count > 0).slice(0, 5), [communGames]);
+  const top = useMemo(() => rankGames(communGames).filter((g) => g._count > 0).slice(0, 20), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
   return (
@@ -2684,7 +2701,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
         {/* COLONNE PRINCIPALE */}
-        <div>
+        <div className="aladj-ludo-main">
           {/* recherche + filtres */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
@@ -2694,6 +2711,23 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes mécaniques</option>
               {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={players} onChange={(e) => setPlayers(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Tous joueurs</option>
+              <option value="1">1 joueur</option>
+              <option value="2">2 joueurs</option>
+              <option value="3">3 joueurs</option>
+              <option value="4">4 joueurs</option>
+              <option value="5">5 joueurs</option>
+              <option value="6">6 joueurs</option>
+              <option value="7">7+ joueurs</option>
+            </select>
+            <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes durées</option>
+              <option value="30">≤ 30 min</option>
+              <option value="60">≤ 1 h</option>
+              <option value="120">≤ 2 h</option>
+              <option value="121">{"> 2 h"}</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés</option>
@@ -2710,31 +2744,8 @@ function LudothequePage({ onAuth, setToast, setPage }) {
 
         {/* COLONNE LATÉRALE : classements */}
         <aside style={{ position: "sticky", top: 88, display: "grid", gap: 18 }} className="aladj-ludo-aside">
-          {/* TOP 5 */}
-          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-              <Trophy size={20} color={C.amber} />
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top jeux de l'asso</h3>
-            </div>
-            {top.length === 0 && <p style={{ opacity: .7, fontSize: 14 }}>Aucune note pour l'instant.</p>}
-            <div style={{ display: "grid", gap: 8 }}>
-              {top.map((g, i) => (
-                <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.07)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: [C.amber, "#d9d9d9", "#cd9b6a", "rgba(255,255,255,.5)", "rgba(255,255,255,.5)"][i], width: 22 }}>{i + 1}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-                    <span style={{ fontSize: 11.5, color: "rgba(255,255,255,.55)" }}>{g._count} vote{g._count > 1 ? "s" : ""}</span>
-                  </span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
-                    <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* CLASSEMENT PERSONNALISÉ */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}` }}>
+          {/* CLASSEMENT PERSONNALISÉ (placé en premier pour remonter en haut sur mobile) */}
+          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}` }} className="aladj-ludo-custom">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Award size={20} color={C.teal} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Classement sur-mesure</h3>
@@ -2743,6 +2754,32 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               Choisissez les membres présents à votre moment jeux pour trouver le jeu qui plaira au plus grand nombre.
             </p>
             <Btn full variant="teal" onClick={() => setShowCustomRank(true)}><Filter size={16} /> Composer ma tablée</Btn>
+          </div>
+
+          {/* TOP 20 */}
+          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <Trophy size={20} color={C.amber} />
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
+            </div>
+            {top.length === 0 && <p style={{ opacity: .7, fontSize: 14 }}>Aucune note pour l'instant.</p>}
+            <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+              {top.map((g, i) => {
+                const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
+                return (
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.07)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 18 : 15, color: medal, width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                      <span style={{ fontSize: 11.5, color: "rgba(255,255,255,.55)" }}>{g._count} vote{g._count > 1 ? "s" : ""}</span>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
+                      <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </aside>
       </div>
@@ -2769,19 +2806,38 @@ function LudothequePage({ onAuth, setToast, setPage }) {
 function CustomRankModal({ onClose, onOpenGame }) {
   const { users, games } = useApp();
   const [chosen, setChosen] = useState([]);
+  const [players, setPlayers] = useState("");
+  const [duration, setDuration] = useState("");
   const toggle = (id) => setChosen((c) => c.includes(id) ? c.filter((x) => x !== id) : [...c, id]);
 
   const ranked = useMemo(() => {
     if (chosen.length === 0) return [];
-    return rankGames(games, chosen).filter((g) => g._count > 0).slice(0, 12);
-  }, [games, chosen]);
+    let list = rankGames(games, chosen).filter((g) => g._count > 0);
+    // filtre nombre de joueurs
+    if (players) {
+      const want = Number(players);
+      list = list.filter((g) => {
+        const min = Number(g.min) || 1;
+        const max = g.max ? Number(g.max) : Infinity;
+        return players === "7" ? max >= 7 : (want >= min && want <= max);
+      });
+    }
+    // filtre durée
+    if (duration) {
+      list = list.filter((g) => {
+        const t = Number(g.time) || 0;
+        return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
+      });
+    }
+    return list.slice(0, 12);
+  }, [games, chosen, players, duration]);
 
   return (
     <Modal open onClose={onClose} title="Classement pour votre tablée" width={620}>
       <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 16px", lineHeight: 1.5 }}>
         Sélectionnez les membres présents : le classement ne tient compte que de <b>leurs</b> notes. Idéal pour choisir un jeu qui mettra tout le monde d'accord.
       </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
         {users.map((u) => {
           const active = chosen.includes(u.id);
           return (
@@ -2796,19 +2852,41 @@ function CustomRankModal({ onClose, onOpenGame }) {
         })}
       </div>
 
+      {/* filtres joueurs + durée */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+        <select value={players} onChange={(e) => setPlayers(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          <option value="">Nombre de joueurs : tous</option>
+          <option value="1">1 joueur</option>
+          <option value="2">2 joueurs</option>
+          <option value="3">3 joueurs</option>
+          <option value="4">4 joueurs</option>
+          <option value="5">5 joueurs</option>
+          <option value="6">6 joueurs</option>
+          <option value="7">7+ joueurs</option>
+        </select>
+        <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          <option value="">Durée : toutes</option>
+          <option value="30">≤ 30 min</option>
+          <option value="60">≤ 1 h</option>
+          <option value="120">≤ 2 h</option>
+          <option value="121">{"> 2 h"}</option>
+        </select>
+        {chosen.length > 1 && <button onClick={() => setPlayers(String(Math.min(chosen.length, 7)))} style={{ background: "rgba(30,138,138,.1)", border: "none", borderRadius: 10, padding: "0 14px", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>Pour {chosen.length} joueurs</button>}
+      </div>
+
       {chosen.length === 0 ? (
         <EmptyHint icon={Users} text="Sélectionnez au moins un membre." />
       ) : ranked.length === 0 ? (
-        <EmptyHint icon={Star} text="Ces membres n'ont pas encore noté de jeux." />
+        <EmptyHint icon={Star} text={players || duration ? "Aucun jeu noté ne correspond à ces filtres." : "Ces membres n'ont pas encore noté de jeux."} />
       ) : (
         <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 2 }}>{chosen.length} membre(s) · {ranked.length} jeu(x) noté(s)</div>
+          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 2 }}>{chosen.length} membre(s) · {ranked.length} jeu(x) trouvé(s)</div>
           {ranked.map((g, i) => (
             <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
-                <span style={{ fontSize: 12, color: "#9c8d79" }}>{g._count} vote(s) parmi la sélection · chez {g.ownerName}</span>
+                <span style={{ fontSize: 12, color: "#9c8d79" }}>{g._count} vote(s) parmi la sélection · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}</span>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
                 <Star size={16} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
@@ -3314,8 +3392,9 @@ export default function App() {
         }
         @media (min-width: 861px) { .aladj-mobile-menu { display: none !important; } }
         @media (max-width: 920px) {
-          .aladj-ludo-grid { grid-template-columns: 1fr !important; }
-          .aladj-ludo-aside { position: static !important; }
+          .aladj-ludo-grid { display: flex !important; flex-direction: column !important; }
+          .aladj-ludo-aside { position: static !important; order: -1; }
+          .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
         }
       `}</style>
       <AppProvider><Shell /></AppProvider>
