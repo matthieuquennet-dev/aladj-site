@@ -2232,8 +2232,25 @@ function GameCover({ g, size = "md" }) {
 }
 
 function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
+  const { currentUser } = useApp();
   const { avg, count } = gameStats(g);
   const isShared = g.shared !== false;
+  const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+  const iVoted = myRating > 0;
+
+  // Badge : dans "ma ludothèque" → ma note ; dans la générale → moyenne (couleur selon si j'ai voté)
+  let badgeBg, badgeContent;
+  if (myGame) {
+    badgeBg = iVoted ? "rgba(232,163,23,.95)" : "rgba(18,41,63,.6)";
+    badgeContent = iVoted
+      ? <><Star size={13} fill="#fff" color="#fff" /> {String(myRating).replace(".", ",")}</>
+      : <span style={{ fontSize: 11.5 }}>À noter</span>;
+  } else {
+    // ludothèque générale : moyenne ; turquoise si j'ai voté, foncé sinon
+    badgeBg = iVoted ? "rgba(30,138,138,.95)" : "rgba(18,41,63,.85)";
+    badgeContent = <><Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(2).replace(".", ",") : "—"}</>;
+  }
+
   return (
     <div style={{ position: "relative" }}>
       <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
@@ -2241,8 +2258,9 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
         onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
         <div style={{ position: "relative" }}>
           <GameCover g={g} />
-          <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
-            <Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(2).replace(".", ",") : "—"}
+          <div title={myGame ? (iVoted ? "Votre note" : "Vous n'avez pas encore noté ce jeu") : (iVoted ? "Moyenne — vous avez voté" : "Moyenne — vous n'avez pas encore voté")}
+            style={{ position: "absolute", top: 10, right: 10, background: badgeBg, color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+            {badgeContent}
           </div>
         </div>
         <div style={{ padding: 16 }}>
@@ -2679,10 +2697,11 @@ function LudothequePage({ onAuth, setToast, setPage }) {
       return okQ && okM && okP && okD;
     });
     if (sort === "note") list = rankGames(list);
+    else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [communGames, q, mech, players, duration, sort]);
+  }, [communGames, q, mech, players, duration, sort, currentUser]);
 
   const top = useMemo(() => rankGames(communGames).filter((g) => g._count > 0).slice(0, 20), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
@@ -2730,7 +2749,8 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <option value="121">{"> 2 h"}</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="note">Mieux notés</option>
+              <option value="note">Mieux notés (général)</option>
+              <option value="myNote">Mes meilleures notes</option>
               <option value="alpha">A → Z</option>
               <option value="recent">Récents</option>
             </select>
@@ -2915,7 +2935,7 @@ function AddGameFlow({ onClose, setToast }) {
           <SourceBtn icon={PenLine} color={C.amber} title="Saisir manuellement" desc="Remplissez vous-même la fiche du jeu (toujours disponible)." onClick={() => { setPrefillName(""); setMode("manual"); }} />
         </div>
       )}
-      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { await addGame({ ...data, source: "BoardGameGeek" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
+      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data, msg) => { if (data) { await addGame({ ...data, source: "BoardGameGeek" }); } onClose(); setToast(msg || `« ${data?.name} » ajouté !`); }} />}
       {mode === "manual" && <ManualForm prefillName={prefillName} onBack={() => setMode("choose")} onDone={async (data, msg) => { if (data) { await addGame({ ...data, source: "manuel" }); } onClose(); setToast(msg || `« ${data?.name} » ajouté !`); }} />}
     </Modal>
   );
@@ -2939,6 +2959,7 @@ function SourceBtn({ icon: Icon, color, title, desc, onClick, badge }) {
 }
 
 function BggImport({ onBack, onDone, onManual }) {
+  const { games, currentUser, addOwner } = useApp();
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -2947,6 +2968,9 @@ function BggImport({ onBack, onDone, onManual }) {
   const [importing, setImporting] = useState(null);
   const [translating, setTranslating] = useState(false);
   const [preview, setPreview] = useState(null);
+
+  // jeux déjà présents dans la base au nom proche de la recherche
+  const existing = useMemo(() => findSimilarGames(games, q), [games, q]);
 
   const search = async () => {
     if (!q.trim()) return;
@@ -3012,6 +3036,32 @@ function BggImport({ onBack, onDone, onManual }) {
       </div>
       {translating && <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.teal, fontSize: 13.5, marginBottom: 12, fontWeight: 600 }}><Loader2 size={15} className="aladj-spin" /> Traduction de la fiche en français...</div>}
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, marginBottom: 14, lineHeight: 1.5 }}>{err}</div>}
+
+      {/* jeux déjà présents dans la ludothèque (évite les doublons) */}
+      {existing.length > 0 && (
+        <div style={{ background: "rgba(30,138,138,.08)", border: "1px solid rgba(30,138,138,.25)", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14, display: "block", marginBottom: 8 }}>Déjà dans la ludothèque</span>
+          <div style={{ display: "grid", gap: 8 }}>
+            {existing.slice(0, 4).map((g) => {
+              const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
+              return (
+                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                    {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
+                  </div>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
+                  </span>
+                  {alreadyMine
+                    ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 6px" }}>✓ Vous l'avez</span>
+                    : <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {failed && (
         <Btn full variant="amber" onClick={() => onManual(q.trim())} style={{ marginBottom: 14 }}>
           <PenLine size={16} /> Saisir « {q.trim() || "ce jeu"} » manuellement
@@ -3040,11 +3090,11 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
 
-  // jeux existants au nom proche, que l'utilisateur ne possède pas déjà
+  // jeux existants au nom proche (qu'on les possède ou non)
   const similar = useMemo(() => {
     if (dismissed) return [];
-    return findSimilarGames(games, f.name).filter((g) => !(g.ownerIds || []).includes(currentUser?.id));
-  }, [games, f.name, dismissed, currentUser]);
+    return findSimilarGames(games, f.name);
+  }, [games, f.name, dismissed]);
 
   const submit = () => {
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
@@ -3062,18 +3112,25 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14 }}>Ce jeu existe peut-être déjà</span>
             <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", fontSize: 12.5 }}>Ignorer</button>
           </div>
-          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Inutile de recréer une fiche : cliquez sur « Je l'ai aussi » pour l'ajouter à votre ludothèque.</p>
+          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Inutile de recréer une fiche : cliquez sur « Je l'ai aussi » pour vous rattacher au jeu existant.</p>
           <div style={{ display: "grid", gap: 8 }}>
-            {similar.slice(0, 4).map((g) => (
-              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
-                <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})` }} />
-                <span style={{ flex: 1 }}>
-                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{g.name}</span>
-                  <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>{g.year || ""} · déjà chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
-                </span>
-                <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>
-              </div>
-            ))}
+            {similar.slice(0, 5).map((g) => {
+              const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
+              return (
+                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                    {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
+                  </div>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{g.name}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>{g.year ? `${g.year} · ` : ""}chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
+                  </span>
+                  {alreadyMine
+                    ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 8px" }}>✓ Vous l'avez</span>
+                    : <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -3107,8 +3164,45 @@ function MyLudoPage({ setToast, setPage }) {
   const { games, currentUser, setShareLibrary, toggleGameShared } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [q, setQ] = useState("");
+  const [mech, setMech] = useState("");
+  const [players, setPlayers] = useState("");
+  const [duration, setDuration] = useState("");
+  const [sort, setSort] = useState("alpha");
 
-  const mine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id) || g.ownerId === currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [games, currentUser]);
+  const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id) || g.ownerId === currentUser?.id), [games, currentUser]);
+  const myMechanics = useMemo(() => {
+    const s = new Set();
+    allMine.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
+    return [...s].sort((a, b) => a.localeCompare(b, "fr"));
+  }, [allMine]);
+
+  const mine = useMemo(() => {
+    let list = allMine.filter((g) => {
+      const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase());
+      const okM = !mech || (g.mechanics || []).includes(mech);
+      let okP = true;
+      if (players) {
+        const want = Number(players);
+        const min = Number(g.min) || 1;
+        const max = g.max ? Number(g.max) : Infinity;
+        okP = (players === "7") ? max >= 7 : (want >= min && want <= max);
+      }
+      let okD = true;
+      if (duration) {
+        const t = Number(g.time) || 0;
+        if (duration === "121") okD = t > 120;
+        else okD = t > 0 && t <= Number(duration);
+      }
+      return okQ && okM && okP && okD;
+    });
+    if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    else if (sort === "note") list = rankGames(list); // note générale
+    else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
+    else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    return list;
+  }, [allMine, q, mech, players, duration, sort, currentUser]);
+
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
 
@@ -3116,7 +3210,7 @@ function MyLudoPage({ setToast, setPage }) {
     const wb = XLSX.utils.book_new();
 
     // Feuille 1 : ma ludothèque détaillée
-    const rows = mine.map((g) => {
+    const rows = allMine.map((g) => {
       const { avg, count } = gameStats(g);
       return {
         "Jeu": g.name,
@@ -3219,7 +3313,7 @@ function MyLudoPage({ setToast, setPage }) {
         </div>
       )}
 
-      {mine.length === 0 ? (
+      {allMine.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "rgba(26,58,92,.03)", borderRadius: 20, border: "2px dashed #e0d4bf" }}>
           <Gamepad2 size={48} color="#cdb9a0" />
           <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, marginTop: 14, marginBottom: 6 }}>Votre ludothèque est vide</h3>
@@ -3227,9 +3321,42 @@ function MyLudoPage({ setToast, setPage }) {
           <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter mon premier jeu</Btn>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-          {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} />)}
-        </div>
+        <>
+          {/* recherche + filtres + tri */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
+              <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher dans mes jeux..." style={{ paddingLeft: 42 }} />
+            </div>
+            <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes mécaniques</option>
+              {myMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={players} onChange={(e) => setPlayers(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Tous joueurs</option>
+              <option value="1">1 joueur</option><option value="2">2 joueurs</option><option value="3">3 joueurs</option>
+              <option value="4">4 joueurs</option><option value="5">5 joueurs</option><option value="6">6 joueurs</option><option value="7">7+ joueurs</option>
+            </select>
+            <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes durées</option>
+              <option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="120">≤ 2 h</option><option value="121">{"> 2 h"}</option>
+            </select>
+            <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="alpha">A → Z</option>
+              <option value="note">Mieux notés (général)</option>
+              <option value="myNote">Mes meilleures notes</option>
+              <option value="recent">Récents</option>
+            </select>
+          </div>
+
+          {mine.length === 0 ? (
+            <EmptyHint icon={Library} text="Aucun de vos jeux ne correspond à ces filtres." />
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
+              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} />)}
+            </div>
+          )}
+        </>
       )}
 
       {showAdd && <AddGameFlow onClose={() => setShowAdd(false)} setToast={setToast} />}
