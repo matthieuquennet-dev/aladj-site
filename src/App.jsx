@@ -295,7 +295,16 @@ function AppProvider({ children }) {
   /* ---- Charger le profil du membre connecté ---- */
   const loadCurrentUser = useCallback(async () => {
     if (!authUser) { setCurrentUser(null); return; }
-    const { data } = await supabase.from("profiles").select("*").eq("id", authUser.id).single();
+    let { data } = await supabase.from("profiles").select("*").eq("id", authUser.id).single();
+    // Première connexion via Google : pas encore de profil → on en crée un.
+    if (!data) {
+      const meta = authUser.user_metadata || {};
+      const name = meta.full_name || meta.name || (authUser.email ? authUser.email.split("@")[0] : "Membre");
+      const { data: created } = await supabase.from("profiles").insert({
+        id: authUser.id, name, role: "decideur", is_admin: false,
+      }).select().single();
+      data = created;
+    }
     if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, shareLibrary: data.share_library !== false });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
@@ -325,6 +334,16 @@ function AppProvider({ children }) {
     if (error) return { error: "E-mail ou mot de passe incorrect." };
     const { data: prof } = await supabase.from("profiles").select("name").eq("id", data.user.id).single();
     return { user: { name: prof?.name || "Membre" } };
+  }, []);
+
+  // Connexion via Google (OAuth). Redirige vers Google puis revient sur le site.
+  const loginWithGoogle = useCallback(async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) return { error: error.message };
+    return {}; // la redirection prend le relais
   }, []);
 
   const logout = useCallback(async () => { await supabase.auth.signOut(); setCurrentUser(null); }, []);
@@ -556,6 +575,7 @@ function AppProvider({ children }) {
   const value = {
     ready, fatalError, users, games, events, places, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
+    loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner,
     addExtension, addExtensionOwner, removeExtensionOwner,
     addEvent, updateEvent, toggleJoin, removeEvent,
@@ -1028,7 +1048,7 @@ function Navbar({ page, setPage, onAuth }) {
    AUTHENTIFICATION (modale) — Supabase
    ============================================================================= */
 function AuthModal({ mode, onClose, setToast }) {
-  const { login, register } = useApp();
+  const { login, register, loginWithGoogle } = useApp();
   const [tab, setTab] = useState(mode || "login");
   const [form, setForm] = useState({ name: "", email: "", pwd: "", pwd2: "", role: "decideur" });
   const [showPwd, setShowPwd] = useState(false);
@@ -1070,6 +1090,23 @@ function AuthModal({ mode, onClose, setToast }) {
       </div>
 
       {info && <div style={{ background: "rgba(30,138,138,.12)", color: C.teal, padding: "12px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14, lineHeight: 1.5 }}>{info}</div>}
+
+      {/* Connexion Google */}
+      <button onClick={async () => { setErr(""); const res = await loginWithGoogle(); if (res?.error) setErr(res.error); }}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "12px", borderRadius: 12, border: "1.5px solid #e0d4bf", background: "#fff", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: C.navy, marginBottom: 16 }}>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+          <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+          <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+          <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+        </svg>
+        Continuer avec Google
+      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <span style={{ flex: 1, height: 1, background: "#ece2d0" }} />
+        <span style={{ fontSize: 12.5, color: "#a89a86" }}>ou par e-mail</span>
+        <span style={{ flex: 1, height: 1, background: "#ece2d0" }} />
+      </div>
 
       {tab === "register" && (
         <Field label="Nom ou pseudo">
@@ -2708,6 +2745,17 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             <Btn full variant="teal" onClick={() => setShowCustomRank(true)}><Filter size={16} /> Composer ma tablée</Btn>
           </div>
         </aside>
+      </div>
+
+      {/* Mention obligatoire BGG (données importées via leur API) */}
+      <div style={{ textAlign: "center", padding: "30px 20px 10px", marginTop: 10 }}>
+        <a href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, textDecoration: "none", color: "#9c8d79", fontSize: 12.5, opacity: .85 }}>
+          <span style={{ display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: 6, background: "#ff5100" }}>
+            <Dice color="#fff" n={5} style={{ width: 13 }} />
+          </span>
+          <span>Certaines données de jeux proviennent de <b style={{ color: "#6e6256" }}>BoardGameGeek</b> — Powered by BGG</span>
+        </a>
       </div>
 
       {showAdd && <AddGameFlow onClose={() => setShowAdd(false)} setToast={setToast} />}
