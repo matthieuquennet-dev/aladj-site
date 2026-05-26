@@ -34,6 +34,18 @@ const SIGNAL_GROUPS = [
 /* ---------- Utilitaires ---------- */
 const slug = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
+// Normalise un nom de jeu pour comparer (minuscules, sans accents ni ponctuation/espaces).
+const normGameName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+// Cherche les jeux existants dont le nom est identique ou très proche du nom saisi.
+function findSimilarGames(games, name) {
+  const n = normGameName(name);
+  if (n.length < 3) return [];
+  return games.filter((g) => {
+    const gn = normGameName(g.name);
+    return gn === n || gn.includes(n) || n.includes(gn);
+  });
+}
+
 const FR_DAYS = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
 const FR_MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 function formatDateFr(iso) {
@@ -158,13 +170,18 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}) {
   const ratings = {};
-  (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = r.value; });
+  (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
+  // liste des propriétaires (table de liaison) ; repli sur owner_id si liaison vide
+  let ownerIds = ownersByGame[row.id] || [];
+  if (ownerIds.length === 0 && row.owner_id) ownerIds = [row.owner_id];
+  const owners = ownerIds.map((id) => ({ id, name: nameById[id] || "Membre" }));
   return {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
+    owners, ownerIds,
     shared: row.shared !== false,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
@@ -206,7 +223,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -216,6 +233,7 @@ function AppProvider({ children }) {
         supabase.from("event_comments").select("*").order("created_at"),
         supabase.from("game_comments").select("*").order("created_at"),
         supabase.from("places").select("*").order("name"),
+        supabase.from("game_owners").select("*"),
       ]);
 
       // table de correspondance id -> nom
@@ -232,9 +250,12 @@ function AppProvider({ children }) {
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
       const commentsByGame = {};
       (gameComments || []).forEach((c) => { (commentsByGame[c.game_id] ||= []).push(c); });
+      // propriétaires multiples par jeu (table de liaison game_owners)
+      const ownersByGame = {};
+      (gameOwners || []).forEach((o) => { (ownersByGame[o.game_id] ||= []).push(o.owner_id); });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame)));
+      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
     } catch (e) {
@@ -302,8 +323,31 @@ function AppProvider({ children }) {
       source: d.source || "manuel", owner_id: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
+    // on inscrit le créateur comme premier propriétaire dans la liaison
+    await supabase.from("game_owners").insert({ game_id: data.id, owner_id: currentUser.id });
     await loadData();
     return { game: data };
+  }, [currentUser, loadData]);
+
+  // Se rattacher à un jeu existant ("je l'ai aussi") — sans recréer de fiche
+  const addOwner = useCallback(async (gameId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("game_owners").insert({ game_id: gameId, owner_id: currentUser.id });
+    if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Se retirer d'un jeu ("je ne l'ai plus"). Si plus aucun propriétaire, la fiche est supprimée.
+  const removeOwner = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    await supabase.from("game_owners").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
+    // reste-t-il des propriétaires ?
+    const { data: remaining } = await supabase.from("game_owners").select("id").eq("game_id", gameId);
+    if (!remaining || remaining.length === 0) {
+      await supabase.from("games").delete().eq("id", gameId); // plus personne → on retire la fiche
+    }
+    await loadData();
   }, [currentUser, loadData]);
 
   const updateGame = useCallback(async (id, patch) => {
@@ -465,7 +509,7 @@ function AppProvider({ children }) {
   const value = {
     ready, fatalError, users, games, events, places, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
-    toggleGameShared, setShareLibrary,
+    toggleGameShared, setShareLibrary, addOwner, removeOwner,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
@@ -1245,7 +1289,7 @@ function MembersModal({ onClose, onPickMember }) {
 function MemberLibraryModal({ memberId, onClose }) {
   const { games, users } = useApp();
   const member = users.find((u) => u.id === memberId);
-  const theirGames = games.filter((g) => g.ownerId === memberId).sort((a, b) => a.name.localeCompare(b.name));
+  const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId) || g.ownerId === memberId).sort((a, b) => a.name.localeCompare(b.name));
   return (
     <Modal open onClose={onClose} title={member ? `Ludothèque de ${member.name}` : "Ludothèque"} width={620}>
       {theirGames.length === 0 ? (
@@ -2112,7 +2156,7 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
         <div style={{ position: "relative" }}>
           <GameCover g={g} />
           <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
-            <Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(1) : "—"}
+            <Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(2).replace(".", ",") : "—"}
           </div>
         </div>
         <div style={{ padding: 16 }}>
@@ -2126,7 +2170,7 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
             {(g.mechanics || []).slice(0, 2).map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez <b style={{ color: C.teal }}>{g.ownerName}</b></span>
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez <b style={{ color: C.teal }}>{(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}</b>{g.owners && g.owners.length > 1 ? ` +${g.owners.length - 1}` : ""}</span>
             <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{count} vote{count > 1 ? "s" : ""}</span>
           </div>
         </div>
@@ -2150,10 +2194,12 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, removeGame, updateGame, users } = useApp();
+  const { currentUser, rateGame, removeGame, updateGame, users, addOwner, removeOwner } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
-  const canManage = currentUser && (currentUser.id === g.ownerId || currentUser.admin);
+  const owners = g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName }] : []);
+  const isOwner = currentUser && owners.some((o) => o.id === currentUser.id);
+  const canManage = currentUser && (isOwner || currentUser.admin);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
 
@@ -2219,12 +2265,42 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         </>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 16, flexWrap: "wrap", gap: 10 }}>
-        <span style={{ fontSize: 13.5, color: "#8a7c6a" }}>Apporté par <b style={{ color: C.teal, fontFamily: "'Fredoka',sans-serif" }}>{g.ownerName}</b></span>
-        {canManage && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier</Btn>
-            <Btn size="sm" variant="danger" onClick={async () => { await removeGame(g.id); onClose(); setToast("Jeu retiré de la ludothèque."); }}><Trash2 size={14} /> Retirer</Btn>
+      <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <span style={{ fontSize: 13, color: "#8a7c6a", display: "block", marginBottom: 4 }}>{owners.length > 1 ? "Possédé par" : "Apporté par"}</span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {owners.map((o) => (
+                <span key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: o.id === currentUser?.id ? "rgba(30,138,138,.12)" : "rgba(26,58,92,.05)", borderRadius: 999, padding: "4px 11px", fontSize: 13, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: o.id === currentUser?.id ? C.teal : C.navy }}>
+                  <span style={{ width: 20, height: 20, borderRadius: 6, background: o.id === currentUser?.id ? C.teal : C.navy, color: "#fff", display: "grid", placeItems: "center", fontSize: 11 }}>{o.name[0].toUpperCase()}</span>
+                  {o.name}{o.id === currentUser?.id ? " (vous)" : ""}
+                </span>
+              ))}
+            </div>
+          </div>
+          {canManage && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier</Btn>
+            </div>
+          )}
+        </div>
+
+        {/* rattachement : je l'ai aussi / je ne l'ai plus */}
+        {currentUser && (
+          <div style={{ marginTop: 14 }}>
+            {isOwner ? (
+              <Btn size="sm" variant="danger" onClick={async () => {
+                const last = owners.length === 1;
+                await removeOwner(g.id);
+                if (last) { onClose(); setToast("Jeu retiré de la ludothèque."); }
+                else setToast("Vous ne possédez plus ce jeu.");
+              }}><X size={14} /> Je ne l'ai plus</Btn>
+            ) : (
+              <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); setToast("Ajouté à votre ludothèque !"); }}><Plus size={14} /> Je l'ai aussi</Btn>
+            )}
+            {currentUser.admin && owners.length > 0 && (
+              <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
+            )}
           </div>
         )}
       </div>
@@ -2406,7 +2482,12 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     return m;
   }, [users]);
   const communGames = useMemo(
-    () => games.filter((g) => g.shared !== false && sharedById[g.ownerId] !== false),
+    () => games.filter((g) => {
+      if (g.shared === false) return false;
+      // visible si au moins un propriétaire partage sa ludothèque
+      const ids = (g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []);
+      return ids.some((id) => sharedById[id] !== false);
+    }),
     [games, sharedById]
   );
 
@@ -2487,7 +2568,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                     <span style={{ fontSize: 11.5, color: "rgba(255,255,255,.55)" }}>{g._count} vote{g._count > 1 ? "s" : ""}</span>
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
-                    <Star size={14} fill={C.amber} /> {g._avg.toFixed(1)}
+                    <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
                   </span>
                 </button>
               ))}
@@ -2561,7 +2642,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 <span style={{ fontSize: 12, color: "#9c8d79" }}>{g._count} vote(s) parmi la sélection · chez {g.ownerName}</span>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
-                <Star size={16} fill={C.amber} /> {g._avg.toFixed(1)}
+                <Star size={16} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
               </span>
             </button>
           ))}
@@ -2588,7 +2669,7 @@ function AddGameFlow({ onClose, setToast }) {
         </div>
       )}
       {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { await addGame({ ...data, source: "BoardGameGeek" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
-      {mode === "manual" && <ManualForm prefillName={prefillName} onBack={() => setMode("choose")} onDone={async (data) => { await addGame({ ...data, source: "manuel" }); onClose(); setToast(`« ${data.name} » ajouté !`); }} />}
+      {mode === "manual" && <ManualForm prefillName={prefillName} onBack={() => setMode("choose")} onDone={async (data, msg) => { if (data) { await addGame({ ...data, source: "manuel" }); } onClose(); setToast(msg || `« ${data?.name} » ajouté !`); }} />}
     </Modal>
   );
 }
@@ -2706,9 +2787,18 @@ function BggImport({ onBack, onDone, onManual }) {
 const backLinkStyle = { background: "none", border: "none", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, marginBottom: 14, padding: 0, fontSize: 14 };
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
+  const { games, currentUser, addOwner } = useApp();
   const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
   const [err, setErr] = useState("");
+  const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
+
+  // jeux existants au nom proche, que l'utilisateur ne possède pas déjà
+  const similar = useMemo(() => {
+    if (dismissed) return [];
+    return findSimilarGames(games, f.name).filter((g) => !(g.ownerIds || []).includes(currentUser?.id));
+  }, [games, f.name, dismissed, currentUser]);
+
   const submit = () => {
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
     onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "" });
@@ -2716,7 +2806,31 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
   return (
     <div>
       <button onClick={onBack} style={backLinkStyle}><ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> Retour</button>
-      <Field label="Nom du jeu *"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Les Aventuriers du Rail" autoFocus /></Field>
+      <Field label="Nom du jeu *"><TextInput value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setDismissed(false); }} placeholder="Ex. Les Aventuriers du Rail" autoFocus /></Field>
+
+      {/* encart : ce jeu existe peut-être déjà */}
+      {similar.length > 0 && (
+        <div style={{ background: "rgba(30,138,138,.08)", border: "1px solid rgba(30,138,138,.25)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14 }}>Ce jeu existe peut-être déjà</span>
+            <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", fontSize: 12.5 }}>Ignorer</button>
+          </div>
+          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Inutile de recréer une fiche : cliquez sur « Je l'ai aussi » pour l'ajouter à votre ludothèque.</p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {similar.slice(0, 4).map((g) => (
+              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})` }} />
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{g.name}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>{g.year || ""} · déjà chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
+                </span>
+                <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
         <Field label="Année"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
         <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
@@ -2747,7 +2861,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
 
-  const mine = useMemo(() => games.filter((g) => g.ownerId === currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [games, currentUser]);
+  const mine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id) || g.ownerId === currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [games, currentUser]);
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
 
