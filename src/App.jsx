@@ -170,7 +170,7 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
   // liste des propriétaires (table de liaison) ; repli sur owner_id si liaison vide
@@ -182,6 +182,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     owners, ownerIds,
+    extensions: extsByGame[row.id] || [],
     shared: row.shared !== false,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
@@ -223,7 +224,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -234,6 +235,8 @@ function AppProvider({ children }) {
         supabase.from("game_comments").select("*").order("created_at"),
         supabase.from("places").select("*").order("name"),
         supabase.from("game_owners").select("*"),
+        supabase.from("extensions").select("*").order("name"),
+        supabase.from("extension_owners").select("*"),
       ]);
 
       // table de correspondance id -> nom
@@ -253,9 +256,20 @@ function AppProvider({ children }) {
       // propriétaires multiples par jeu (table de liaison game_owners)
       const ownersByGame = {};
       (gameOwners || []).forEach((o) => { (ownersByGame[o.game_id] ||= []).push(o.owner_id); });
+      // extensions par jeu, avec leurs propriétaires
+      const extOwnersByExt = {};
+      (extOwners || []).forEach((o) => { (extOwnersByExt[o.extension_id] ||= []).push(o.owner_id); });
+      const extsByGame = {};
+      (extsRows || []).forEach((x) => {
+        const ids = extOwnersByExt[x.id] || [];
+        (extsByGame[x.game_id] ||= []).push({
+          id: x.id, name: x.name, img: x.image_url || "", createdBy: x.created_by,
+          ownerIds: ids, owners: ids.map((id) => ({ id, name: nameById[id] || "Membre" })),
+        });
+      });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame)));
+      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
     } catch (e) {
@@ -346,6 +360,39 @@ function AppProvider({ children }) {
     const { data: remaining } = await supabase.from("game_owners").select("id").eq("game_id", gameId);
     if (!remaining || remaining.length === 0) {
       await supabase.from("games").delete().eq("id", gameId); // plus personne → on retire la fiche
+    }
+    await loadData();
+  }, [currentUser, loadData]);
+
+  // ---- Extensions ----
+  // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
+  const addExtension = useCallback(async (gameId, data) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data: row, error } = await supabase.from("extensions").insert({
+      game_id: gameId, name: data.name.trim(), image_url: data.img || "", created_by: currentUser.id,
+    }).select().single();
+    if (error) return { error: error.message };
+    await supabase.from("extension_owners").insert({ extension_id: row.id, owner_id: currentUser.id });
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Se rattacher à une extension existante ("je l'ai aussi")
+  const addExtensionOwner = useCallback(async (extId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("extension_owners").insert({ extension_id: extId, owner_id: currentUser.id });
+    if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Se retirer d'une extension. Si plus aucun propriétaire, l'extension est supprimée.
+  const removeExtensionOwner = useCallback(async (extId) => {
+    if (!currentUser) return;
+    await supabase.from("extension_owners").delete().eq("extension_id", extId).eq("owner_id", currentUser.id);
+    const { data: remaining } = await supabase.from("extension_owners").select("id").eq("extension_id", extId);
+    if (!remaining || remaining.length === 0) {
+      await supabase.from("extensions").delete().eq("id", extId);
     }
     await loadData();
   }, [currentUser, loadData]);
@@ -510,6 +557,7 @@ function AppProvider({ children }) {
     ready, fatalError, users, games, events, places, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
     toggleGameShared, setShareLibrary, addOwner, removeOwner,
+    addExtension, addExtensionOwner, removeExtensionOwner,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
@@ -664,6 +712,7 @@ function Btn({ children, onClick, variant = "primary", size = "md", disabled, st
     red: { background: C.red, color: "#fff", border: `2px solid ${C.red}` },
     ghost: { background: "transparent", color: C.navy, border: `2px solid ${C.navy}` },
     soft: { background: "rgba(26,58,92,.07)", color: C.navy, border: "2px solid transparent" },
+    purple: { background: C.purple, color: "#fff", border: `2px solid ${C.purple}` },
     danger: { background: "transparent", color: C.red, border: `2px solid ${C.red}` },
   };
   return (
@@ -2305,6 +2354,9 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         )}
       </div>
 
+      {/* extensions du jeu */}
+      <GameExtensions g={g} onAuth={onAuth} onClose={onClose} setToast={setToast} />
+
       {/* commentaires sur le jeu */}
       <GameComments g={g} onAuth={onAuth} onClose={onClose} />
 
@@ -2343,6 +2395,75 @@ function VotersModal({ g, onClose }) {
         ))}
       </div>
     </Modal>
+  );
+}
+
+/* ---- Section extensions d'une fiche de jeu ---- */
+function GameExtensions({ g, onAuth, onClose, setToast }) {
+  const { currentUser, addExtension, addExtensionOwner, removeExtensionOwner } = useApp();
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ name: "", img: "" });
+  const [busy, setBusy] = useState(false);
+  const exts = g.extensions || [];
+
+  const submit = async () => {
+    if (!f.name.trim()) return;
+    setBusy(true);
+    await addExtension(g.id, f);
+    setBusy(false);
+    setF({ name: "", img: "" });
+    setAdding(false);
+    setToast("Extension ajoutée !");
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0 }}>🧩 Extensions ({exts.length})</h4>
+        {currentUser && !adding && <Btn size="sm" variant="soft" onClick={() => setAdding(true)}><Plus size={14} /> Ajouter</Btn>}
+      </div>
+
+      {exts.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucune extension référencée pour ce jeu.</span>}
+
+      <div style={{ display: "grid", gap: 10, marginBottom: adding ? 14 : 0 }}>
+        {exts.map((x) => {
+          const isOwner = currentUser && (x.ownerIds || []).includes(currentUser.id);
+          return (
+            <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "10px 12px" }}>
+              <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url(${x.img})` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
+                {!x.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 13 }}>🧩</span>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{x.name}</div>
+                <div style={{ fontSize: 12, color: "#9c8d79" }}>
+                  {x.owners && x.owners.length ? `chez ${x.owners.map((o) => o.name).join(", ")}` : "personne ne la possède"}
+                </div>
+              </div>
+              {currentUser && (
+                isOwner ? (
+                  <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
+                ) : (
+                  <Btn size="sm" variant="teal" onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {adding && (
+        <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 13, padding: 14 }}>
+          <Field label="Nom de l'extension"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Oceania, Europe..." autoFocus /></Field>
+          <Field label="Image" hint="Facultatif"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="purple" onClick={submit} disabled={busy || !f.name.trim()}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Ajouter l'extension</>}</Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setF({ name: "", img: "" }); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {!currentUser && exts.length === 0 && <span style={{ fontSize: 13, color: "#a89a86" }}> Connectez-vous pour ajouter une extension.</span>}
+    </div>
   );
 }
 
