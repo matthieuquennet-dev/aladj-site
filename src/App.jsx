@@ -2155,6 +2155,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const canManage = currentUser && (currentUser.id === g.ownerId || currentUser.admin);
   const [editing, setEditing] = useState(false);
+  const [showVoters, setShowVoters] = useState(false);
 
   // distribution des notes (les demi-notes sont regroupées avec l'entier supérieur : 4,5 → ligne 5)
   const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: Object.values(g.ratings || {}).filter((v) => Math.ceil(v) === n).length }));
@@ -2172,11 +2173,11 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {/* note moyenne */}
       <div style={{ display: "flex", gap: 20, alignItems: "center", background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18, flexWrap: "wrap" }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 42, color: C.amber, lineHeight: 1 }}>{count ? avg.toFixed(1) : "—"}</div>
+        <button type="button" onClick={() => count > 0 && setShowVoters(true)} style={{ textAlign: "center", background: "none", border: "none", cursor: count > 0 ? "pointer" : "default", padding: 0 }} title={count > 0 ? "Voir qui a voté" : ""}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 42, color: C.amber, lineHeight: 1 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</div>
           <Stars value={Math.round(avg * 2) / 2} readOnly size={15} />
-          <div style={{ fontSize: 12, color: "#9c8d79", marginTop: 3 }}>{count} avis</div>
-        </div>
+          <div style={{ fontSize: 12, color: count > 0 ? C.teal : "#9c8d79", marginTop: 3, textDecoration: count > 0 ? "underline" : "none", textUnderlineOffset: 2 }}>{count} avis</div>
+        </button>
         <div style={{ flex: 1, minWidth: 160 }}>
           {dist.map((d) => (
             <div key={d.n} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -2232,6 +2233,39 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       <GameComments g={g} onAuth={onAuth} onClose={onClose} />
 
       {editing && <EditGameModal g={g} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
+      {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
+    </Modal>
+  );
+}
+
+/* ---- Modale : liste des membres ayant noté un jeu et leur note ---- */
+function VotersModal({ g, onClose }) {
+  const { users } = useApp();
+  const { avg, count } = gameStats(g);
+  const voters = Object.entries(g.ratings || {})
+    .map(([uid, val]) => ({ name: (users.find((u) => u.id === uid) || {}).name || "Membre", val }))
+    .sort((a, b) => b.val - a.val);
+  return (
+    <Modal open onClose={onClose} title={`Avis sur ${g.name}`} width={420}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 32, color: C.amber }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+        <span style={{ fontSize: 14, color: "#9c8d79" }}> / 5 · {count} avis</span>
+      </div>
+      <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
+        {voters.length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5, textAlign: "center" }}>Personne n'a encore noté ce jeu.</span>}
+        {voters.map((v, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 12, background: "rgba(26,58,92,.04)" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 32, height: 32, borderRadius: 9, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14 }}>{v.name[0].toUpperCase()}</span>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{v.name}</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Stars value={v.val} readOnly size={14} />
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14, minWidth: 28, textAlign: "right" }}>{String(v.val).replace(".", ",")}</span>
+            </span>
+          </div>
+        ))}
+      </div>
     </Modal>
   );
 }
