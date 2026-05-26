@@ -2744,7 +2744,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes durées</option>
               <option value="30">≤ 30 min</option>
+              <option value="45">≤ 45 min</option>
               <option value="60">≤ 1 h</option>
+              <option value="90">≤ 1 h 30</option>
               <option value="120">≤ 2 h</option>
               <option value="121">{"> 2 h"}</option>
             </select>
@@ -2887,7 +2889,9 @@ function CustomRankModal({ onClose, onOpenGame }) {
         <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
           <option value="">Durée : toutes</option>
           <option value="30">≤ 30 min</option>
+          <option value="45">≤ 45 min</option>
           <option value="60">≤ 1 h</option>
+          <option value="90">≤ 1 h 30</option>
           <option value="120">≤ 2 h</option>
           <option value="121">{"> 2 h"}</option>
         </select>
@@ -3339,7 +3343,7 @@ function MyLudoPage({ setToast, setPage }) {
             </select>
             <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes durées</option>
-              <option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="120">≤ 2 h</option><option value="121">{"> 2 h"}</option>
+              <option value="30">≤ 30 min</option><option value="45">≤ 45 min</option><option value="60">≤ 1 h</option><option value="90">≤ 1 h 30</option><option value="120">≤ 2 h</option><option value="121">{"> 2 h"}</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="alpha">A → Z</option>
