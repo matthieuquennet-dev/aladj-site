@@ -1644,7 +1644,11 @@ function MembersModal({ onClose, onPickMember }) {
               display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 13, border: "1px solid #efe6d6",
               background: "#fff", cursor: "pointer", textAlign: "left", transition: "background .15s",
             }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0,0,0,.02)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
-              <span style={{ width: 38, height: 38, borderRadius: 11, background: color, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>{m.name[0].toUpperCase()}</span>
+              <span style={{ width: 38, height: 38, borderRadius: 11, overflow: "hidden", background: color, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+                {m.avatar
+                  ? <img src={m.avatar} alt={m.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  : m.name[0].toUpperCase()}
+              </span>
               <span style={{ flex: 1 }}>
                 <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>{m.name}</span>
                 <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}</span>
@@ -1873,12 +1877,12 @@ function EventsPage({ onAuth, setToast }) {
           <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: 0, textTransform: "capitalize" }}>{FR_MONTHS[monthCursor.m]} {monthCursor.y}</h3>
           <button onClick={() => setMonthCursor((c) => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { ...c, m }; })} style={navBtnStyle}><ChevronRight size={18} /></button>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6 }} className="aladj-cal-grid">
           {["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map((d) => (
-            <div key={d} style={{ textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#a89a86", fontSize: 12.5, padding: "4px 0" }}>{d}</div>
+            <div key={d} style={{ textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#a89a86", fontSize: 12.5, padding: "4px 0", minWidth: 0 }}>{d}</div>
           ))}
           {cal.map((cell, i) => {
-            if (!cell) return <div key={i} />;
+            if (!cell) return <div key={i} style={{ minWidth: 0 }} />;
             const isToday = cell.iso === new Date().toISOString().slice(0, 10);
             const todayIso = new Date().toISOString().slice(0, 10);
             const isPast = cell.iso < todayIso;
@@ -1890,14 +1894,14 @@ function EventsPage({ onAuth, setToast }) {
             };
             const clickable = hasEv || (!isPast && currentUser);
             return (
-              <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} style={{
-                aspectRatio: "1", border: isToday ? `2px solid ${C.amber}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
-                cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", opacity: isPast && !hasEv ? 0.5 : 1,
+              <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} className="aladj-cal-cell" style={{
+                aspectRatio: "1", minWidth: 0, border: isToday ? `2px solid ${C.amber}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
+                cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", overflow: "hidden", opacity: isPast && !hasEv ? 0.5 : 1,
               }}>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: isToday ? C.amber : C.navy }}>{cell.d}</span>
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
-                  return <span key={e.id} style={{ width: "82%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: reached ? C.teal : C.red, borderRadius: 5, padding: "1px 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.time}</span>;
+                  return <span key={e.id} style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: reached ? C.teal : C.red, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.time}</span>;
                 })}
                 {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
               </button>
@@ -2920,25 +2924,57 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
 function GameExtensions({ g, onAuth, onClose, setToast }) {
   const { currentUser, addExtension, addExtensionOwner, removeExtensionOwner } = useApp();
   const [adding, setAdding] = useState(false);
+  const [mode, setMode] = useState("bgg"); // "bgg" | "manual"
   const [f, setF] = useState({ name: "", img: "" });
   const [busy, setBusy] = useState(false);
+  // recherche BGG
+  const [bggQuery, setBggQuery] = useState("");
+  const [bggResults, setBggResults] = useState([]);
+  const [bggSearching, setBggSearching] = useState(false);
+  const [bggLoadingId, setBggLoadingId] = useState(null);
+  const [bggErr, setBggErr] = useState("");
   const exts = g.extensions || [];
 
-  const submit = async () => {
+  const reset = () => { setAdding(false); setMode("bgg"); setF({ name: "", img: "" }); setBggQuery(""); setBggResults([]); setBggErr(""); };
+
+  const submitManual = async () => {
     if (!f.name.trim()) return;
     setBusy(true);
     await addExtension(g.id, f);
     setBusy(false);
-    setF({ name: "", img: "" });
-    setAdding(false);
+    reset();
     setToast("Extension ajoutée !");
+  };
+
+  const runBggSearch = async () => {
+    if (!bggQuery.trim()) return;
+    setBggSearching(true); setBggErr(""); setBggResults([]);
+    try {
+      const list = await bggSearch(bggQuery.trim());
+      setBggResults(list);
+      if (list.length === 0) setBggErr("Aucun résultat trouvé sur BoardGameGeek.");
+    } catch (e) {
+      setBggErr("Recherche BGG indisponible. Essayez la saisie manuelle.");
+    } finally { setBggSearching(false); }
+  };
+
+  const importFromBgg = async (id, name) => {
+    setBggLoadingId(id); setBggErr("");
+    try {
+      const d = await bggDetails(id);
+      await addExtension(g.id, { name: d.name || name, img: d.img || "" });
+      reset();
+      setToast("Extension ajoutée depuis BGG !");
+    } catch (e) {
+      setBggErr("Impossible de récupérer cette fiche depuis BGG.");
+    } finally { setBggLoadingId(null); }
   };
 
   return (
     <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0 }}>🧩 Extensions ({exts.length})</h4>
-        {currentUser && !adding && <Btn size="sm" variant="soft" onClick={() => setAdding(true)}><Plus size={14} /> Ajouter</Btn>}
+        {currentUser && !adding && <Btn size="sm" variant="soft" onClick={() => { setAdding(true); setBggQuery(g.name || ""); }}><Plus size={14} /> Ajouter</Btn>}
       </div>
 
       {exts.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucune extension référencée pour ce jeu.</span>}
@@ -2948,7 +2984,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
           const isOwner = currentUser && (x.ownerIds || []).includes(currentUser.id);
           return (
             <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "10px 12px" }}>
-              <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url(${x.img})` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
+              <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url("${x.img}")` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
                 {!x.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 13 }}>🧩</span>}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -2971,13 +3007,51 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
 
       {adding && (
         <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 13, padding: 14 }}>
-          <Field label="Nom de l'extension"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Oceania, Europe..." autoFocus /></Field>
-          <Field label="Image" hint="Facultatif"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" variant="purple" onClick={submit} disabled={busy || !f.name.trim()}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Ajouter l'extension</>}</Btn>
-            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setF({ name: "", img: "" }); }}>Annuler</Btn>
+          {/* onglets mode */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, background: "#fff", borderRadius: 10, padding: 4 }}>
+            <button type="button" onClick={() => setMode("bgg")} style={{ flex: 1, padding: "8px 10px", border: "none", borderRadius: 7, background: mode === "bgg" ? C.purple : "transparent", color: mode === "bgg" ? "#fff" : C.navy, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5 }}>Rechercher sur BGG</button>
+            <button type="button" onClick={() => setMode("manual")} style={{ flex: 1, padding: "8px 10px", border: "none", borderRadius: 7, background: mode === "manual" ? C.purple : "transparent", color: mode === "manual" ? "#fff" : C.navy, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5 }}>Saisie manuelle</button>
           </div>
+
+          {mode === "bgg" ? (
+            <>
+              <Field label="Rechercher l'extension sur BoardGameGeek" hint={`Astuce : incluez le nom du jeu de base (ex. « ${g.name} oceania »)`}>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <TextInput value={bggQuery} onChange={(e) => setBggQuery(e.target.value)} placeholder="Nom de l'extension..." onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runBggSearch(); } }} autoFocus />
+                  <Btn size="md" variant="purple" onClick={runBggSearch} disabled={bggSearching || !bggQuery.trim()}>{bggSearching ? <Loader2 size={15} className="aladj-spin" /> : <Search size={15} />}</Btn>
+                </div>
+              </Field>
+              {bggErr && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 10 }}>{bggErr}</div>}
+              {bggResults.length > 0 && (
+                <div style={{ display: "grid", gap: 6, maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
+                  {bggResults.map((r) => (
+                    <button key={r.id} type="button" onClick={() => importFromBgg(r.id, r.name)} disabled={bggLoadingId === r.id}
+                      style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 12px", cursor: bggLoadingId === r.id ? "wait" : "pointer", textAlign: "left" }}>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{r.name}</span>
+                        {r.year && <span style={{ fontSize: 11.5, color: "#9c8d79" }}>{r.year}</span>}
+                      </span>
+                      {bggLoadingId === r.id ? <Loader2 size={15} className="aladj-spin" color={C.purple} /> : <Plus size={15} color={C.purple} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn size="sm" variant="soft" onClick={reset}>Annuler</Btn>
+              </div>
+            </>
+          ) : (
+            <>
+              <Field label="Nom de l'extension"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Oceania, Europe..." autoFocus /></Field>
+              <Field label="Image" hint="Facultatif"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn size="sm" variant="purple" onClick={submitManual} disabled={busy || !f.name.trim()}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Ajouter l'extension</>}</Btn>
+                <Btn size="sm" variant="soft" onClick={reset}>Annuler</Btn>
+              </div>
+            </>
+          )}
         </div>
+      )}
       )}
 
       {!currentUser && exts.length === 0 && <span style={{ fontSize: 13, color: "#a89a86" }}> Connectez-vous pour ajouter une extension.</span>}
@@ -4148,6 +4222,11 @@ export default function App() {
           .aladj-ludo-grid { display: flex !important; flex-direction: column !important; }
           .aladj-ludo-aside { position: static !important; order: -1; }
           .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
+        }
+        @media (max-width: 600px) {
+          .aladj-cal-grid { gap: 3px !important; }
+          .aladj-cal-cell { padding: 2px !important; border-radius: 8px !important; }
+          .aladj-cal-cell > span:first-child { font-size: 12px !important; }
         }
       `}</style>
       <AppProvider><Shell /></AppProvider>
