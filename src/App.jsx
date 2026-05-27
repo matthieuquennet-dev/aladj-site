@@ -1014,6 +1014,7 @@ function Navbar({ page, setPage, onAuth }) {
   const items = NAV.filter((n) => !n.auth || currentUser);
 
   return (
+    <>
     <header style={{
       position: "sticky", top: 0, zIndex: 500, background: "rgba(251,247,239,.86)", backdropFilter: "blur(12px)",
       borderBottom: "1px solid #ece2d0",
@@ -1094,8 +1095,9 @@ function Navbar({ page, setPage, onAuth }) {
           )}
         </div>
       )}
-      {editProfile && <ProfileEditModal onClose={() => setEditProfile(false)} />}
     </header>
+    {editProfile && <ProfileEditModal onClose={() => setEditProfile(false)} />}
+    </>
   );
 }
 
@@ -2827,6 +2829,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
   const [sort, setSort] = useState("note");
+  const [view, setView] = useState("grid"); // "grid" | "list"
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showCustomRank, setShowCustomRank] = useState(false);
@@ -2935,12 +2938,40 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <option value="alpha">A → Z</option>
               <option value="recent">Récents</option>
             </select>
+            <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
+              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
+              {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
+            </button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-            {filtered.length === 0 && <EmptyHint icon={Library} text="Aucun jeu ne correspond." />}
-            {filtered.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} />)}
-          </div>
+          {filtered.length === 0 ? (
+            <EmptyHint icon={Library} text="Aucun jeu ne correspond." />
+          ) : view === "list" ? (
+            <div style={{ display: "grid", gap: 4 }}>
+              {/* en-tête de liste */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1 }}>Jeu</span>
+                <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
+                <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
+              </div>
+              {filtered.map((g) => {
+                const { avg, count } = gameStats(g);
+                const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+                return (
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
+              {filtered.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} />)}
+            </div>
+          )}
         </div>
 
         {/* COLONNE LATÉRALE : classements */}
