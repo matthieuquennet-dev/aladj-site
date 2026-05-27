@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!--
+    Plan du site ALADJ.
+    Le site est en mono-page (React), donc l'URL principale est /.
+    Les sections (ludothèque, moments jeux, etc.) sont gérées côté application
+    et ne sont pas listées ici car elles n'ont pas d'URL distincte indexable.
+  -->
+  <url>
+    <loc>https://aladj.fr/</loc>
+    <lastmod>2026-05-28</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
