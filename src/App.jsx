@@ -112,13 +112,33 @@ async function fetchBggXml(bggUrl) {
 }
 
 async function bggSearch(query) {
-  const text = await fetchBggXml(`https://boardgamegeek.com/xmlapi2/search?type=boardgame&query=${encodeURIComponent(query)}`);
+  const q = query.trim();
+  const text = await fetchBggXml(`https://boardgamegeek.com/xmlapi2/search?type=boardgame&query=${encodeURIComponent(q)}`);
   const xml = new DOMParser().parseFromString(text, "text/xml");
-  return Array.from(xml.querySelectorAll("item")).slice(0, 12).map((it) => ({
+  let items = Array.from(xml.querySelectorAll("item")).map((it) => ({
     id: it.getAttribute("id"),
     name: it.querySelector("name")?.getAttribute("value") || "Sans titre",
     year: it.querySelector("yearpublished")?.getAttribute("value") || "",
   }));
+  // tri par pertinence : correspondance exacte, puis "commence par", puis "contient",
+  // puis par ancienneté (les jeux plus anciens / de base sont souvent les plus pertinents)
+  const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const nq = norm(q);
+  const score = (it) => {
+    const n = norm(it.name);
+    if (n === nq) return 0;
+    if (n.startsWith(nq)) return 1;
+    if (n.includes(nq)) return 2;
+    return 3;
+  };
+  items.sort((a, b) => {
+    const sa = score(a), sb = score(b);
+    if (sa !== sb) return sa - sb;
+    // à pertinence égale, le plus ancien d'abord (souvent le jeu "de base")
+    const ya = Number(a.year) || 9999, yb = Number(b.year) || 9999;
+    return ya - yb;
+  });
+  return items.slice(0, 20);
 }
 
 async function bggDetails(id) {
@@ -170,13 +190,20 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
   // liste des propriétaires (table de liaison) ; repli sur owner_id si liaison vide
   let ownerIds = ownersByGame[row.id] || [];
   if (ownerIds.length === 0 && row.owner_id) ownerIds = [row.owner_id];
-  const owners = ownerIds.map((id) => ({ id, name: nameById[id] || "Membre" }));
+  // décisionnaires d'abord, puis ordre alphabétique
+  const owners = ownerIds
+    .map((id) => ({ id, name: nameById[id] || "Membre", role: roleById[id] || "non" }))
+    .sort((a, b) => {
+      if (a.role === "decideur" && b.role !== "decideur") return -1;
+      if (b.role === "decideur" && a.role !== "decideur") return 1;
+      return a.name.localeCompare(b.name, "fr");
+    });
   return {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
@@ -241,7 +268,8 @@ function AppProvider({ children }) {
 
       // table de correspondance id -> nom
       const nameById = {};
-      (profiles || []).forEach((p) => { nameById[p.id] = p.name; });
+      const roleById = {};
+      (profiles || []).forEach((p) => { nameById[p.id] = p.name; roleById[p.id] = p.role; });
 
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
@@ -269,7 +297,7 @@ function AppProvider({ children }) {
       });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame)));
+      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
     } catch (e) {
@@ -376,12 +404,19 @@ function AppProvider({ children }) {
     if (!currentUser) return;
     await supabase.from("game_owners").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
     // reste-t-il des propriétaires ?
-    const { data: remaining } = await supabase.from("game_owners").select("id").eq("game_id", gameId);
+    const { data: remaining } = await supabase.from("game_owners").select("owner_id").eq("game_id", gameId);
     if (!remaining || remaining.length === 0) {
       await supabase.from("games").delete().eq("id", gameId); // plus personne → on retire la fiche
+    } else {
+      // si le créateur initial (owner_id) vient de se retirer, on réaffecte owner_id
+      // à un propriétaire restant pour garder la fiche cohérente
+      const game = games.find((g) => g.id === gameId);
+      if (game && game.ownerId === currentUser.id) {
+        await supabase.from("games").update({ owner_id: remaining[0].owner_id }).eq("id", gameId);
+      }
     }
     await loadData();
-  }, [currentUser, loadData]);
+  }, [currentUser, loadData, games]);
 
   // ---- Extensions ----
   // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
@@ -1145,7 +1180,7 @@ function AuthModal({ mode, onClose, setToast }) {
         <Field label="Type d'adhésion" hint="Le statut peut être ajusté ensuite par le bureau.">
           <div style={{ display: "grid", gap: 8 }}>
             {[
-              { v: "decideur", t: "Membre décisionnaire", d: "Cotisation 30 €/an · voix délibérative en AG", icon: Crown },
+              { v: "decideur", t: "Membre décisionnaire", d: "Cotisation 20 €/an · voix délibérative en AG", icon: Crown },
               { v: "membre", t: "Membre non décisionnaire", d: "Gratuit · accès aux moments jeux et à la ludothèque", icon: Heart },
             ].map((o) => {
               const Icon = o.icon; const active = form.role === o.v;
@@ -1296,7 +1331,7 @@ function HomePage({ setPage, onAuth }) {
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "56px 24px 80px" }}>
         <SectionTitle kicker="Adhésion" title="Comment nous rejoindre" />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 36 }}>
-          <PlanCard color={C.amber} crown title="Membre décisionnaire" price="30 €" period="/ an"
+          <PlanCard color={C.amber} crown title="Membre décisionnaire" price="20 €" period="/ an"
             features={["Voix délibérative en assemblée générale", "Participe aux décisions de l'asso", "Accès complet à la ludothèque", "Crée et rejoint les moments jeux", "Note les jeux et exporte sa ludothèque"]}
             cta={currentUser ? null : "Adhérer"} onCta={() => onAuth("register")} />
           <PlanCard color={C.teal} title="Membre non décisionnaire" price="Gratuit" period=""
@@ -1375,7 +1410,7 @@ function MembersModal({ onClose, onPickMember }) {
 function MemberLibraryModal({ memberId, onClose }) {
   const { games, users } = useApp();
   const member = users.find((u) => u.id === memberId);
-  const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId) || g.ownerId === memberId).sort((a, b) => a.name.localeCompare(b.name));
+  const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => a.name.localeCompare(b.name));
   return (
     <Modal open onClose={onClose} title={member ? `Ludothèque de ${member.name}` : "Ludothèque"} width={620}>
       {theirGames.length === 0 ? (
@@ -1387,10 +1422,16 @@ function MemberLibraryModal({ memberId, onClose }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "60vh", overflowY: "auto", padding: 2 }}>
           {theirGames.map((g) => {
             const st = gameStats(g);
+            const myRating = g.ratings?.[memberId] || 0;
             return (
               <div key={g.id} style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #efe6d6", background: "#fff" }}>
-                <div style={{ aspectRatio: "1", background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.amber},${C.red})`, display: "grid", placeItems: "center" }}>
-                  {!g.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 26 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
+                <div style={{ position: "relative" }}>
+                  <GameCover g={g} />
+                  {myRating > 0 && (
+                    <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(232,163,23,.95)", color: "#fff", borderRadius: 999, padding: "3px 9px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 3 }}>
+                      <Star size={11} fill="#fff" color="#fff" /> {String(myRating).replace(".", ",")}
+                    </div>
+                  )}
                 </div>
                 <div style={{ padding: "10px 12px" }}>
                   <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, lineHeight: 1.2 }}>{g.name}</div>
@@ -1398,7 +1439,6 @@ function MemberLibraryModal({ memberId, onClose }) {
                     {g.min && <span>{g.min}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.</span>}
                     {g.time && <span>{g.time} min</span>}
                   </div>
-                  {st.count > 0 && <div style={{ marginTop: 6, fontSize: 12, color: C.amber, fontWeight: 700 }}>★ {st.avg.toFixed(1)} <span style={{ color: "#b6a78f", fontWeight: 400 }}>({st.count})</span></div>}
                 </div>
               </div>
             );
@@ -2274,7 +2314,12 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
             {(g.mechanics || []).slice(0, 2).map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez <b style={{ color: C.teal }}>{(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}</b>{g.owners && g.owners.length > 1 ? ` +${g.owners.length - 1}` : ""}</span>
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez {(() => {
+              const os = g.owners && g.owners.length ? g.owners : (g.ownerName ? [{ name: g.ownerName }] : []);
+              const shown = os.slice(0, 2).map((o) => o.name).join(", ");
+              const extra = os.length - 2;
+              return <><b style={{ color: C.teal }}>{shown}</b>{extra > 0 ? ` +${extra}` : ""}</>;
+            })()}</span>
             <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{count} vote{count > 1 ? "s" : ""}</span>
           </div>
         </div>
@@ -3050,7 +3095,7 @@ function BggImport({ onBack, onDone, onManual }) {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
                 <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
                     {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
                   </div>
                   <span style={{ flex: 1, minWidth: 0 }}>
@@ -3122,7 +3167,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
                 <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
                     {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
                   </div>
                   <span style={{ flex: 1, minWidth: 0 }}>
@@ -3174,7 +3219,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [duration, setDuration] = useState("");
   const [sort, setSort] = useState("alpha");
 
-  const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id) || g.ownerId === currentUser?.id), [games, currentUser]);
+  const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
   const myMechanics = useMemo(() => {
     const s = new Set();
     allMine.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
@@ -3303,12 +3348,10 @@ function MyLudoPage({ setToast, setPage }) {
               const st = gameStats(g);
               return (
                 <button key={g.id} onClick={() => setSelected(g.id)} style={{ textAlign: "left", border: "1px solid #efe6d6", borderRadius: 14, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
-                  <div style={{ aspectRatio: "1.4", background: g.img ? `center/cover url(${g.img})` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
-                    {!g.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 22 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
-                  </div>
+                  <GameCover g={g} />
                   <div style={{ padding: "9px 11px" }}>
                     <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
-                    <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {g.ownerName}{st.count > 0 ? ` · ★ ${st.avg.toFixed(1)}` : ""}</div>
+                    <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}{st.count > 0 ? ` · ★ ${st.avg.toFixed(2).replace(".", ",")}` : ""}</div>
                   </div>
                 </button>
               );
