@@ -811,39 +811,79 @@ function MeepleIcon({ size = 22, color = C.navy }) {
 }
 
 /* ---- Étoiles de notation ---- */
+/* ---- Encart : échelle de notation (réutilisé en ludothèque générale et perso) ---- */
+function RatingScaleNote() {
+  const [open, setOpen] = useState(false);
+  const scale = [
+    { v: 5,   t: "j'y joue encore et encore (j'adore)" },
+    { v: 4,   t: "j'y joue avec plaisir" },
+    { v: 3,   t: "j'y joue si on me le propose" },
+    { v: 2,   t: "j'y joue pour faire plaisir" },
+    { v: 1,   t: "j'y joue à contre-cœur" },
+    { v: 0.5, t: "je n'y rejouerai jamais" },
+  ];
+  return (
+    <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.3)", borderRadius: 14, padding: "12px 16px", marginBottom: 20 }}>
+      <button onClick={() => setOpen((o) => !o)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <Star size={16} fill={C.amber} color={C.amber} /> Comment on note les jeux à l'ALADJ
+        </span>
+        <ChevronRight size={16} style={{ transform: open ? "rotate(90deg)" : "rotate(0)", transition: "transform .15s", color: "#9c8d79" }} />
+      </button>
+      {open && (
+        <>
+          <p style={{ fontSize: 13.5, color: "#5e5346", margin: "10px 0 12px", lineHeight: 1.55 }}>
+            Juger la qualité « objective » d'un jeu est difficile, mais on sait facilement si on a envie d'y rejouer. Notre échelle reflète cette envie :
+          </p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {scale.map((s) => (
+              <div key={s.v} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ flexShrink: 0, width: 110 }}><Stars value={s.v} readOnly size={14} /></span>
+                <span style={{ fontSize: 13.5, color: "#5e5346" }}>{s.t}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Stars({ value = 0, onRate, onClear, size = 18, readOnly = false }) {
   const [hover, setHover] = useState(0); // valeur survolée (peut être .5)
   const shown = hover || value; // valeur affichée
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-      <span style={{ display: "inline-flex", gap: 2 }} onMouseLeave={() => setHover(0)}>
+      <span style={{ display: "inline-flex", gap: 2, position: "relative" }} onMouseLeave={() => setHover(0)}>
         {[1, 2, 3, 4, 5].map((n) => {
-          const full = shown >= n;        // étoile pleine
-          const half = !full && shown >= n - 0.5; // demi-étoile
+          const full = shown >= n;
+          const half = !full && shown >= n - 0.5;
           return (
-            <span key={n} style={{ position: "relative", lineHeight: 0, display: "inline-block", transition: "transform .12s", transform: (hover && Math.ceil(hover) === n) ? "scale(1.15)" : "scale(1)" }}>
+            <span key={n} style={{ position: "relative", lineHeight: 0, display: "inline-block", width: size, height: size }}>
               {/* étoile de fond (vide) */}
-              <Star size={size} fill="none" color="#cdb9a0" strokeWidth={1.8} />
+              <Star size={size} fill="none" color="#cdb9a0" strokeWidth={1.8} style={{ position: "absolute", top: 0, left: 0 }} />
               {/* remplissage (plein ou moitié gauche) */}
               {(full || half) && (
-                <span style={{ position: "absolute", top: 0, left: 0, width: half ? "50%" : "100%", height: "100%", overflow: "hidden", lineHeight: 0 }}>
+                <span style={{ position: "absolute", top: 0, left: 0, width: half ? size / 2 : size, height: size, overflow: "hidden", lineHeight: 0 }}>
                   <Star size={size} fill={C.amber} color={C.amber} strokeWidth={1.8} />
                 </span>
               )}
-              {/* zones cliquables : moitié gauche = n-0.5, moitié droite = n */}
+              {/* zones cliquables (au-dessus de tout) : moitié gauche = n-0.5, moitié droite = n */}
               {!readOnly && (
                 <>
-                  <button type="button" aria-label={`${n - 0.5} étoile`} onMouseEnter={() => setHover(n - 0.5)} onClick={() => onRate && onRate(n - 0.5)}
-                    style={{ position: "absolute", top: 0, left: 0, width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
-                  <button type="button" aria-label={`${n} étoiles`} onMouseEnter={() => setHover(n)} onClick={() => onRate && onRate(n)}
-                    style={{ position: "absolute", top: 0, left: "50%", width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
+                  <button type="button" aria-label={`${n - 0.5} étoile`} title={`${String(n - 0.5).replace(".", ",")} / 5`}
+                    onMouseEnter={() => setHover(n - 0.5)} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRate && onRate(n - 0.5); }}
+                    style={{ position: "absolute", top: 0, left: 0, width: size / 2, height: size, background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer", zIndex: 2 }} />
+                  <button type="button" aria-label={`${n} étoiles`} title={`${n} / 5`}
+                    onMouseEnter={() => setHover(n)} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRate && onRate(n); }}
+                    style={{ position: "absolute", top: 0, left: size / 2, width: size / 2, height: size, background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer", zIndex: 2 }} />
                 </>
               )}
             </span>
           );
         })}
       </span>
-      {/* bouton effacer la note (si une note existe et qu'on est en mode édition) */}
+      {/* bouton effacer la note */}
       {!readOnly && onClear && value > 0 && (
         <button type="button" onClick={onClear} title="Effacer ma note"
           style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "rgba(181,40,58,.08)", color: C.red, border: "none", borderRadius: 8, padding: "4px 9px", cursor: "pointer", fontSize: 12, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
@@ -1512,6 +1552,48 @@ function HomePage({ setPage, onAuth }) {
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 640, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. Une pièce d'identité peut être demandée à l'entrée des moments jeux (réservé aux +16 ans).
         </p>
+      </section>
+
+      {/* ---- Location de jeux : règles ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 60px" }}>
+        <SectionTitle kicker="Entre membres" title="La location de jeux" center />
+        <div style={{ background: C.paper, border: `2px solid ${C.teal}`, borderRadius: 22, padding: "28px 32px", marginTop: 28, boxShadow: "0 6px 20px rgba(18,41,63,.06)" }}>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 18px" }}>
+            Les membres de l'association peuvent <b>se louer des jeux entre eux</b>, pour le plaisir d'essayer chez soi avant d'acheter, ou simplement pour profiter d'un jeu d'un autre membre le temps d'une soirée.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 18, marginBottom: 20 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 11, background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center" }}>
+                <Euro size={18} color={C.teal} />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5, marginBottom: 3 }}>Tarif</div>
+                <div style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>10% du prix neuf du jeu, arrondi au 0,50 € supérieur. La durée de location est fixée à <b>2 semaines</b>.</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 11, background: "rgba(232,163,23,.15)", display: "grid", placeItems: "center" }}>
+                <Crown size={18} color={C.amber} />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5, marginBottom: 3 }}>Caution</div>
+                <div style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>Les <b>membres décisionnaires</b> en sont dispensés. Pour les autres membres, une caution équivalente au prix neuf du jeu peut être demandée par le prêteur.</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 11, background: "rgba(181,40,58,.12)", display: "grid", placeItems: "center" }}>
+                <Package size={18} color={C.red} />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5, marginBottom: 3 }}>Jeu abîmé ou incomplet</div>
+                <div style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>L'emprunteur s'engage à <b>rembourser le prêteur</b> à hauteur du préjudice si le jeu est rendu détérioré ou avec des pièces manquantes.</div>
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: "#9c8d79", margin: 0, textAlign: "center", lineHeight: 1.55, borderTop: "1px solid #f0e8d8", paddingTop: 14 }}>
+            <Info size={13} style={{ verticalAlign: "-2px" }} /> Le tarif et le suivi de chaque location se gèrent depuis la fiche du jeu, dans la rubrique <b>Location</b>. Retrouvez vos prêts et emprunts en cours sur la page <b>Mes locations</b>.
+          </p>
+        </div>
       </section>
 
       {/* ---- Conversations Signal ---- */}
@@ -3232,6 +3314,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
         {/* COLONNE PRINCIPALE */}
         <div className="aladj-ludo-main">
+          <RatingScaleNote />
           {/* recherche + filtres */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
@@ -3863,6 +3946,7 @@ function MyLudoPage({ setToast, setPage }) {
         </div>
       ) : (
         <>
+          <RatingScaleNote />
           {/* recherche + filtres + tri */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
