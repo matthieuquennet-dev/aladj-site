@@ -4,7 +4,8 @@ import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
-  ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff
+  ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
+  Euro, Lock, ArrowRightLeft, Package
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 
@@ -36,6 +37,15 @@ const slug = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u
 
 // Normalise un nom de jeu pour comparer (minuscules, sans accents ni ponctuation/espaces).
 const normGameName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+// Prix de location = 10% du prix neuf, arrondi au 0,5 € supérieur.
+function rentalPrice(newPrice) {
+  if (!newPrice || newPrice <= 0) return null;
+  const tenth = newPrice * 0.10;
+  return Math.ceil(tenth * 2) / 2; // arrondi au 0,5 supérieur
+}
+// Formate un nombre d'euros en français (ex. 2,5 €)
+const fmtEuro = (n) => `${Number(n).toFixed(2).replace(/\.?0+$/, "").replace(".", ",")} €`;
 // Cherche les jeux existants dont le nom est identique ou très proche du nom saisi.
 function findSimilarGames(games, name) {
   const n = normGameName(name);
@@ -210,6 +220,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     owners, ownerIds,
     extensions: extsByGame[row.id] || [],
+    newPrice: row.new_price != null ? Number(row.new_price) : null,
     shared: row.shared !== false,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
@@ -235,6 +246,8 @@ function AppProvider({ children }) {
   const [games, setGames] = useState([]);
   const [events, setEvents] = useState([]);
   const [places, setPlaces] = useState([]);
+  const [loans, setLoans] = useState([]);
+  const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [fatalError, setFatalError] = useState(null);
 
   /* ---- Chargement des données partagées ---- */
@@ -251,7 +264,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -264,6 +277,8 @@ function AppProvider({ children }) {
         supabase.from("game_owners").select("*"),
         supabase.from("extensions").select("*").order("name"),
         supabase.from("extension_owners").select("*"),
+        supabase.from("loans").select("*").order("created_at", { ascending: false }),
+        supabase.from("game_weights").select("*"),
       ]);
 
       // table de correspondance id -> nom
@@ -300,6 +315,16 @@ function AppProvider({ children }) {
       setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
+      setLoans((loansRows || []).map((l) => ({
+        id: l.id, gameId: l.game_id, lenderId: l.lender_id, borrowerId: l.borrower_id,
+        lenderName: nameById[l.lender_id] || "Membre", borrowerName: nameById[l.borrower_id] || "Membre",
+        gameName: (gamesRows || []).find((g) => g.id === l.game_id)?.name || "Jeu",
+        weight: l.weight_g, startedAt: l.started_at, dueAt: l.due_at, returned: l.returned, returnedAt: l.returned_at,
+      })));
+      // poids privés de l'utilisateur connecté (RLS ne renvoie que les siens)
+      const wmap = {};
+      (weightsRows || []).forEach((w) => { wmap[w.game_id] = w.weight_g; });
+      setMyWeights(wmap);
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -452,12 +477,49 @@ function AppProvider({ children }) {
   }, [currentUser, loadData]);
 
   const updateGame = useCallback(async (id, patch) => {
-    await supabase.from("games").update({
+    const fields = {
       name: patch.name, year: patch.year || null, min_players: patch.min || null, max_players: patch.max || null,
       play_time: patch.time || null, mechanics: patch.mechanics || [], description: patch.desc || "", image_url: patch.img || "",
-    }).eq("id", id);
+    };
+    if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
+    await supabase.from("games").update(fields).eq("id", id);
     await loadData();
   }, [loadData]);
+
+  // Enregistrer / mettre à jour MON poids pour un jeu (privé, par membre)
+  const setGameWeight = useCallback(async (gameId, weightG) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const w = weightG === "" || weightG == null ? null : Number(weightG);
+    if (w == null) {
+      await supabase.from("game_weights").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
+    } else {
+      await supabase.from("game_weights").upsert({ game_id: gameId, owner_id: currentUser.id, weight_g: w, updated_at: new Date().toISOString() }, { onConflict: "game_id,owner_id" });
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Créer une location (le prêteur = utilisateur connecté). Durée fixe : 2 semaines.
+  const createLoan = useCallback(async (gameId, borrowerId, weightG) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (!borrowerId) return { error: "Choisissez l'emprunteur." };
+    const due = new Date(); due.setDate(due.getDate() + 14); // +2 semaines
+    const { error } = await supabase.from("loans").insert({
+      game_id: gameId, lender_id: currentUser.id, borrower_id: borrowerId,
+      weight_g: weightG === "" || weightG == null ? null : Number(weightG),
+      due_at: due.toISOString(), returned: false,
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Clore une location : seul le prêteur le peut (le jeu a été rendu)
+  const closeLoan = useCallback(async (loanId) => {
+    if (!currentUser) return;
+    await supabase.from("loans").update({ returned: true, returned_at: new Date().toISOString() }).eq("id", loanId).eq("lender_id", currentUser.id);
+    await loadData();
+  }, [currentUser, loadData]);
 
   const removeGame = useCallback(async (id) => { await supabase.from("games").delete().eq("id", id); await loadData(); }, [loadData]);
 
@@ -503,6 +565,13 @@ function AppProvider({ children }) {
     }
     await loadData();
   }, [currentUser, games, loadData]);
+
+  // Effacer explicitement sa note pour un jeu
+  const clearRating = useCallback(async (id) => {
+    if (!currentUser) return;
+    await supabase.from("ratings").delete().eq("game_id", id).eq("user_id", currentUser.id);
+    await loadData();
+  }, [currentUser, loadData]);
 
   /* ---- Soirées ---- */
   const addEvent = useCallback(async (d) => {
@@ -626,11 +695,12 @@ function AppProvider({ children }) {
   const removeEvent = useCallback(async (id) => { await supabase.from("events").delete().eq("id", id); await loadData(); }, [loadData]);
 
   const value = {
-    ready, fatalError, users, games, events, places, currentUser,
-    register, login, logout, addGame, updateGame, removeGame, rateGame,
+    ready, fatalError, users, games, events, places, loans, myWeights, currentUser,
+    register, login, logout, addGame, updateGame, removeGame, rateGame, clearRating,
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     addExtension, addExtensionOwner, removeExtensionOwner,
+    setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
@@ -741,36 +811,45 @@ function MeepleIcon({ size = 22, color = C.navy }) {
 }
 
 /* ---- Étoiles de notation ---- */
-function Stars({ value = 0, onRate, size = 18, readOnly = false }) {
+function Stars({ value = 0, onRate, onClear, size = 18, readOnly = false }) {
   const [hover, setHover] = useState(0); // valeur survolée (peut être .5)
   const shown = hover || value; // valeur affichée
   return (
-    <span style={{ display: "inline-flex", gap: 2 }} onMouseLeave={() => setHover(0)}>
-      {[1, 2, 3, 4, 5].map((n) => {
-        const full = shown >= n;        // étoile pleine
-        const half = !full && shown >= n - 0.5; // demi-étoile
-        return (
-          <span key={n} style={{ position: "relative", lineHeight: 0, display: "inline-block", transition: "transform .12s", transform: (hover && Math.ceil(hover) === n) ? "scale(1.15)" : "scale(1)" }}>
-            {/* étoile de fond (vide) */}
-            <Star size={size} fill="none" color="#cdb9a0" strokeWidth={1.8} />
-            {/* remplissage (plein ou moitié gauche) */}
-            {(full || half) && (
-              <span style={{ position: "absolute", top: 0, left: 0, width: half ? "50%" : "100%", height: "100%", overflow: "hidden", lineHeight: 0 }}>
-                <Star size={size} fill={C.amber} color={C.amber} strokeWidth={1.8} />
-              </span>
-            )}
-            {/* zones cliquables : moitié gauche = n-0.5, moitié droite = n */}
-            {!readOnly && (
-              <>
-                <button type="button" aria-label={`${n - 0.5} étoile`} onMouseEnter={() => setHover(n - 0.5)} onClick={() => onRate && onRate(n - 0.5)}
-                  style={{ position: "absolute", top: 0, left: 0, width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
-                <button type="button" aria-label={`${n} étoiles`} onMouseEnter={() => setHover(n)} onClick={() => onRate && onRate(n)}
-                  style={{ position: "absolute", top: 0, left: "50%", width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
-              </>
-            )}
-          </span>
-        );
-      })}
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <span style={{ display: "inline-flex", gap: 2 }} onMouseLeave={() => setHover(0)}>
+        {[1, 2, 3, 4, 5].map((n) => {
+          const full = shown >= n;        // étoile pleine
+          const half = !full && shown >= n - 0.5; // demi-étoile
+          return (
+            <span key={n} style={{ position: "relative", lineHeight: 0, display: "inline-block", transition: "transform .12s", transform: (hover && Math.ceil(hover) === n) ? "scale(1.15)" : "scale(1)" }}>
+              {/* étoile de fond (vide) */}
+              <Star size={size} fill="none" color="#cdb9a0" strokeWidth={1.8} />
+              {/* remplissage (plein ou moitié gauche) */}
+              {(full || half) && (
+                <span style={{ position: "absolute", top: 0, left: 0, width: half ? "50%" : "100%", height: "100%", overflow: "hidden", lineHeight: 0 }}>
+                  <Star size={size} fill={C.amber} color={C.amber} strokeWidth={1.8} />
+                </span>
+              )}
+              {/* zones cliquables : moitié gauche = n-0.5, moitié droite = n */}
+              {!readOnly && (
+                <>
+                  <button type="button" aria-label={`${n - 0.5} étoile`} onMouseEnter={() => setHover(n - 0.5)} onClick={() => onRate && onRate(n - 0.5)}
+                    style={{ position: "absolute", top: 0, left: 0, width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
+                  <button type="button" aria-label={`${n} étoiles`} onMouseEnter={() => setHover(n)} onClick={() => onRate && onRate(n)}
+                    style={{ position: "absolute", top: 0, left: "50%", width: "50%", height: "100%", background: "none", border: "none", padding: 0, cursor: "pointer" }} />
+                </>
+              )}
+            </span>
+          );
+        })}
+      </span>
+      {/* bouton effacer la note (si une note existe et qu'on est en mode édition) */}
+      {!readOnly && onClear && value > 0 && (
+        <button type="button" onClick={onClear} title="Effacer ma note"
+          style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "rgba(181,40,58,.08)", color: C.red, border: "none", borderRadius: 8, padding: "4px 9px", cursor: "pointer", fontSize: 12, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          <X size={12} /> Effacer
+        </button>
+      )}
     </span>
   );
 }
@@ -1005,6 +1084,7 @@ const NAV = [
   { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
   { key: "ma-ludo", label: "Ma ludothèque", icon: BookOpen, auth: true },
+  { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
 ];
 
 function Navbar({ page, setPage, onAuth }) {
@@ -2479,7 +2559,7 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, removeGame, updateGame, users, addOwner, removeOwner } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const owners = g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName }] : []);
@@ -2526,8 +2606,10 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       <div style={{ background: C.paper, border: "2px solid #ece2d0", borderRadius: 16, padding: "14px 18px", marginBottom: 18 }}>
         {currentUser ? (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>Votre note {myRating ? `: ${myRating}/5` : ""}</span>
-            <Stars value={myRating} size={26} onRate={async (v) => { await rateGame(g.id, v); setToast(v === myRating ? "Note retirée" : `Noté ${String(v).replace(".", ",")}/5 !`); }} />
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>Votre note {myRating ? `: ${String(myRating).replace(".", ",")}/5` : ""}</span>
+            <Stars value={myRating} size={26}
+              onRate={async (v) => { await rateGame(g.id, v); setToast(v === myRating ? "Note retirée" : `Noté ${String(v).replace(".", ",")}/5 !`); }}
+              onClear={async () => { await clearRating(g.id); setToast("Note effacée"); }} />
           </div>
         ) : (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -2590,6 +2672,9 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         )}
       </div>
 
+      {/* section location */}
+      <GameRentalSection g={g} onClose={onClose} setToast={setToast} isOwner={isOwner} />
+
       {/* extensions du jeu */}
       <GameExtensions g={g} onAuth={onAuth} onClose={onClose} setToast={setToast} />
 
@@ -2630,6 +2715,121 @@ function VotersModal({ g, onClose }) {
           </div>
         ))}
       </div>
+    </Modal>
+  );
+}
+
+/* ---- Section location d'une fiche de jeu ---- */
+function GameRentalSection({ g, onClose, setToast, isOwner }) {
+  const { currentUser, myWeights, setGameWeight, loans } = useApp();
+  const [showLoan, setShowLoan] = useState(false);
+  const [editWeight, setEditWeight] = useState(false);
+  const [w, setW] = useState(myWeights[g.id] != null ? String(myWeights[g.id]) : "");
+  const price = rentalPrice(g.newPrice);
+  const myWeight = myWeights[g.id];
+  // ce jeu est-il actuellement prêté par moi ?
+  const myActiveLoan = (loans || []).find((l) => l.gameId === g.id && l.lenderId === currentUser?.id && !l.returned);
+
+  return (
+    <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
+      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 7 }}>
+        <Euro size={17} color={C.teal} /> Location
+      </h4>
+
+      {price != null ? (
+        <div style={{ background: "rgba(30,138,138,.07)", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 14, color: "#5e5346" }}>Tarif de location <span style={{ fontSize: 12, color: "#9c8d79" }}>(2 semaines)</span></span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 20 }}>{fmtEuro(price)}</span>
+        </div>
+      ) : (
+        <p style={{ fontSize: 13, color: "#9c8d79", margin: "0 0 12px" }}>Le tarif de location s'affichera une fois le prix neuf renseigné (modifiez la fiche).</p>
+      )}
+
+      {/* outils du propriétaire : poids + prêter */}
+      {isOwner && (
+        <div style={{ display: "grid", gap: 10 }}>
+          {/* mon poids pour ce jeu (privé) */}
+          <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 12, padding: "10px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 13.5, color: "#5e5346", display: "flex", alignItems: "center", gap: 6 }}>
+                <Lock size={13} color="#9c8d79" /> Poids de mon exemplaire {myWeight != null ? <b>: {String(myWeight).replace(".", ",")} g</b> : <span style={{ color: "#9c8d79" }}>: non renseigné</span>}
+              </span>
+              {!editWeight && <button onClick={() => { setW(myWeight != null ? String(myWeight) : ""); setEditWeight(true); }} style={{ background: "none", border: "none", color: C.teal, cursor: "pointer", fontSize: 13, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>Modifier</button>}
+            </div>
+            {editWeight && (
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                <input type="number" step="0.1" value={w} onChange={(e) => setW(e.target.value)} placeholder="ex. 1250,5" style={{ ...inputStyle, flex: 1 }} />
+                <span style={{ fontSize: 13, color: "#9c8d79" }}>g</span>
+                <Btn size="sm" variant="teal" onClick={async () => { await setGameWeight(g.id, w); setEditWeight(false); setToast("Poids enregistré."); }}>OK</Btn>
+                <Btn size="sm" variant="soft" onClick={() => setEditWeight(false)}>Annuler</Btn>
+              </div>
+            )}
+            <p style={{ fontSize: 11.5, color: "#9c8d79", margin: "6px 0 0" }}>Visible de vous seul. Sert à vérifier qu'aucune pièce ne manque au retour (inserts, sleeves... le poids vous est propre).</p>
+          </div>
+
+          {/* prêter ce jeu */}
+          {myActiveLoan ? (
+            <div style={{ background: "rgba(232,163,23,.1)", borderRadius: 12, padding: "10px 14px", fontSize: 13.5, color: "#5e5346" }}>
+              Vous prêtez actuellement ce jeu à <b>{myActiveLoan.borrowerName}</b>. Gérez-le dans « Mes locations ».
+            </div>
+          ) : (
+            <Btn variant="teal" onClick={() => setShowLoan(true)}><ArrowRightLeft size={16} /> Prêter ce jeu</Btn>
+          )}
+        </div>
+      )}
+
+      {showLoan && <LoanModal g={g} onClose={() => setShowLoan(false)} setToast={setToast} defaultWeight={myWeight} />}
+    </div>
+  );
+}
+
+/* ---- Modale : enregistrer un prêt ---- */
+function LoanModal({ g, onClose, setToast, defaultWeight }) {
+  const { users, currentUser, createLoan } = useApp();
+  const [borrowerId, setBorrowerId] = useState("");
+  const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // date de retour = dans 14 jours
+  const due = new Date(); due.setDate(due.getDate() + 14);
+  const dueStr = due.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + " à " + due.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+  const others = users.filter((u) => u.id !== currentUser?.id);
+
+  const submit = async () => {
+    setErr("");
+    if (!borrowerId) { setErr("Choisissez à qui vous prêtez le jeu."); return; }
+    setBusy(true);
+    const res = await createLoan(g.id, borrowerId, weight);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    onClose();
+    setToast("Prêt enregistré !");
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Prêter « ${g.name} »`} width={520}>
+      <Field label="À qui prêtez-vous ce jeu ?">
+        <select value={borrowerId} onChange={(e) => setBorrowerId(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+          <option value="">— Choisir un membre —</option>
+          {others.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+      </Field>
+
+      <div style={{ background: "rgba(30,138,138,.07)", borderRadius: 12, padding: "12px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+        <Calendar size={18} color={C.teal} />
+        <span style={{ fontSize: 13.5, color: "#5e5346" }}>Retour prévu le <b>{dueStr}</b> <span style={{ color: "#9c8d79" }}>(dans 2 semaines)</span></span>
+      </div>
+
+      <Field label="Poids relevé (g)" hint="Pré-rempli avec votre poids enregistré. Sert à vérifier le jeu au retour (visible de vous seul).">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="number" step="0.1" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="ex. 1250,5" style={{ ...inputStyle, flex: 1 }} />
+          <span style={{ fontSize: 14, color: "#9c8d79" }}>g</span>
+        </div>
+      </Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" variant="teal" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><ArrowRightLeft size={18} /> Enregistrer le prêt</>}</Btn>
     </Modal>
   );
 }
@@ -2767,11 +2967,137 @@ function GameComments({ g, onAuth, onClose }) {
   );
 }
 
+/* ---- Compte à rebours (se met à jour chaque seconde, passe en négatif) ---- */
+function Countdown({ dueAt }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const diff = new Date(dueAt).getTime() - now; // ms restantes (négatif si en retard)
+  const late = diff < 0;
+  const abs = Math.abs(diff);
+  const days = Math.floor(abs / 86400000);
+  const hours = Math.floor((abs % 86400000) / 3600000);
+  const mins = Math.floor((abs % 3600000) / 60000);
+  const secs = Math.floor((abs % 60000) / 1000);
+  const parts = days > 0 ? `${days} j ${hours} h ${mins} min` : `${hours} h ${mins} min ${secs} s`;
+  return (
+    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: late ? C.red : C.teal, fontSize: 15 }}>
+      {late ? `En retard de ${parts}` : `${parts} restant${days > 1 ? "s" : ""}`}
+    </span>
+  );
+}
+
+/* =============================================================================
+   PAGE — MES LOCATIONS
+   ============================================================================= */
+function LocationsPage({ setToast }) {
+  const { loans, currentUser, closeLoan } = useApp();
+  const myLent = (loans || []).filter((l) => l.lenderId === currentUser?.id && !l.returned);
+  const myBorrowed = (loans || []).filter((l) => l.borrowerId === currentUser?.id && !l.returned);
+  const history = (loans || []).filter((l) => (l.lenderId === currentUser?.id || l.borrowerId === currentUser?.id) && l.returned);
+
+  const fmtDue = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) + " à " + new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 20px 80px" }}>
+      <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 32, color: C.navy, margin: "0 0 6px" }}>Mes locations</h1>
+      <p style={{ color: "#8a7c6a", margin: "0 0 32px", fontSize: 15 }}>Les jeux que vous prêtez et ceux que vous empruntez.</p>
+
+      {/* JEUX QUE JE PRÊTE */}
+      <section style={{ marginBottom: 40 }}>
+        <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <ArrowRightLeft size={20} color={C.teal} /> Jeux que je prête ({myLent.length})
+        </h2>
+        {myLent.length === 0 ? (
+          <EmptyHint icon={Package} text="Vous ne prêtez aucun jeu actuellement." />
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {myLent.map((l) => {
+              const late = new Date(l.dueAt).getTime() < Date.now();
+              return (
+                <div key={l.id} style={{ background: C.paper, border: `1px solid ${late ? "rgba(181,40,58,.3)" : "#ece2d0"}`, borderRadius: 16, padding: "16px 18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>{l.gameName}</div>
+                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Prêté à <b>{l.borrowerName}</b></div>
+                      <div style={{ fontSize: 13, color: "#9c8d79", marginTop: 2 }}>Retour prévu le {fmtDue(l.dueAt)}</div>
+                      {/* poids visible du prêteur seulement */}
+                      {l.weight != null && (
+                        <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(26,58,92,.05)", padding: "3px 9px", borderRadius: 8 }}>
+                          <Lock size={12} /> Poids relevé : <b>{String(l.weight).replace(".", ",")} g</b>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+                      <Countdown dueAt={l.dueAt} />
+                      <Btn size="sm" variant="teal" onClick={async () => { await closeLoan(l.id); setToast("Location clôturée, jeu rendu !"); }}><Check size={14} /> Le jeu a bien été rendu</Btn>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* JEUX QUE J'EMPRUNTE */}
+      <section style={{ marginBottom: 40 }}>
+        <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <Package size={20} color={C.amber} /> Jeux que j'emprunte ({myBorrowed.length})
+        </h2>
+        {myBorrowed.length === 0 ? (
+          <EmptyHint icon={Package} text="Vous n'empruntez aucun jeu actuellement." />
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {myBorrowed.map((l) => {
+              const late = new Date(l.dueAt).getTime() < Date.now();
+              return (
+                <div key={l.id} style={{ background: late ? "rgba(181,40,58,.05)" : C.paper, border: `1px solid ${late ? "rgba(181,40,58,.3)" : "#ece2d0"}`, borderRadius: 16, padding: "16px 18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>{l.gameName}</div>
+                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Emprunté à <b>{l.lenderName}</b></div>
+                      <div style={{ fontSize: 13, color: "#9c8d79", marginTop: 2 }}>À rendre le {fmtDue(l.dueAt)}</div>
+                      {late && <div style={{ fontSize: 12.5, color: C.red, marginTop: 6, fontWeight: 600 }}>⚠ Pensez à rendre ce jeu à son propriétaire.</div>}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <Countdown dueAt={l.dueAt} />
+                      <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 6 }}>Seul {l.lenderName} peut clôturer le prêt.</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* HISTORIQUE */}
+      {history.length > 0 && (
+        <section>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px" }}>Historique ({history.length})</h2>
+          <div style={{ display: "grid", gap: 8 }}>
+            {history.slice(0, 30).map((l) => (
+              <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(26,58,92,.03)", borderRadius: 10, fontSize: 13.5 }}>
+                <span style={{ color: "#5e5346" }}><b>{l.gameName}</b> — {l.lenderId === currentUser?.id ? `prêté à ${l.borrowerName}` : `emprunté à ${l.lenderName}`}</span>
+                <span style={{ color: "#9c8d79", fontSize: 12.5 }}>rendu{l.returnedAt ? ` le ${new Date(l.returnedAt).toLocaleDateString("fr-FR")}` : ""}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function EditGameModal({ g, onClose, onSave }) {
   const { currentUser, toggleGameShared } = useApp();
-  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", ") });
+  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "" });
   const [shared, setShared] = useState(g.shared !== false);
   const isOwner = currentUser && currentUser.id === g.ownerId;
+  const previewRental = rentalPrice(Number(f.newPrice));
   return (
     <Modal open onClose={onClose} title="Modifier le jeu" width={560}>
       <Field label="Nom"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -2781,6 +3107,9 @@ function EditGameModal({ g, onClose, onSave }) {
         <Field label="Max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
       </div>
       <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
+      <Field label="Prix neuf (€)" hint={previewRental != null ? `Location calculée : ${fmtEuro(previewRental)} (10% arrondi au 0,5 € sup.)` : "Sert à calculer le tarif de location"}>
+        <TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} placeholder="ex. 45" />
+      </Field>
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
       <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
@@ -2795,7 +3124,7 @@ function EditGameModal({ g, onClose, onSave }) {
       )}
       <Btn full size="lg" onClick={async () => {
         if (isOwner && shared !== (g.shared !== false)) await toggleGameShared(g.id, shared);
-        onSave({ ...f, year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", mechanics: f.mechanics.split(",").map((s) => s.trim()).filter(Boolean) });
+        onSave({ ...f, year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice === "" ? null : Number(f.newPrice), mechanics: f.mechanics.split(",").map((s) => s.trim()).filter(Boolean) });
       }}><Check size={18} /> Enregistrer</Btn>
     </Modal>
   );
@@ -3671,7 +4000,7 @@ function Shell() {
   const [toast, setToast] = useState("");
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
-  useEffect(() => { if (!currentUser && page === "ma-ludo") setPage("accueil"); }, [currentUser, page]);
+  useEffect(() => { if (!currentUser && (page === "ma-ludo" || page === "locations")) setPage("accueil"); }, [currentUser, page]);
 
   if (fatalError === "config") return <ConfigScreen />;
 
@@ -3699,6 +4028,7 @@ function Shell() {
         {page === "soirees" && <EventsPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "ludotheque" && <LudothequePage onAuth={(m) => setAuth(m)} setToast={setToast} setPage={setPage} />}
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
+        {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
       </main>
       <Footer setPage={setPage} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} setToast={setToast} />}
