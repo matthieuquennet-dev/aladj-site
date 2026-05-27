@@ -1,0 +1,8 @@
+# robots.txt — ALADJ
+# Indique aux moteurs de recherche qu'ils peuvent explorer le site.
+
+User-agent: *
+Allow: /
+
+# Localisation du plan du site
+Sitemap: https://aladj.fr/sitemap.xml
