@@ -296,7 +296,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
       setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById)));
       setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
@@ -333,7 +333,7 @@ function AppProvider({ children }) {
       }).select().single();
       data = created;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, shareLibrary: data.share_library !== false });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [] });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -475,6 +475,24 @@ function AppProvider({ children }) {
     await loadData();
   }, [currentUser, loadData]);
 
+  // Mise à jour du profil du membre connecté
+  const updateProfile = useCallback(async (patch) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const fields = {};
+    if (patch.name !== undefined) fields.name = patch.name.trim();
+    if (patch.avatar !== undefined) fields.avatar_url = patch.avatar;
+    if (patch.city !== undefined) fields.city = patch.city.trim();
+    if (patch.bio !== undefined) fields.bio = patch.bio.slice(0, 500);
+    if (patch.bggUrl !== undefined) fields.bgg_url = patch.bggUrl.trim();
+    if (patch.okkazeoUrl !== undefined) fields.okkazeo_url = patch.okkazeoUrl.trim();
+    if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
+    const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
+    if (error) return { error: error.message };
+    setCurrentUser((u) => u ? { ...u, ...patch, bio: patch.bio !== undefined ? patch.bio.slice(0, 500) : u.bio } : u);
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
   const rateGame = useCallback(async (id, value) => {
     if (!currentUser) return;
     const existing = games.find((g) => g.id === id)?.ratings?.[currentUser.id];
@@ -611,7 +629,7 @@ function AppProvider({ children }) {
     ready, fatalError, users, games, events, places, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame,
     loginWithGoogle,
-    toggleGameShared, setShareLibrary, addOwner, removeOwner,
+    toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     addExtension, addExtensionOwner, removeExtensionOwner,
     addEvent, updateEvent, toggleJoin, removeEvent,
     addGuest, removeGuest, addComment, updateComment, removeComment,
@@ -992,6 +1010,7 @@ const NAV = [
 function Navbar({ page, setPage, onAuth }) {
   const { currentUser, logout } = useApp();
   const [open, setOpen] = useState(false);
+  const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => !n.auth || currentUser);
 
   return (
@@ -1025,13 +1044,13 @@ function Navbar({ page, setPage, onAuth }) {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }} className="aladj-desktop-nav">
           {currentUser ? (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 11, background: "rgba(30,138,138,.1)" }}>
-                <span style={{ width: 28, height: 28, borderRadius: 8, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14 }}>
-                  {currentUser.name[0].toUpperCase()}
+              <button onClick={() => setEditProfile(true)} title="Modifier mon profil" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 11, background: "rgba(30,138,138,.1)", border: "none", cursor: "pointer" }}>
+                <span style={{ width: 28, height: 28, borderRadius: 8, overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14 }}>
+                  {currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : currentUser.name[0].toUpperCase()}
                 </span>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{currentUser.name}</span>
                 {currentUser.role === "decideur" && <Crown size={15} color={C.amber} />}
-              </div>
+              </button>
               <Btn variant="ghost" size="sm" onClick={logout}><LogOut size={15} /> Sortir</Btn>
             </>
           ) : (
@@ -1064,6 +1083,7 @@ function Navbar({ page, setPage, onAuth }) {
           {currentUser ? (
             <>
               <div style={{ padding: "8px 4px", fontFamily: "'Fredoka',sans-serif", color: C.navy, fontWeight: 600 }}>Connecté : {currentUser.name}</div>
+              <Btn variant="ghost" onClick={() => { setEditProfile(true); setOpen(false); }} full><Users size={16} /> Mon profil</Btn>
               <Btn variant="ghost" onClick={() => { logout(); setOpen(false); }} full><LogOut size={16} /> Se déconnecter</Btn>
             </>
           ) : (
@@ -1074,7 +1094,76 @@ function Navbar({ page, setPage, onAuth }) {
           )}
         </div>
       )}
+      {editProfile && <ProfileEditModal onClose={() => setEditProfile(false)} />}
     </header>
+  );
+}
+
+/* ---- Modale : édition de son propre profil ---- */
+function ProfileEditModal({ onClose }) {
+  const { currentUser, updateProfile } = useApp();
+  const [f, setF] = useState({
+    name: currentUser?.name || "", avatar: currentUser?.avatar || "", city: currentUser?.city || "",
+    bio: currentUser?.bio || "", bggUrl: currentUser?.bggUrl || "", okkazeoUrl: currentUser?.okkazeoUrl || "",
+    favMechanics: currentUser?.favMechanics || [],
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const toggleMech = (m) => setF((s) => {
+    if (s.favMechanics.includes(m)) return { ...s, favMechanics: s.favMechanics.filter((x) => x !== m) };
+    if (s.favMechanics.length >= 6) return s; // max 6
+    return { ...s, favMechanics: [...s.favMechanics, m] };
+  });
+
+  const save = async () => {
+    setErr("");
+    if (!f.name.trim()) { setErr("Le nom ne peut pas être vide."); return; }
+    setBusy(true);
+    const res = await updateProfile(f);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Mon profil" width={560}>
+      {/* avatar */}
+      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 18 }}>
+        <div style={{ width: 72, height: 72, borderRadius: 18, flexShrink: 0, overflow: "hidden", background: C.teal, display: "grid", placeItems: "center" }}>
+          {f.avatar ? <img src={f.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 30 }}>{(f.name[0] || "?").toUpperCase()}</span>}
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, marginBottom: 6 }}>Photo / image de profil</label>
+          <ImageField value={f.avatar} onChange={(v) => setF({ ...f, avatar: v })} />
+        </div>
+      </div>
+
+      <Field label="Nom affiché"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+      <Field label="Ville"><TextInput value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} placeholder="Ex. Gouville-sur-Mer" /></Field>
+
+      <Field label={`Présentation (${f.bio.length}/500)`} hint="Quelques mots sur vous, vos goûts de jeu...">
+        <textarea value={f.bio} onChange={(e) => setF({ ...f, bio: e.target.value.slice(0, 500) })} rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="Joueur passionné depuis..." />
+      </Field>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Lien BoardGameGeek" hint="Facultatif"><TextInput value={f.bggUrl} onChange={(e) => setF({ ...f, bggUrl: e.target.value })} placeholder="https://boardgamegeek.com/user/..." /></Field>
+        <Field label="Lien Okkazeo" hint="Facultatif"><TextInput value={f.okkazeoUrl} onChange={(e) => setF({ ...f, okkazeoUrl: e.target.value })} placeholder="https://www.okkazeo.com/..." /></Field>
+      </div>
+
+      <Field label={`Mécaniques préférées (${f.favMechanics.length}/6)`} hint="Choisissez jusqu'à 6 types de jeux que vous aimez">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+          {MECHANIC_SUGGESTIONS.map((m) => {
+            const active = f.favMechanics.includes(m);
+            const disabled = !active && f.favMechanics.length >= 6;
+            return <button key={m} type="button" onClick={() => toggleMech(m)} disabled={disabled} style={{ padding: "6px 12px", borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : (disabled ? "#cdbfa8" : "#8a7c6a"), opacity: disabled ? .6 : 1 }}>{m}</button>;
+          })}
+        </div>
+      </Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer mon profil</>}</Btn>
+    </Modal>
   );
 }
 
@@ -1410,18 +1499,63 @@ function MembersModal({ onClose, onPickMember }) {
 function MemberLibraryModal({ memberId, onClose }) {
   const { games, users } = useApp();
   const member = users.find((u) => u.id === memberId);
-  const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => a.name.localeCompare(b.name));
+  // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
+  const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => {
+    const ra = a.ratings?.[memberId] || 0, rb = b.ratings?.[memberId] || 0;
+    if (rb !== ra) return rb - ra;
+    return a.name.localeCompare(b.name, "fr");
+  });
+  const initial = member ? member.name[0].toUpperCase() : "?";
   return (
-    <Modal open onClose={onClose} title={member ? `Ludothèque de ${member.name}` : "Ludothèque"} width={620}>
+    <Modal open onClose={onClose} title={member ? member.name : "Membre"} width={640}>
+      {member && (
+        <div style={{ marginBottom: 20 }}>
+          {/* en-tête profil */}
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: member.bio ? 14 : 0 }}>
+            <div style={{ width: 72, height: 72, borderRadius: 18, flexShrink: 0, overflow: "hidden", background: member.role === "decideur" ? C.amber : C.teal, display: "grid", placeItems: "center" }}>
+              {member.avatar
+                ? <img src={member.avatar} alt={member.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 30 }}>{initial}</span>}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, color: member.role === "decideur" ? C.amber : C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
+                  {member.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}
+                </span>
+                {member.city && <span style={{ fontSize: 13, color: "#8a7c6a", display: "inline-flex", alignItems: "center", gap: 3 }}><MapPin size={13} /> {member.city}</span>}
+              </div>
+              {/* liens externes */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                {member.bggUrl && <a href={member.bggUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: "#ff5100", padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> BGG</a>}
+                {member.okkazeoUrl && <a href={member.okkazeoUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: C.purple, padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> Okkazeo</a>}
+              </div>
+              {/* mécaniques préférées */}
+              {member.favMechanics && member.favMechanics.length > 0 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: "#9c8d79", alignSelf: "center" }}>Aime :</span>
+                  {member.favMechanics.map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* encart de présentation */}
+          {member.bio && (
+            <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 12, padding: "12px 14px", fontSize: 14, color: "#5e5346", lineHeight: 1.55, whiteSpace: "pre-line" }}>{member.bio}</div>
+          )}
+        </div>
+      )}
+
+      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+        Sa ludothèque ({theirGames.length}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· classée par ses notes</span>
+      </h4>
       {theirGames.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
           <Gamepad2 size={40} style={{ opacity: .4, marginBottom: 12 }} />
           <p style={{ fontSize: 14.5 }}>Ce membre n'a pas encore ajouté de jeu.</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "60vh", overflowY: "auto", padding: 2 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "55vh", overflowY: "auto", padding: 2 }}>
           {theirGames.map((g) => {
-            const st = gameStats(g);
             const myRating = g.ratings?.[memberId] || 0;
             return (
               <div key={g.id} style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #efe6d6", background: "#fff" }}>
@@ -2320,7 +2454,7 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
               const extra = os.length - 2;
               return <><b style={{ color: C.teal }}>{shown}</b>{extra > 0 ? ` +${extra}` : ""}</>;
             })()}</span>
-            <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{count} vote{count > 1 ? "s" : ""}</span>
+            <span style={{ fontSize: 11.5, color: "#8a7c6a", fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{count} vote{count > 1 ? "s" : ""}</span>
           </div>
         </div>
       </button>
