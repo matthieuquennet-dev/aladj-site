@@ -5,11 +5,102 @@
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1A3A5C" />
-    <meta name="description" content="À l'assaut des jeux (ALADJ) — l'association des passionnés de jeux de société du Coutançais (Manche, Normandie). Ludothèque partagée, soirées jeux et adhésion." />
-    <title>ALADJ — À l'assaut des jeux</title>
+
+    <!-- ============================================================ -->
+    <!-- SEO : titre + description (les deux choses qui apparaissent dans Google) -->
+    <!-- ============================================================ -->
+    <title>ALADJ — Association de jeux de société à Coutances, Gouville-sur-Mer et Agon-Coutainville</title>
+    <meta name="description" content="ALADJ « À l'assaut des jeux » : association de jeux de société dans le Coutançais (Coutances, Gouville-sur-Mer, Agon-Coutainville, Manche). Ludothèque partagée, moments jeux conviviaux, adhésion ouverte aux +16 ans." />
+    <meta name="keywords" content="jeux de société, association, Coutances, Gouville-sur-Mer, Agon-Coutainville, Manche, Normandie, ludothèque, club de jeux, ALADJ, jeux de plateau, moments jeux, soirée jeux" />
+    <meta name="author" content="ALADJ — À l'assaut des jeux" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- URL canonique : évite que Google indexe à la fois aladj.fr et aladj-site.vercel.app -->
+    <link rel="canonical" href="https://aladj.fr/" />
+
+    <!-- ============================================================ -->
+    <!-- Open Graph (aperçu quand on partage le lien sur Facebook, Signal, WhatsApp, etc.) -->
+    <!-- ============================================================ -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:site_name" content="ALADJ — À l'assaut des jeux" />
+    <meta property="og:title" content="ALADJ — Association de jeux de société à Coutances, Gouville-sur-Mer et Agon-Coutainville" />
+    <meta property="og:description" content="L'association des passionnés de jeux de société du Coutançais. Ludothèque partagée, moments jeux conviviaux, adhésion ouverte aux +16 ans." />
+    <meta property="og:url" content="https://aladj.fr/" />
+    <meta property="og:image" content="https://aladj.fr/logo.png" />
+    <meta property="og:image:alt" content="Logo ALADJ — À l'assaut des jeux" />
+
+    <!-- Twitter Card (aperçu sur X/Twitter) -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ALADJ — Association de jeux de société à Coutances" />
+    <meta name="twitter:description" content="Ludothèque partagée, moments jeux et convivialité dans le Coutançais (Manche, Normandie)." />
+    <meta name="twitter:image" content="https://aladj.fr/logo.png" />
+
+    <!-- ============================================================ -->
+    <!-- Données structurées JSON-LD : aide Google à comprendre que vous êtes -->
+    <!-- une association loi 1901, où elle est basée, et ses caractéristiques. -->
+    <!-- ============================================================ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "@id": "https://aladj.fr/#organization",
+      "name": "ALADJ — À l'assaut des jeux",
+      "alternateName": "À l'assaut des jeux",
+      "url": "https://aladj.fr/",
+      "logo": "https://aladj.fr/logo.png",
+      "description": "Association loi 1901 de passionnés de jeux de société dans le Coutançais (Manche, Normandie). Ludothèque partagée entre les membres et moments jeux conviviaux.",
+      "foundingDate": "2010-10-13",
+      "areaServed": [
+        { "@type": "City", "name": "Coutances" },
+        { "@type": "City", "name": "Gouville-sur-Mer" },
+        { "@type": "City", "name": "Agon-Coutainville" },
+        { "@type": "AdministrativeArea", "name": "Manche" },
+        { "@type": "AdministrativeArea", "name": "Normandie" }
+      ],
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Gouville-sur-Mer",
+        "addressRegion": "Normandie",
+        "postalCode": "50560",
+        "addressCountry": "FR"
+      },
+      "knowsAbout": ["Jeux de société", "Jeux de plateau", "Ludothèque", "Vie associative"],
+      "memberOf": {
+        "@type": "Organization",
+        "name": "Associations loi 1901"
+      }
+    }
+    </script>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "@id": "https://aladj.fr/#website",
+      "url": "https://aladj.fr/",
+      "name": "ALADJ — À l'assaut des jeux",
+      "description": "Association de jeux de société à Coutances et Gouville-sur-Mer",
+      "inLanguage": "fr-FR",
+      "publisher": { "@id": "https://aladj.fr/#organization" }
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Contenu pour les robots et les navigateurs sans JavaScript : -->
+    <!-- Google sait gérer le JavaScript, mais ça aide pour le premier rendu et -->
+    <!-- les robots qui ne l'exécutent pas. -->
+    <noscript>
+      <div style="max-width:720px;margin:60px auto;padding:24px;font-family:system-ui,sans-serif;color:#12293f;line-height:1.6">
+        <h1 style="color:#1A3A5C">ALADJ — À l'assaut des jeux</h1>
+        <p>Association de jeux de société à <strong>Coutances, Gouville-sur-Mer et Agon-Coutainville</strong> (Manche, Normandie).</p>
+        <p>ALADJ est l'association des passionnés de jeux de société du Coutançais. Fondée le 13 octobre 2010, elle propose une <strong>ludothèque partagée</strong> entre les membres, des <strong>moments jeux conviviaux</strong> et une adhésion ouverte aux personnes de 16 ans et plus.</p>
+        <p>Pour profiter pleinement du site, veuillez activer JavaScript dans votre navigateur.</p>
+      </div>
+    </noscript>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
