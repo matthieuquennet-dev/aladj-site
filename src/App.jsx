@@ -200,7 +200,7 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
   // liste des propriétaires (table de liaison) ; repli sur owner_id si liaison vide
@@ -222,11 +222,12 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     extensions: extsByGame[row.id] || [],
     newPrice: row.new_price != null ? Number(row.new_price) : null,
     shared: row.shared !== false,
+    playCount: playCountByGame[row.id] || 0,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
-function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}) {
+function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
@@ -234,6 +235,12 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     guests: (guestsByEvent[row.id] || []).map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
     comments: (commentsByEvent[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
+    playedGames: (eventGamesByEvent[row.id] || []).map((eg) => ({
+      id: eg.id, gameId: eg.game_id, addedBy: eg.added_by, addedByName: nameById[eg.added_by] || "Membre",
+      gameName: gamesIndexById[eg.game_id]?.name || "(jeu supprimé)",
+      gameImg: gamesIndexById[eg.game_id]?.img || "",
+      createdAt: eg.created_at,
+    })),
     createdAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -253,18 +260,14 @@ function AppProvider({ children }) {
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
     try {
-      // Ménage automatique : on supprime les moments jeux dont la date est passée
-      // de plus d'un an (pas d'historique au-delà de 12 mois). Se fait discrètement
-      // au chargement du site, donc pas besoin de mécanisme serveur permanent.
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-      const cutoff = oneYearAgo.toISOString().slice(0, 10);
-      try { await supabase.from("events").delete().lt("event_date", cutoff); } catch (e) { /* sans gravité */ }
+      // Historique préservé : on ne supprime plus automatiquement les moments anciens.
+      // (Auparavant, les moments > 1 an étaient nettoyés ; ce n'est plus le cas pour
+      // garder la mémoire des parties jouées dans le temps.)
 
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -279,6 +282,7 @@ function AppProvider({ children }) {
         supabase.from("extension_owners").select("*"),
         supabase.from("loans").select("*").order("created_at", { ascending: false }),
         supabase.from("game_weights").select("*"),
+        supabase.from("event_games").select("*"),
       ]);
 
       // table de correspondance id -> nom
@@ -292,6 +296,13 @@ function AppProvider({ children }) {
       (eps || []).forEach((p) => { (playersByEvent[p.event_id] ||= []).push(p); });
       const guestsByEvent = {};
       (guests || []).forEach((g) => { (guestsByEvent[g.event_id] ||= []).push(g); });
+      // jeux joués : par moment ET compteur global par jeu
+      const eventGamesByEvent = {};
+      const playCountByGame = {};
+      (eventGamesRows || []).forEach((eg) => {
+        (eventGamesByEvent[eg.event_id] ||= []).push(eg);
+        playCountByGame[eg.game_id] = (playCountByGame[eg.game_id] || 0) + 1;
+      });
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
       const commentsByGame = {};
@@ -312,8 +323,12 @@ function AppProvider({ children }) {
       });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
-      setGames((gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById)));
-      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent)));
+      const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame));
+      // index id->jeu pour résoudre les jeux joués dans mapEvent
+      const gamesIndexById = {};
+      mappedGames.forEach((g) => { gamesIndexById[g.id] = g; });
+      setGames(mappedGames);
+      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent, eventGamesByEvent, gamesIndexById)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
       setLoans((loansRows || []).map((l) => ({
         id: l.id, gameId: l.game_id, lenderId: l.lender_id, borrowerId: l.borrower_id,
@@ -601,6 +616,27 @@ function AppProvider({ children }) {
     return {};
   }, [loadData]);
 
+  // ---- Jeux joués lors d'un moment (historique) ----
+  // Ajouter un jeu joué : l'utilisateur connecté doit être participant du moment.
+  const addPlayedGame = useCallback(async (eventId, gameId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("event_games").insert({ event_id: eventId, game_id: gameId, added_by: currentUser.id });
+    if (error) {
+      // contrainte unique : déjà ajouté
+      if (/duplicate|unique/i.test(error.message)) return { error: "Ce jeu est déjà noté pour ce moment." };
+      return { error: error.message };
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Retirer un jeu joué : seul celui qui l'a ajouté (ou un admin) peut le faire.
+  const removePlayedGame = useCallback(async (playedGameId) => {
+    if (!currentUser) return;
+    await supabase.from("event_games").delete().eq("id", playedGameId);
+    await loadData();
+  }, [currentUser, loadData]);
+
   // ---- Invités nommés (membres avec compte OU personnes sans compte) ----
   const addGuest = useCallback(async (eventId, guestName, memberId = null) => {
     if (!currentUser) return { error: "Connectez-vous." };
@@ -701,7 +737,7 @@ function AppProvider({ children }) {
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
-    addEvent, updateEvent, toggleJoin, removeEvent,
+    addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
     addGuest, removeGuest, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
     addPlace, updatePlace, reload: loadData,
@@ -2254,6 +2290,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }} style={{ marginBottom: 22 }}><LogIn size={18} /> Se connecter pour participer</Btn>
           )}
 
+          {/* JEUX JOUÉS */}
+          <EventPlayedGames e={e} isParticipant={!!isParticipant} canManage={!!canManage} />
+
           {/* COMMENTAIRES */}
           <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18 }}>
             <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px" }}>💬 Discussion ({(e.comments || []).length})</h4>
@@ -2301,6 +2340,99 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
       </div>
       {showEdit && <EditEventModal e={e} onClose={() => setShowEdit(false)} onSave={async (patch) => { await updateEvent(e.id, patch); setShowEdit(false); }} />}
       {showPlace && linkedPlace && <PlaceInfoModal place={linkedPlace} onClose={() => setShowPlace(false)} />}
+    </div>
+  );
+}
+
+/* ---- Section : jeux joués lors d'un moment ---- */
+function EventPlayedGames({ e, isParticipant, canManage }) {
+  const { games, currentUser, addPlayedGame, removePlayedGame } = useApp();
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const played = e.playedGames || [];
+
+  // ids déjà notés pour ce moment (pour les masquer de la recherche)
+  const alreadyIds = new Set(played.map((p) => p.gameId));
+
+  // suggestions : jeux de l'asso filtrés par la saisie, excluant ceux déjà notés ce moment
+  const suggestions = useMemo(() => {
+    if (!q.trim()) return [];
+    const n = q.toLowerCase();
+    return games
+      .filter((g) => !alreadyIds.has(g.id) && g.name.toLowerCase().includes(n))
+      .slice(0, 8);
+  }, [games, q, played]);
+
+  const submit = async (gameId) => {
+    setBusy(true); setErr("");
+    const res = await addPlayedGame(e.id, gameId);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setQ("");
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18, marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0 }}>🎲 Jeux joués ({played.length})</h4>
+        {isParticipant && !adding && <Btn size="sm" variant="soft" onClick={() => setAdding(true)}><Plus size={14} /> Ajouter</Btn>}
+      </div>
+
+      {played.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun jeu noté pour ce moment.</span>}
+
+      {/* liste des jeux joués */}
+      {played.length > 0 && (
+        <div style={{ display: "grid", gap: 8, marginBottom: adding ? 14 : 0 }}>
+          {played.map((p) => {
+            const mineToRemove = currentUser && (p.addedBy === currentUser.id || canManage);
+            return (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "8px 12px" }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: p.gameImg ? `center/cover url("${p.gameImg}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
+                  {!p.gameImg && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{p.gameName.slice(0, 2).toUpperCase()}</span>}
+                </div>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{p.gameName}</span>
+                  <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>ajouté par {p.addedByName}</span>
+                </span>
+                {mineToRemove && <button onClick={() => removePlayedGame(p.id)} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4 }}><Trash2 size={14} /></button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* recherche / ajout */}
+      {adding && (
+        <div style={{ background: "rgba(30,138,138,.06)", borderRadius: 12, padding: 12 }}>
+          <Field label="Rechercher un jeu de la ludothèque" hint={isParticipant ? "Vous pouvez ajouter n'importe quel jeu de l'association." : null}>
+            <div style={{ position: "relative" }}>
+              <Search size={16} color="#b6a78f" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <TextInput value={q} onChange={(ev) => setQ(ev.target.value)} placeholder="Nom du jeu..." autoFocus style={{ paddingLeft: 38 }} />
+            </div>
+          </Field>
+          {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "8px 11px", borderRadius: 8, fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
+          {q.trim() && (
+            <div style={{ display: "grid", gap: 5, maxHeight: 240, overflowY: "auto", marginBottom: 10 }}>
+              {suggestions.length === 0 && <span style={{ fontSize: 13, color: "#a89a86", padding: "4px 6px" }}>Aucun jeu correspondant (ou déjà ajouté).</span>}
+              {suggestions.map((g) => (
+                <button key={g.id} type="button" onClick={() => submit(g.id)} disabled={busy}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #ece2d0", borderRadius: 9, padding: "7px 10px", cursor: busy ? "wait" : "pointer", textAlign: "left" }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})` }} />
+                  <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{g.name}</span>
+                  <Plus size={13} color={C.teal} />
+                </button>
+              ))}
+            </div>
+          )}
+          <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setQ(""); setErr(""); }}>Fermer</Btn>
+        </div>
+      )}
+
+      {!isParticipant && played.length === 0 && currentUser && (
+        <span style={{ fontSize: 12.5, color: "#a89a86", display: "block", marginTop: 6 }}>Seuls les participants au moment peuvent ajouter des jeux joués.</span>
+      )}
     </div>
   );
 }
@@ -2666,6 +2798,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         {g.min && <Badge color={C.teal}><Users size={12} /> {g.min}{g.max && g.max !== g.min ? `–${g.max}` : ""} joueurs</Badge>}
         {g.time && <Badge color={C.amber}><Clock size={12} /> {g.time} min</Badge>}
         {g.source && g.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {g.source}</Badge>}
+        {(g.playCount || 0) > 0 && <Badge color="#6e6256">🎲 joué {g.playCount} fois</Badge>}
       </div>
 
       {/* note moyenne */}
@@ -3290,7 +3423,7 @@ function EditGameModal({ g, onClose, onSave }) {
    PAGE — LUDOTHÈQUE GÉNÉRALE
    ============================================================================= */
 // classement avec départage : note moyenne desc, puis nb votants desc, puis alpha
-function rankGames(games, restrictUserIds = null) {
+function rankGames(games, restrictUserIds = null, preferLessPlayed = false) {
   return [...games].map((g) => {
     let ratings = g.ratings || {};
     if (restrictUserIds) {
@@ -3302,6 +3435,11 @@ function rankGames(games, restrictUserIds = null) {
     return { ...g, _avg: avg, _count: count };
   }).sort((a, b) => {
     if (b._avg !== a._avg) return b._avg - a._avg;
+    // option : à note égale, les jeux les moins joués remontent (favorise la rotation)
+    if (preferLessPlayed) {
+      const pa = a.playCount || 0, pb = b.playCount || 0;
+      if (pa !== pb) return pa - pb;
+    }
     if (b._count !== a._count) return b._count - a._count;
     return a.name.localeCompare(b.name, "fr");
   });
@@ -3530,7 +3668,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
 
   const ranked = useMemo(() => {
     if (chosen.length === 0) return [];
-    let list = rankGames(games, chosen).filter((g) => g._count > 0);
+    let list = rankGames(games, chosen, true).filter((g) => g._count > 0);
     // filtre nombre de joueurs
     if (players) {
       const want = Number(players);
@@ -3600,13 +3738,18 @@ function CustomRankModal({ onClose, onOpenGame }) {
         <EmptyHint icon={Star} text={players || duration ? "Aucun jeu noté ne correspond à ces filtres." : "Ces membres n'ont pas encore noté de jeux."} />
       ) : (
         <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 2 }}>{chosen.length} membre(s) · {ranked.length} jeu(x) trouvé(s)</div>
+          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 2 }}>
+            {chosen.length} membre(s) · {ranked.length} jeu(x) trouvé(s) · <i>à note égale, les jeux les moins joués remontent</i>
+          </div>
           {ranked.map((g, i) => (
             <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
-                <span style={{ fontSize: 12, color: "#9c8d79" }}>{g._count} vote(s) parmi la sélection · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}</span>
+                <span style={{ fontSize: 12, color: "#9c8d79" }}>
+                  {g._count} vote(s) parmi la sélection · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
+                  {" · "}<span style={{ color: (g.playCount || 0) === 0 ? C.teal : "#9c8d79", fontWeight: (g.playCount || 0) === 0 ? 700 : 400 }}>{(g.playCount || 0) === 0 ? "jamais joué" : `joué ${g.playCount} fois`}</span>
+                </span>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
                 <Star size={16} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
