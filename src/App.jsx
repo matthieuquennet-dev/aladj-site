@@ -254,6 +254,7 @@ function AppProvider({ children }) {
   const [events, setEvents] = useState([]);
   const [places, setPlaces] = useState([]);
   const [loans, setLoans] = useState([]);
+  const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [fatalError, setFatalError] = useState(null);
 
@@ -267,7 +268,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -280,9 +281,13 @@ function AppProvider({ children }) {
         supabase.from("game_owners").select("*"),
         supabase.from("extensions").select("*").order("name"),
         supabase.from("extension_owners").select("*"),
-        supabase.from("loans").select("*").order("created_at", { ascending: false }),
+        supabase.from("loans").select("*").order("started_at", { ascending: false }),
         supabase.from("game_weights").select("*"),
         supabase.from("event_games").select("*"),
+        supabase.from("upcoming_games").select("*").order("name"),
+        supabase.from("upcoming_hype").select("*"),
+        supabase.from("upcoming_intent").select("*"),
+        supabase.from("upcoming_comments").select("*").order("created_at"),
       ]);
 
       // table de correspondance id -> nom
@@ -340,6 +345,46 @@ function AppProvider({ children }) {
       const wmap = {};
       (weightsRows || []).forEach((w) => { wmap[w.game_id] = w.weight_g; });
       setMyWeights(wmap);
+
+      // ---- Fiches "À venir" ----
+      // Index des hypes / intentions / commentaires par fiche À venir
+      const hypeByUpc = {};
+      (hypeRows || []).forEach((h) => { (hypeByUpc[h.upcoming_id] ||= []).push(h); });
+      const intentByUpc = {};
+      (intentRows || []).forEach((i) => { (intentByUpc[i.upcoming_id] ||= []).push(i); });
+      const upcCommentsByUpc = {};
+      (upcCommentsRows || []).forEach((c) => { (upcCommentsByUpc[c.upcoming_id] ||= []).push(c); });
+      // Pour le retrait auto : compter les vrais votes (ratings) par jeu de ludo
+      const ratingsCountByGame = {};
+      (ratings || []).forEach((r) => { ratingsCountByGame[r.game_id] = (ratingsCountByGame[r.game_id] || 0) + 1; });
+
+      const allUpc = (upcRows || []).map((u) => {
+        const hypes = {};
+        (hypeByUpc[u.id] || []).forEach((h) => { hypes[h.user_id] = h.value; });
+        const intents = {};
+        (intentByUpc[u.id] || []).forEach((i) => { intents[i.user_id] = i.intent; });
+        // résoudre la fiche ludo correspondante : via lien explicite OU via nom similaire
+        let ludoGame = u.ludo_game_id ? (gamesRows || []).find((g) => g.id === u.ludo_game_id) : null;
+        if (!ludoGame) {
+          // recherche par similarité de nom (réutilise normGameName défini globalement)
+          const nu = normGameName(u.name);
+          ludoGame = (gamesRows || []).find((g) => normGameName(g.name) === nu);
+        }
+        const ludoVotes = ludoGame ? (ratingsCountByGame[ludoGame.id] || 0) : 0;
+        return {
+          id: u.id, name: u.name, year: u.year || "", min: u.min_players || "", max: u.max_players || "",
+          time: u.play_time || "", mechanics: u.mechanics || [], desc: u.description || "", img: u.image_url || "",
+          newPrice: u.new_price != null ? Number(u.new_price) : null,
+          source: u.source || "manuel", createdBy: u.created_by, createdByName: nameById[u.created_by] || "Membre",
+          ludoGameId: ludoGame ? ludoGame.id : null, ludoVotes,
+          hypes, intents,
+          comments: (upcCommentsByUpc[u.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
+          addedAt: u.created_at ? new Date(u.created_at).getTime() : 0,
+        };
+      });
+      // Règle de bascule : si la fiche ludo liée a ≥ 2 votes, on cache la fiche À venir.
+      // On garde tout en base (la fiche reste consultable techniquement) mais on filtre l'affichage.
+      setUpcoming(allUpc.filter((u) => u.ludoVotes < 2));
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -637,6 +682,132 @@ function AppProvider({ children }) {
     await loadData();
   }, [currentUser, loadData]);
 
+  // ============================================================
+  // ---- Fiches "À venir" (jeux à sortir / nouveautés) ----
+  // ============================================================
+
+  // Créer une fiche À venir
+  const addUpcoming = useCallback(async (d) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data, error } = await supabase.from("upcoming_games").insert({
+      name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
+      play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: d.img || "",
+      new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
+      source: d.source || "manuel", created_by: currentUser.id,
+    }).select().single();
+    if (error) return { error: error.message };
+    await loadData();
+    return { upcoming: data };
+  }, [currentUser, loadData]);
+
+  // Modifier une fiche À venir
+  const updateUpcoming = useCallback(async (id, patch) => {
+    const fields = {};
+    if (patch.name !== undefined) fields.name = patch.name.trim();
+    if (patch.year !== undefined) fields.year = patch.year || null;
+    if (patch.min !== undefined) fields.min_players = patch.min || null;
+    if (patch.max !== undefined) fields.max_players = patch.max || null;
+    if (patch.time !== undefined) fields.play_time = patch.time || null;
+    if (patch.mechanics !== undefined) fields.mechanics = patch.mechanics || [];
+    if (patch.desc !== undefined) fields.description = patch.desc || "";
+    if (patch.img !== undefined) fields.image_url = patch.img || "";
+    if (patch.newPrice !== undefined) fields.new_price = patch.newPrice != null && patch.newPrice !== "" ? Number(patch.newPrice) : null;
+    const { error } = await supabase.from("upcoming_games").update(fields).eq("id", id);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  // Supprimer une fiche À venir (n'importe quel membre connecté).
+  const removeUpcoming = useCallback(async (id) => {
+    if (!currentUser) return;
+    await supabase.from("upcoming_games").delete().eq("id", id);
+    await loadData();
+  }, [currentUser, loadData]);
+
+  // Voter / changer / retirer son vote du thermomètre de la hype (1-5)
+  const setHype = useCallback(async (upcId, value) => {
+    if (!currentUser) return;
+    const upc = upcoming.find((u) => u.id === upcId);
+    const existing = upc?.hypes?.[currentUser.id];
+    if (existing === value) {
+      await supabase.from("upcoming_hype").delete().eq("upcoming_id", upcId).eq("user_id", currentUser.id);
+    } else {
+      await supabase.from("upcoming_hype").upsert({ upcoming_id: upcId, user_id: currentUser.id, value });
+    }
+    await loadData();
+  }, [currentUser, upcoming, loadData]);
+
+  // Définir / retirer son intention d'achat
+  const setIntent = useCallback(async (upcId, intent) => {
+    if (!currentUser) return;
+    const upc = upcoming.find((u) => u.id === upcId);
+    const existing = upc?.intents?.[currentUser.id];
+    if (existing === intent) {
+      await supabase.from("upcoming_intent").delete().eq("upcoming_id", upcId).eq("user_id", currentUser.id);
+    } else {
+      await supabase.from("upcoming_intent").upsert({ upcoming_id: upcId, user_id: currentUser.id, intent });
+    }
+    await loadData();
+  }, [currentUser, upcoming, loadData]);
+
+  // Commentaires sur une fiche À venir
+  const addUpcomingComment = useCallback(async (upcId, content) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (!content?.trim()) return { error: "Le commentaire est vide." };
+    const { error } = await supabase.from("upcoming_comments").insert({
+      upcoming_id: upcId, author_id: currentUser.id, content: content.trim().slice(0, 2000),
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const updateUpcomingComment = useCallback(async (commentId, content) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (!content?.trim()) return { error: "Le commentaire est vide." };
+    const { error } = await supabase.from("upcoming_comments").update({
+      content: content.trim().slice(0, 2000), updated_at: new Date().toISOString(),
+    }).eq("id", commentId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const removeUpcomingComment = useCallback(async (commentId) => {
+    if (!currentUser) return;
+    await supabase.from("upcoming_comments").delete().eq("id", commentId);
+    await loadData();
+  }, [currentUser, loadData]);
+
+  // Bouton "Je l'ai !" : crée une fiche ludothèque depuis une fiche À venir,
+  // m'y inscrit comme premier propriétaire, et lie la fiche À venir au jeu créé.
+  const importUpcomingToLudo = useCallback(async (upcId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const u = upcoming.find((x) => x.id === upcId);
+    if (!u) return { error: "Fiche introuvable." };
+    // si déjà liée à une fiche ludo existante, on s'y ajoute juste comme propriétaire
+    if (u.ludoGameId) {
+      const { error } = await supabase.from("game_owners").insert({ game_id: u.ludoGameId, owner_id: currentUser.id });
+      if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+      await loadData();
+      return { gameId: u.ludoGameId };
+    }
+    // sinon on crée la fiche ludo à partir des infos À venir
+    const { data: game, error } = await supabase.from("games").insert({
+      name: u.name, year: u.year || null, min_players: u.min || null, max_players: u.max || null,
+      play_time: u.time || null, mechanics: u.mechanics || [], description: u.desc || "", image_url: u.img || "",
+      new_price: u.newPrice != null ? u.newPrice : null, source: u.source || "manuel", owner_id: currentUser.id,
+    }).select().single();
+    if (error) return { error: error.message };
+    await supabase.from("game_owners").insert({ game_id: game.id, owner_id: currentUser.id });
+    // lier la fiche À venir à la nouvelle fiche ludo
+    await supabase.from("upcoming_games").update({ ludo_game_id: game.id }).eq("id", upcId);
+    await loadData();
+    return { gameId: game.id };
+  }, [currentUser, upcoming, loadData]);
+
+
   // ---- Invités nommés (membres avec compte OU personnes sans compte) ----
   const addGuest = useCallback(async (eventId, guestName, memberId = null) => {
     if (!currentUser) return { error: "Connectez-vous." };
@@ -731,7 +902,7 @@ function AppProvider({ children }) {
   const removeEvent = useCallback(async (id) => { await supabase.from("events").delete().eq("id", id); await loadData(); }, [loadData]);
 
   const value = {
-    ready, fatalError, users, games, events, places, loans, myWeights, currentUser,
+    ready, fatalError, users, games, events, places, loans, myWeights, upcoming, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame, clearRating,
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
@@ -740,7 +911,10 @@ function AppProvider({ children }) {
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
     addGuest, removeGuest, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
-    addPlace, updatePlace, reload: loadData,
+    addPlace, updatePlace,
+    addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
+    addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
+    reload: loadData,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -1160,6 +1334,7 @@ const NAV = [
   { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
   { key: "ma-ludo", label: "Ma ludothèque", icon: BookOpen, auth: true },
+  { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
 ];
 
@@ -1575,17 +1750,72 @@ function HomePage({ setPage, onAuth }) {
       </section>
 
       {/* ADHÉSION */}
-      <section style={{ maxWidth: 1180, margin: "0 auto", padding: "56px 24px 80px" }}>
-        <SectionTitle kicker="Adhésion" title="Comment nous rejoindre" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 36 }}>
-          <PlanCard color={C.amber} crown title="Membre décisionnaire" price="20 €" period="/ an"
-            features={["Voix délibérative en assemblée générale", "Participe aux décisions de l'asso", "Accès complet à la ludothèque", "Crée et rejoint les moments jeux", "Note les jeux et exporte sa ludothèque"]}
-            cta={currentUser ? null : "Adhérer"} onCta={() => onAuth("register")} />
-          <PlanCard color={C.teal} title="Membre non décisionnaire" price="Gratuit" period=""
-            features={["Accès à la ludothèque de l'asso", "Participe et crée des moments jeux", "Note les jeux de l'association", "Gère sa ludothèque personnelle", "Pas de voix délibérative en AG"]}
-            cta={currentUser ? null : "Créer un compte"} onCta={() => onAuth("register")} />
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "56px 24px 80px" }}>
+        <SectionTitle kicker="Adhésion" title="Rejoindre l'association" center />
+        <p style={{ textAlign: "center", color: "#5e5346", fontSize: 15.5, lineHeight: 1.7, maxWidth: 720, margin: "20px auto 36px" }}>
+          Deux formules d'adhésion existent, mais <b>tous les membres profitent pleinement de l'asso</b> : moments jeux, ludothèque, notations, location, gestion personnelle... La différence se résume à <b>deux points seulement</b>.
+        </p>
+
+        {/* Tronc commun (ce que TOUS les membres ont) */}
+        <div style={{ background: C.paper, borderRadius: 22, padding: "28px 32px", border: "1px solid #ece2d0", marginBottom: 24, boxShadow: "0 4px 14px rgba(18,41,63,.04)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, justifyContent: "center" }}>
+            <Check size={20} color={C.teal} />
+            <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, margin: 0 }}>Ce que tous les membres partagent</h3>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Accès complet à la ludothèque partagée lors des moments jeux</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Création et participation aux moments jeux</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Gestion libre de sa ludothèque personnelle</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Notation des jeux et accès complet au site</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Location de jeux entre membres</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}><Check size={16} color={C.teal} style={{ marginTop: 2, flexShrink: 0 }} /> Mêmes tarifs de location (10 % du prix neuf)</div>
+          </div>
         </div>
-        <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 640, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
+
+        {/* Les 2 vraies différences */}
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 18, textAlign: "center", margin: "0 0 18px" }}>Les deux seules différences entre les formules</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginBottom: 24 }}>
+          {/* Décisionnaire */}
+          <div style={{ background: "#fff", borderRadius: 20, padding: "26px 26px 22px", border: `2px solid ${C.amber}`, position: "relative" }}>
+            <div style={{ position: "absolute", top: -14, left: 22, background: C.amber, color: "#fff", padding: "5px 14px", borderRadius: 999, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}><Crown size={14} /> Décisionnaire</div>
+            <div style={{ marginTop: 8, marginBottom: 16 }}>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 28 }}>20 €</span>
+              <span style={{ color: "#9c8d79", fontSize: 14 }}> / an</span>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Award size={15} color={C.amber} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Voix délibérative</b> en assemblée générale — vous participez aux décisions de l'association.</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Check size={15} color={C.amber} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Dispense de caution</b> sur la location des jeux entre membres.</span>
+              </div>
+            </div>
+            {!currentUser && <Btn full variant="amber" size="md" style={{ marginTop: 18 }} onClick={() => onAuth("register")}><UserPlus size={15} /> Adhérer</Btn>}
+          </div>
+
+          {/* Non décisionnaire */}
+          <div style={{ background: "#fff", borderRadius: 20, padding: "26px 26px 22px", border: `2px solid ${C.teal}`, position: "relative" }}>
+            <div style={{ position: "absolute", top: -14, left: 22, background: C.teal, color: "#fff", padding: "5px 14px", borderRadius: 999, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}><Heart size={14} /> Non décisionnaire</div>
+            <div style={{ marginTop: 8, marginBottom: 16 }}>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 28 }}>Gratuit</span>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>Pas de voix délibérative en AG (présence possible à titre consultatif).</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>Caution possible (au prix neuf du jeu) demandée par le prêteur lors d'une location.</span>
+              </div>
+            </div>
+            {!currentUser && <Btn full variant="teal" size="md" style={{ marginTop: 18 }} onClick={() => onAuth("register")}><UserPlus size={15} /> Créer un compte gratuit</Btn>}
+          </div>
+        </div>
+
+        <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 720, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. L'association est ouverte aux adultes de 18 ans et plus ; les jeunes de 14 ans et plus sont les bienvenus s'ils sont joueurs et accompagnés d'un adulte. Une pièce d'identité peut être demandée à l'entrée des moments jeux.
         </p>
       </section>
@@ -3295,6 +3525,494 @@ function Countdown({ dueAt }) {
 /* =============================================================================
    PAGE — MES LOCATIONS
    ============================================================================= */
+/* ============================================================ */
+/* ---- Module "À venir" (jeux à sortir / nouveautés) ---- */
+/* ============================================================ */
+
+// Labels et couleurs pour les 5 niveaux du thermomètre
+const HYPE_LABELS = {
+  1: { label: "Froid", color: "#4a90c2" },
+  2: { label: "Tiède", color: "#7ab8a8" },
+  3: { label: "Intéressé", color: "#e8a317" },
+  4: { label: "Chaud", color: "#e87317" },
+  5: { label: "Brûlant", color: "#b5283a" },
+};
+
+// Labels pour les 5 intentions d'achat
+const INTENT_OPTIONS = [
+  { key: "preco",      label: "C'est précommandé",                 color: "#b5283a" },
+  { key: "day_one",    label: "Day one",                           color: "#e87317" },
+  { key: "promo",      label: "J'attends les promotions",          color: "#e8a317" },
+  { key: "complement", label: "Pour compléter une commande",       color: "#7ab8a8" },
+  { key: "no_way",     label: "No way",                            color: "#6e6256" },
+];
+
+/* ---- Thermomètre cliquable (1 à 5) ---- */
+function Thermometer({ value = 0, onRate, readOnly = false, size = 22 }) {
+  const [hover, setHover] = useState(0);
+  const shown = hover || value;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }} onMouseLeave={() => setHover(0)}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const active = shown >= n;
+        const cfg = HYPE_LABELS[n];
+        return (
+          <button key={n} type="button" disabled={readOnly}
+            onMouseEnter={() => setHover(n)} onClick={() => !readOnly && onRate && onRate(n)}
+            title={`${n} — ${cfg.label}`}
+            style={{
+              width: size, height: size, borderRadius: "50%", border: "none", padding: 0,
+              background: active ? cfg.color : "#e4dccb", cursor: readOnly ? "default" : "pointer",
+              transition: "transform .12s", transform: hover === n ? "scale(1.18)" : "scale(1)",
+              boxShadow: active ? "0 2px 6px rgba(0,0,0,.15)" : "none",
+            }} />
+        );
+      })}
+      {shown > 0 && <span style={{ marginLeft: 6, fontSize: 12, color: HYPE_LABELS[shown].color, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{HYPE_LABELS[shown].label}</span>}
+    </span>
+  );
+}
+
+// Stats sur une fiche À venir
+function upcomingStats(u) {
+  const vals = Object.values(u.hypes || {});
+  const count = vals.length;
+  const avg = count ? vals.reduce((a, b) => a + b, 0) / count : 0;
+  return { avg, count };
+}
+
+/* ---- Carte d'une fiche À venir (grille principale) ---- */
+function UpcomingCard({ u, onOpen, currentUserId }) {
+  const { avg, count } = upcomingStats(u);
+  const myHype = currentUserId ? (u.hypes?.[currentUserId] || 0) : 0;
+  const iVoted = myHype > 0;
+  const cfg = HYPE_LABELS[Math.round(avg)] || HYPE_LABELS[1];
+  return (
+    <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(18,41,63,.12)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
+      <div style={{ position: "relative" }}>
+        <GameCover g={u} />
+        {count > 0 && (
+          <div title={iVoted ? "Hype moyenne — vous avez voté" : "Hype moyenne — vous n'avez pas encore voté"}
+            style={{ position: "absolute", top: 10, right: 10, background: iVoted ? cfg.color : "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
+            🌡️ {avg.toFixed(1).replace(".", ",")}
+          </div>
+        )}
+      </div>
+      <div style={{ padding: 14 }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 4px", lineHeight: 1.2 }}>{u.name}</h3>
+        {u.year && <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sortie : {u.year}</p>}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 12, color: "#5e5346" }}>
+          {u.min && <span>{u.min}{u.max && u.max !== u.min ? `-${u.max}` : ""} j.</span>}
+          {u.time && <span>· {u.time} min</span>}
+          {u.newPrice != null && <span>· {u.newPrice.toFixed(2).replace(".", ",")} €</span>}
+        </div>
+        {count > 0 && <span style={{ display: "block", marginTop: 8, fontSize: 11.5, color: "#8a7c6a", fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{count} vote{count > 1 ? "s" : ""} de hype</span>}
+      </div>
+    </button>
+  );
+}
+
+/* ---- Page "À venir" ---- */
+function UpcomingPage({ onAuth, setToast }) {
+  const { upcoming, users, currentUser } = useApp();
+  const [q, setQ] = useState("");
+  const [mech, setMech] = useState("");
+  const [sort, setSort] = useState("hype");
+  const [selected, setSelected] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+
+  const allMechanics = useMemo(() => {
+    const s = new Set();
+    upcoming.forEach((u) => (u.mechanics || []).forEach((m) => s.add(m)));
+    return [...s].sort((a, b) => a.localeCompare(b, "fr"));
+  }, [upcoming]);
+
+  const filtered = useMemo(() => {
+    let list = upcoming.filter((u) => {
+      const okQ = !q || u.name.toLowerCase().includes(q.toLowerCase());
+      const okM = !mech || (u.mechanics || []).includes(mech);
+      return okQ && okM;
+    }).map((u) => {
+      const st = upcomingStats(u);
+      return { ...u, _avg: st.avg, _count: st.count };
+    });
+    if (sort === "hype") list.sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"));
+    else if (sort === "alpha") list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    else if (sort === "year") list.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
+    else if (sort === "recent") list.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    return list;
+  }, [upcoming, q, mech, sort]);
+
+  // Top 20 : toutes les fiches qui ont au moins 1 vote (différence avec ludothèque !)
+  const top = useMemo(() => {
+    return upcoming
+      .map((u) => ({ ...u, _avg: upcomingStats(u).avg, _count: upcomingStats(u).count }))
+      .filter((u) => u._count >= 1)
+      .sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"))
+      .slice(0, 20);
+  }, [upcoming]);
+
+  return (
+    <div style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 24px 60px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 26 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 32, margin: 0 }}>À venir</h1>
+          <p style={{ color: "#6e6256", fontSize: 14.5, margin: "6px 0 0", maxWidth: 560 }}>
+            Les jeux qui viennent de sortir ou qui arrivent bientôt. Votez votre <b>thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi.
+          </p>
+        </div>
+        {currentUser
+          ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
+          : <Btn variant="amber" size="lg" onClick={() => onAuth("login")}><LogIn size={18} /> Se connecter</Btn>}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
+        <div className="aladj-ludo-main">
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
+            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
+              <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu..." style={{ paddingLeft: 42 }} />
+            </div>
+            <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes mécaniques</option>
+              {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="hype">Hype</option>
+              <option value="alpha">A → Z</option>
+              <option value="year">Année (récent)</option>
+              <option value="recent">Récemment ajoutés</option>
+            </select>
+          </div>
+
+          {filtered.length === 0 ? (
+            <EmptyHint icon={Sparkles} text={upcoming.length === 0 ? "Aucun jeu en veille pour l'instant. Ajoutez-en un pour lancer le suivi !" : "Aucun jeu ne correspond aux filtres."} />
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
+              {filtered.map((u) => <UpcomingCard key={u.id} u={u} onOpen={() => setSelected(u.id)} currentUserId={currentUser?.id} />)}
+            </div>
+          )}
+        </div>
+
+        <aside style={{ position: "sticky", top: 88, display: "grid", gap: 18 }} className="aladj-ludo-aside">
+          <div style={{ background: `linear-gradient(160deg, ${C.red}, ${C.purple})`, borderRadius: 20, padding: 22, color: "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <Sparkles size={20} color="#ffd9a3" />
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0 }}>Top 20 hype</h3>
+            </div>
+            <p style={{ opacity: .75, fontSize: 12, margin: "0 0 12px", lineHeight: 1.5 }}>Dès qu'un jeu reçoit un vote, il entre dans ce classement.</p>
+            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5 }}>Pas encore de vote.</p>}
+            <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+              {top.map((u, i) => (
+                <button key={u.id} onClick={() => setSelected(u.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.09)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 17 : 14, color: "rgba(255,255,255,.85)", width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,.6)" }}>{u._count} vote{u._count > 1 ? "s" : ""}</span>
+                  </span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#ffd9a3" }}>{u._avg.toFixed(1).replace(".", ",")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {showAdd && <AddUpcomingFlow onClose={() => setShowAdd(false)} setToast={setToast} />}
+      {selected && <UpcomingDetailModal upcId={selected} onClose={() => setSelected(null)} onAuth={onAuth} setToast={setToast} />}
+    </div>
+  );
+}
+
+/* ---- Flow d'ajout : choix BGG / manuel + détection de doublons ---- */
+function AddUpcomingFlow({ onClose, setToast }) {
+  const { addUpcoming, upcoming, games } = useApp();
+  const [mode, setMode] = useState("choose");
+  const [prefillName, setPrefillName] = useState("");
+
+  const handleDone = async (data) => {
+    if (!data) { onClose(); return; }
+    await addUpcoming({ ...data, source: data.source || "manuel" });
+    onClose();
+    setToast(`« ${data.name} » ajouté en veille !`);
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Ajouter un jeu à venir" width={600}>
+      {mode === "choose" && (
+        <div style={{ display: "grid", gap: 12 }}>
+          <p style={{ fontSize: 14, color: "#5e5346", margin: "0 0 6px", lineHeight: 1.55 }}>
+            Comment souhaitez-vous ajouter ce jeu à venir ?
+          </p>
+          <button onClick={() => setMode("bgg")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: "pointer", textAlign: "left" }}>
+            <span style={{ width: 44, height: 44, borderRadius: 11, background: "#ff5100", display: "grid", placeItems: "center" }}><Globe size={22} color="#fff" /></span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Rechercher sur BoardGameGeek</span>
+              <span style={{ display: "block", fontSize: 12.5, color: "#9c8d79" }}>Fiche pré-remplie (image, mécaniques, joueurs, durée)</span>
+            </span>
+          </button>
+          <button onClick={() => setMode("manual")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: "pointer", textAlign: "left" }}>
+            <span style={{ width: 44, height: 44, borderRadius: 11, background: C.teal, display: "grid", placeItems: "center" }}><Edit3 size={20} color="#fff" /></span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Saisie manuelle</span>
+              <span style={{ display: "block", fontSize: 12.5, color: "#9c8d79" }}>Pour un jeu non encore référencé sur BGG</span>
+            </span>
+          </button>
+        </div>
+      )}
+      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { if (data) { await handleDone({ ...data, source: "BoardGameGeek" }); } else { onClose(); } }} />}
+      {mode === "manual" && <ManualUpcomingForm onBack={() => setMode("choose")} onDone={handleDone} initialName={prefillName} />}
+    </Modal>
+  );
+}
+
+/* ---- Formulaire manuel pour une fiche À venir ---- */
+function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
+  const { upcoming, games, currentUser } = useApp();
+  const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "" });
+  const [err, setErr] = useState("");
+  const [dismissed, setDismissed] = useState(false);
+
+  // Détection de doublons : à la fois dans les fiches À venir ET dans la ludothèque
+  const similarUpc = useMemo(() => dismissed ? [] : findSimilarGames(upcoming, f.name), [upcoming, f.name, dismissed]);
+  const similarLudo = useMemo(() => dismissed ? [] : findSimilarGames(games, f.name), [games, f.name, dismissed]);
+
+  const submit = () => {
+    if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
+    onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice });
+  };
+
+  return (
+    <div>
+      <button onClick={onBack} style={backLinkStyle}><ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> Retour</button>
+      <Field label="Nom du jeu *"><TextInput value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setDismissed(false); }} placeholder="Ex. Nucléum" autoFocus /></Field>
+
+      {(similarUpc.length > 0 || similarLudo.length > 0) && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.3)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Ce jeu existe peut-être déjà</span>
+            <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", fontSize: 12.5 }}>Ignorer</button>
+          </div>
+          {similarUpc.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: "#9c8d79", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5 }}>En veille</span>
+              {similarUpc.slice(0, 3).map((u) => (
+                <div key={u.id} style={{ fontSize: 13.5, color: "#5e5346", padding: "4px 0" }}>• {u.name}{u.year ? ` (${u.year})` : ""}</div>
+              ))}
+            </div>
+          )}
+          {similarLudo.length > 0 && (
+            <div>
+              <span style={{ fontSize: 12, color: "#9c8d79", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5 }}>Dans la ludothèque</span>
+              {similarLudo.slice(0, 3).map((g) => (
+                <div key={g.id} style={{ fontSize: 13.5, color: "#5e5346", padding: "4px 0" }}>• {g.name}{g.year ? ` (${g.year})` : ""}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <Field label="Image"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Année de sortie"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} placeholder="2026" /></Field>
+        <Field label="Prix neuf (€)"><TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} placeholder="50" /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} placeholder="2" /></Field>
+        <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="4" /></Field>
+        <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} placeholder="60" /></Field>
+      </div>
+      <Field label="Mécaniques"><MechanicSelector value={f.mechanics} onChange={(v) => setF({ ...f, mechanics: v })} /></Field>
+      <Field label="Description"><textarea value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} placeholder="Présentation du jeu..." /></Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter en veille</Btn>
+    </div>
+  );
+}
+
+/* ---- Fiche détaillée d'un jeu À venir ---- */
+function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
+  const { upcoming, users, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment } = useApp();
+  const u = upcoming.find((x) => x.id === upcId);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+  if (!u) return <Modal open onClose={onClose} title="Fiche introuvable"><p>Cette fiche n'existe plus ou a été retirée (le jeu est probablement passé en ludothèque).</p></Modal>;
+
+  const { avg, count } = upcomingStats(u);
+  const myHype = currentUser ? (u.hypes?.[currentUser.id] || 0) : 0;
+  const myIntent = currentUser ? u.intents?.[currentUser.id] : null;
+  // Détail des votants pour la transparence : qui a mis quel thermomètre, qui veut quoi
+  const hypesByMember = Object.entries(u.hypes || {}).map(([uid, v]) => ({ uid, name: users.find((m) => m.id === uid)?.name || "Membre", value: v }));
+  const intentsByOption = INTENT_OPTIONS.map((opt) => ({
+    ...opt,
+    members: Object.entries(u.intents || {}).filter(([, val]) => val === opt.key).map(([uid]) => users.find((m) => m.id === uid)?.name || "Membre"),
+  }));
+
+  const submitComment = async () => {
+    if (!commentText.trim()) return;
+    setBusy(true);
+    await addUpcomingComment(u.id, commentText);
+    setBusy(false);
+    setCommentText("");
+  };
+
+  const importMe = async () => {
+    setBusy(true);
+    const res = await importUpcomingToLudo(u.id);
+    setBusy(false);
+    if (res?.error) { setToast(res.error); return; }
+    setToast("Ajouté à votre ludothèque !");
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title={u.name} width={720}>
+      {/* en-tête : image + badges */}
+      <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 18, marginBottom: 20 }} className="aladj-upc-head">
+        <GameCover g={u} />
+        <div>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 22, margin: "0 0 8px" }}>{u.name}</h2>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {u.year && <Badge color={C.amber}><Calendar size={12} /> {u.year}</Badge>}
+            {u.min && <Badge color={C.teal}><Users size={12} /> {u.min}{u.max && u.max !== u.min ? `–${u.max}` : ""} joueurs</Badge>}
+            {u.time && <Badge color={C.amber}><Clock size={12} /> {u.time} min</Badge>}
+            {u.newPrice != null && <Badge color={C.purple}><Euro size={12} /> {u.newPrice.toFixed(2).replace(".", ",")} €</Badge>}
+            {u.source && u.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {u.source}</Badge>}
+          </div>
+          {u.mechanics && u.mechanics.length > 0 && (
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>
+              {u.mechanics.map((m, i) => <Badge key={i} color="#8a7c6a">{m}</Badge>)}
+            </div>
+          )}
+          <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "8px 0 0" }}>Ajouté par {u.createdByName}</p>
+        </div>
+      </div>
+
+      {u.desc && <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 18, whiteSpace: "pre-line" }}>{u.desc}</p>}
+
+      {/* Thermomètre de la hype */}
+      <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.25)", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 6px" }}>🌡️ Thermomètre de la hype</h4>
+        <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 12px" }}>De « Froid » (je ne suis pas tenté) à « Brûlant » (j'ai hâte de l'avoir entre les mains).</p>
+        {currentUser ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: count > 0 ? 12 : 0 }}>
+            <Thermometer value={myHype} onRate={(v) => setHype(u.id, v)} size={26} />
+            <span style={{ fontSize: 12.5, color: "#9c8d79" }}>{myHype > 0 ? `Votre vote : ${HYPE_LABELS[myHype].label}` : "Cliquez pour voter"}</span>
+          </div>
+        ) : (
+          <Btn size="sm" variant="amber" onClick={() => onAuth("login")}><LogIn size={14} /> Se connecter pour voter</Btn>
+        )}
+        {count > 0 && (
+          <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", paddingTop: 10 }}>
+            <div style={{ fontSize: 13, color: "#5e5346", marginBottom: 6 }}>
+              <b>Moyenne : {avg.toFixed(2).replace(".", ",")}</b> · {count} vote{count > 1 ? "s" : ""}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {hypesByMember.sort((a, b) => b.value - a.value).map((h) => (
+                <span key={h.uid} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", borderRadius: 999, padding: "3px 9px", fontSize: 12, color: "#5e5346", border: `1px solid ${HYPE_LABELS[h.value].color}` }}>
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: HYPE_LABELS[h.value].color }} /> {h.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Intentions d'achat */}
+      <div style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.2)", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 10px" }}>🎯 Mon intention d'achat</h4>
+        {currentUser ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 14 }}>
+            {INTENT_OPTIONS.map((opt) => {
+              const active = myIntent === opt.key;
+              return (
+                <button key={opt.key} onClick={() => setIntent(u.id, opt.key)}
+                  style={{ padding: "8px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, border: `2px solid ${active ? opt.color : "#e6dcc9"}`, background: active ? opt.color : "#fff", color: active ? "#fff" : "#8a7c6a", transition: "all .12s" }}>
+                  {active && <Check size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />}{opt.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <Btn size="sm" variant="purple" onClick={() => onAuth("login")} style={{ marginBottom: 14 }}><LogIn size={14} /> Se connecter</Btn>
+        )}
+        <div style={{ borderTop: "1px solid rgba(107,58,122,.15)", paddingTop: 12 }}>
+          <div style={{ fontSize: 13, color: "#5e5346", marginBottom: 8, fontWeight: 600 }}>Intentions des membres</div>
+          {intentsByOption.every((o) => o.members.length === 0) && <span style={{ fontSize: 13, color: "#a89a86" }}>Personne ne s'est encore prononcé.</span>}
+          {intentsByOption.filter((o) => o.members.length > 0).map((o) => (
+            <div key={o.key} style={{ marginBottom: 6, fontSize: 13, color: "#5e5346" }}>
+              <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: o.color, marginRight: 8, verticalAlign: "-1px" }} />
+              <b>{o.label}</b> ({o.members.length}) : <span style={{ color: "#9c8d79" }}>{o.members.join(", ")}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Action "Je l'ai !" */}
+      {currentUser && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <Btn variant="teal" size="md" onClick={importMe} disabled={busy}><Plus size={16} /> Je l'ai ! L'ajouter à ma ludothèque</Btn>
+          {!confirmDelete
+            ? <Btn variant="ghost" size="md" onClick={() => setConfirmDelete(true)}><Trash2 size={15} /> Supprimer cette fiche</Btn>
+            : <>
+                <Btn variant="danger" size="md" onClick={async () => { await removeUpcoming(u.id); setToast("Fiche supprimée."); onClose(); }}>Confirmer</Btn>
+                <Btn variant="soft" size="md" onClick={() => setConfirmDelete(false)}>Annuler</Btn>
+              </>}
+        </div>
+      )}
+
+      {/* Commentaires */}
+      <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 10px" }}>💬 Commentaires ({(u.comments || []).length})</h4>
+        <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+          {(u.comments || []).map((c) => {
+            const mine = currentUser && c.authorId === currentUser.id;
+            const isEdit = editId === c.id;
+            return (
+              <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "10px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{c.authorName}</span>
+                  {mine && !isEdit && (
+                    <span style={{ display: "flex", gap: 5 }}>
+                      <button onClick={() => { setEditId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79" }}><Edit3 size={13} /></button>
+                      <button onClick={() => removeUpcomingComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red }}><Trash2 size={13} /></button>
+                    </span>
+                  )}
+                </div>
+                {isEdit ? (
+                  <>
+                    <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", marginBottom: 6 }} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Btn size="sm" variant="teal" onClick={async () => { await updateUpcomingComment(c.id, editText); setEditId(null); }}>Enregistrer</Btn>
+                      <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+                    </div>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 13.5, color: "#5e5346", margin: 0, lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {currentUser ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <textarea value={commentText} onChange={(e) => setCommentText(e.target.value)} rows={1} placeholder="Écrire un commentaire..." style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
+            <Btn variant="teal" onClick={submitComment} disabled={busy || !commentText.trim()}>{busy ? <Loader2 size={16} className="aladj-spin" /> : "Envoyer"}</Btn>
+          </div>
+        ) : (
+          <Btn size="sm" variant="ghost" onClick={() => onAuth("login")}><LogIn size={14} /> Se connecter pour commenter</Btn>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function LocationsPage({ setToast }) {
   const { loans, currentUser, closeLoan } = useApp();
   const myLent = (loans || []).filter((l) => l.lenderId === currentUser?.id && !l.returned);
@@ -3465,6 +4183,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [mech, setMech] = useState("");
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
+  const [year, setYear] = useState("");
   const [sort, setSort] = useState("note");
   const [view, setView] = useState("grid"); // "grid" | "list"
   const [selected, setSelected] = useState(null);
@@ -3513,14 +4232,24 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         if (duration === "121") okD = t > 120;
         else okD = t > 0 && t <= Number(duration);
       }
-      return okQ && okM && okP && okD;
+      // filtre année : tranches d'ancienneté du jeu
+      let okY = true;
+      if (year) {
+        const y = Number(g.year) || 0;
+        const now = new Date().getFullYear();
+        if (year === "current") okY = y === now;
+        else if (year === "5") okY = y >= now - 5;
+        else if (year === "10") okY = y >= now - 10;
+        else if (year === "classic") okY = y > 0 && y < 2000;
+      }
+      return okQ && okM && okP && okD && okY;
     });
     if (sort === "note") list = rankGames(list);
     else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [communGames, q, mech, players, duration, sort, currentUser]);
+  }, [communGames, q, mech, players, duration, year, sort, currentUser]);
 
   // Top 20 : un jeu doit avoir au moins 2 votes pour entrer dans le classement
   // (évite qu'un seul avis très élevé propulse un jeu en tête).
@@ -3571,6 +4300,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <option value="90">≤ 1 h 30</option>
               <option value="120">≤ 2 h</option>
               <option value="121">{"> 2 h"}</option>
+            </select>
+            <select value={year} onChange={(e) => setYear(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes années</option>
+              <option value="current">Cette année</option>
+              <option value="5">5 dernières années</option>
+              <option value="10">10 dernières années</option>
+              <option value="classic">Avant 2000 (classiques)</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés (général)</option>
@@ -3818,7 +4554,7 @@ function SourceBtn({ icon: Icon, color, title, desc, onClick, badge }) {
 }
 
 function BggImport({ onBack, onDone, onManual }) {
-  const { games, currentUser, addOwner } = useApp();
+  const { games, upcoming, currentUser, addOwner } = useApp();
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -3829,7 +4565,10 @@ function BggImport({ onBack, onDone, onManual }) {
   const [preview, setPreview] = useState(null);
 
   // jeux déjà présents dans la base au nom proche de la recherche
+  // jeux déjà présents dans la base au nom proche de la recherche
   const existing = useMemo(() => findSimilarGames(games, q), [games, q]);
+  // fiches À venir au nom proche (détection inter-sections)
+  const existingUpcoming = useMemo(() => findSimilarGames(upcoming || [], q), [upcoming, q]);
 
   const search = async () => {
     if (!q.trim()) return;
@@ -3921,6 +4660,23 @@ function BggImport({ onBack, onDone, onManual }) {
           </div>
         </div>
       )}
+      {/* fiches À venir au nom proche (détection inter-sections) */}
+      {existingUpcoming.length > 0 && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.3)", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Sparkles size={15} color={C.amber} />
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Aussi en « À venir »</span>
+          </div>
+          <p style={{ fontSize: 12, color: "#6e6256", margin: "0 0 8px" }}>Astuce : vous pouvez aussi utiliser le bouton <b>« Je l'ai ! »</b> depuis l'onglet À venir.</p>
+          <div style={{ display: "grid", gap: 4 }}>
+            {existingUpcoming.slice(0, 3).map((u) => (
+              <div key={u.id} style={{ fontSize: 13, color: "#5e5346", padding: "3px 8px", background: "#fff", borderRadius: 7 }}>
+                • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {failed && (
         <Btn full variant="amber" onClick={() => onManual(q.trim())} style={{ marginBottom: 14 }}>
           <PenLine size={16} /> Saisir « {q.trim() || "ce jeu"} » manuellement
@@ -3943,7 +4699,7 @@ function BggImport({ onBack, onDone, onManual }) {
 const backLinkStyle = { background: "none", border: "none", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, marginBottom: 14, padding: 0, fontSize: 14 };
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
-  const { games, currentUser, addOwner } = useApp();
+  const { games, upcoming, currentUser, addOwner } = useApp();
   const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
@@ -3954,6 +4710,11 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
     if (dismissed) return [];
     return findSimilarGames(games, f.name);
   }, [games, f.name, dismissed]);
+  // fiches À venir au nom proche (détection inter-sections)
+  const similarUpcoming = useMemo(() => {
+    if (dismissed) return [];
+    return findSimilarGames(upcoming || [], f.name);
+  }, [upcoming, f.name, dismissed]);
 
   const submit = () => {
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
@@ -3994,6 +4755,24 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
         </div>
       )}
 
+      {/* encart : fiches À venir au nom proche (détection inter-sections) */}
+      {similarUpcoming.length > 0 && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.3)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Sparkles size={15} color={C.amber} />
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Une fiche « À venir » existe</span>
+          </div>
+          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Astuce : depuis la fiche « À venir » du jeu, cliquez sur <b>« Je l'ai ! »</b> — votre ludothèque sera créée en un clic, avec toutes les infos déjà remplies.</p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {similarUpcoming.slice(0, 3).map((u) => (
+              <div key={u.id} style={{ fontSize: 13.5, color: "#5e5346", padding: "4px 8px", background: "#fff", borderRadius: 8 }}>
+                • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
         <Field label="Année"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
         <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
@@ -4027,6 +4806,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [mech, setMech] = useState("");
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
+  const [year, setYear] = useState("");
   const [sort, setSort] = useState("alpha");
 
   const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
@@ -4053,14 +4833,23 @@ function MyLudoPage({ setToast, setPage }) {
         if (duration === "121") okD = t > 120;
         else okD = t > 0 && t <= Number(duration);
       }
-      return okQ && okM && okP && okD;
+      let okY = true;
+      if (year) {
+        const y = Number(g.year) || 0;
+        const now = new Date().getFullYear();
+        if (year === "current") okY = y === now;
+        else if (year === "5") okY = y >= now - 5;
+        else if (year === "10") okY = y >= now - 10;
+        else if (year === "classic") okY = y > 0 && y < 2000;
+      }
+      return okQ && okM && okP && okD && okY;
     });
     if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "note") list = rankGames(list); // note générale
     else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [allMine, q, mech, players, duration, sort, currentUser]);
+  }, [allMine, q, mech, players, duration, year, sort, currentUser]);
 
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
@@ -4198,6 +4987,13 @@ function MyLudoPage({ setToast, setPage }) {
             <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes durées</option>
               <option value="30">≤ 30 min</option><option value="45">≤ 45 min</option><option value="60">≤ 1 h</option><option value="90">≤ 1 h 30</option><option value="120">≤ 2 h</option><option value="121">{"> 2 h"}</option>
+            </select>
+            <select value={year} onChange={(e) => setYear(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes années</option>
+              <option value="current">Cette année</option>
+              <option value="5">5 dernières années</option>
+              <option value="10">10 dernières années</option>
+              <option value="classic">Avant 2000 (classiques)</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="alpha">A → Z</option>
@@ -4347,6 +5143,7 @@ function Shell() {
         {page === "soirees" && <EventsPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "ludotheque" && <LudothequePage onAuth={(m) => setAuth(m)} setToast={setToast} setPage={setPage} />}
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
+        {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
       </main>
       <Footer setPage={setPage} />
