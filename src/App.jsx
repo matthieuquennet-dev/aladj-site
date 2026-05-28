@@ -1586,7 +1586,7 @@ function HomePage({ setPage, onAuth }) {
             cta={currentUser ? null : "Créer un compte"} onCta={() => onAuth("register")} />
         </div>
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 640, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
-          <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. Une pièce d'identité peut être demandée à l'entrée des moments jeux (réservé aux +16 ans).
+          <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. L'association est ouverte aux adultes de 18 ans et plus ; les jeunes de 14 ans et plus sont les bienvenus s'ils sont joueurs et accompagnés d'un adulte. Une pièce d'identité peut être demandée à l'entrée des moments jeux.
         </p>
       </section>
 
@@ -1653,6 +1653,20 @@ function HomePage({ setPage, onAuth }) {
               </a>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* ---- Nous contacter (par e-mail) ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "10px 24px 60px" }}>
+        <div style={{ background: `linear-gradient(135deg, ${C.teal}, ${C.navy})`, borderRadius: 22, padding: "32px 28px", color: "#fff", textAlign: "center", boxShadow: "0 8px 24px rgba(18,41,63,.12)" }}>
+          <Mail size={32} style={{ marginBottom: 12, opacity: .9 }} />
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "0 0 8px" }}>Une question ? Envie de nous rejoindre ?</h2>
+          <p style={{ fontSize: 15, opacity: .9, margin: "0 0 22px", lineHeight: 1.55, maxWidth: 540, marginLeft: "auto", marginRight: "auto" }}>
+            Écrivez-nous directement, on vous répond avec plaisir.
+          </p>
+          <a href="mailto:aladj50200@gmail.com" style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "#fff", color: C.navy, padding: "13px 26px", borderRadius: 13, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, boxShadow: "0 4px 14px rgba(0,0,0,.15)" }}>
+            <Mail size={18} /> aladj50200@gmail.com
+          </a>
         </div>
       </section>
 
@@ -3508,7 +3522,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     return list;
   }, [communGames, q, mech, players, duration, sort, currentUser]);
 
-  const top = useMemo(() => rankGames(communGames).filter((g) => g._count > 0).slice(0, 20), [communGames]);
+  // Top 20 : un jeu doit avoir au moins 2 votes pour entrer dans le classement
+  // (évite qu'un seul avis très élevé propulse un jeu en tête).
+  const top = useMemo(() => rankGames(communGames).filter((g) => g._count >= 2).slice(0, 20), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
   return (
@@ -3618,7 +3634,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <Trophy size={20} color={C.amber} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
-            {top.length === 0 && <p style={{ opacity: .7, fontSize: 14 }}>Aucune note pour l'instant.</p>}
+            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 2 votes. Notez des jeux pour faire vivre le classement !</p>}
             <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
@@ -4243,14 +4259,16 @@ function Footer({ setPage }) {
           <h4 style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontSize: 15, marginBottom: 12 }}>Nous trouver</h4>
           <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>
             <MapPin size={14} style={{ verticalAlign: "-2px" }} /> Local ALADJ<br />Gouville-sur-Mer (50560)<br />
-            <span style={{ fontSize: 12.5, opacity: .8 }}>Réservé aux +16 ans · pièce d'identité possible à l'entrée</span>
+            <span style={{ fontSize: 12.5, opacity: .8 }}>Ouverte aux +18 ans ; +14 ans accompagnés d'un adulte</span>
           </p>
         </div>
         <div>
           <h4 style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontSize: 15, marginBottom: 12 }}>Contact</h4>
           <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>
-            <Mail size={14} style={{ verticalAlign: "-2px" }} /> Via le groupe Signal de l'association<br />
-            <span style={{ fontSize: 12.5, opacity: .8 }}>Communication des dates & infos sur Signal</span>
+            <a href="mailto:aladj50200@gmail.com" style={{ color: "#fff", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Mail size={14} /> aladj50200@gmail.com
+            </a><br />
+            <span style={{ fontSize: 12.5, opacity: .8 }}>Dates & infos détaillées sur Signal</span>
           </p>
         </div>
       </div>
