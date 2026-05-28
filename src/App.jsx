@@ -3762,7 +3762,7 @@ function AddUpcomingFlow({ onClose, setToast }) {
           </button>
         </div>
       )}
-      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { if (data) { await handleDone({ ...data, source: "BoardGameGeek" }); } else { onClose(); } }} />}
+      {mode === "bgg" && <BggImport onBack={() => setMode("choose")} onManual={(name) => { setPrefillName(name); setMode("manual"); }} onDone={async (data) => { if (data) { await handleDone({ ...data, source: "BoardGameGeek" }); } else { onClose(); } }} forUpcoming />}
       {mode === "manual" && <ManualUpcomingForm onBack={() => setMode("choose")} onDone={handleDone} initialName={prefillName} />}
     </Modal>
   );
@@ -3774,6 +3774,7 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
   const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false);
+  const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
 
   // Détection de doublons : à la fois dans les fiches À venir ET dans la ludothèque
   const similarUpc = useMemo(() => dismissed ? [] : findSimilarGames(upcoming, f.name), [upcoming, f.name, dismissed]);
@@ -3824,7 +3825,14 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
         <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="4" /></Field>
         <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} placeholder="60" /></Field>
       </div>
-      <Field label="Mécaniques"><MechanicSelector value={f.mechanics} onChange={(v) => setF({ ...f, mechanics: v })} /></Field>
+      <Field label="Mécaniques">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {MECHANIC_SUGGESTIONS.map((m) => {
+            const active = f.mechanics.includes(m);
+            return <button key={m} type="button" onClick={() => toggleMech(m)} style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#8a7c6a" }}>{m}</button>;
+          })}
+        </div>
+      </Field>
       <Field label="Description"><textarea value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} placeholder="Présentation du jeu..." /></Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
@@ -3838,6 +3846,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
   const { upcoming, users, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment } = useApp();
   const u = upcoming.find((x) => x.id === upcId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [editId, setEditId] = useState(null);
@@ -3895,6 +3904,15 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
       </div>
 
       {u.desc && <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 18, whiteSpace: "pre-line" }}>{u.desc}</p>}
+
+      {/* Prix neuf annoncé (s'il a été renseigné) */}
+      {u.newPrice != null && (
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(107,58,122,.08)", border: "1px solid rgba(107,58,122,.2)", borderRadius: 12, padding: "10px 16px", marginBottom: 18 }}>
+          <Euro size={18} color={C.purple} />
+          <span style={{ fontSize: 13, color: "#6e6256" }}>Prix annoncé :</span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.purple, fontSize: 17 }}>{u.newPrice.toFixed(2).replace(".", ",")} €</span>
+        </div>
+      )}
 
       {/* Thermomètre de la hype */}
       <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.25)", borderRadius: 14, padding: 16, marginBottom: 16 }}>
@@ -3954,10 +3972,11 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
         </div>
       </div>
 
-      {/* Action "Je l'ai !" */}
+      {/* Actions */}
       {currentUser && (
         <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           <Btn variant="teal" size="md" onClick={importMe} disabled={busy}><Plus size={16} /> Je l'ai ! L'ajouter à ma ludothèque</Btn>
+          <Btn variant="soft" size="md" onClick={() => setEditing(true)}><Edit3 size={15} /> Modifier la fiche</Btn>
           {!confirmDelete
             ? <Btn variant="ghost" size="md" onClick={() => setConfirmDelete(true)}><Trash2 size={15} /> Supprimer cette fiche</Btn>
             : <>
@@ -4009,6 +4028,63 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
           <Btn size="sm" variant="ghost" onClick={() => onAuth("login")}><LogIn size={14} /> Se connecter pour commenter</Btn>
         )}
       </div>
+
+      {editing && <EditUpcomingModal u={u} onClose={() => setEditing(false)} setToast={setToast} />}
+    </Modal>
+  );
+}
+
+/* ---- Modale : modifier une fiche À venir ---- */
+function EditUpcomingModal({ u, onClose, setToast }) {
+  const { updateUpcoming } = useApp();
+  const [f, setF] = useState({
+    name: u.name || "", year: u.year || "", min: u.min || "", max: u.max || "", time: u.time || "",
+    mechanics: u.mechanics || [], desc: u.desc || "", img: u.img || "",
+    newPrice: u.newPrice != null ? String(u.newPrice) : "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
+
+  const save = async () => {
+    if (!f.name.trim()) { setErr("Le nom est obligatoire."); return; }
+    setBusy(true);
+    const res = await updateUpcoming(u.id, {
+      name: f.name, year: Number(f.year) || null, min: Number(f.min) || null, max: Number(f.max) || null,
+      time: Number(f.time) || null, mechanics: f.mechanics, desc: f.desc, img: f.img,
+      newPrice: f.newPrice === "" ? null : Number(f.newPrice),
+    });
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setToast("Fiche mise à jour.");
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Modifier la fiche" width={600}>
+      <Field label="Nom du jeu *"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+      <Field label="Image"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Année de sortie"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
+        <Field label="Prix neuf (€)"><TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
+        <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
+        <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
+      </div>
+      <Field label="Mécaniques">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {MECHANIC_SUGGESTIONS.map((m) => {
+            const active = f.mechanics.includes(m);
+            return <button key={m} type="button" onClick={() => toggleMech(m)} style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#8a7c6a" }}>{m}</button>;
+          })}
+        </div>
+      </Field>
+      <Field label="Description"><textarea value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" variant="amber" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer les modifications</>}</Btn>
     </Modal>
   );
 }
@@ -4553,7 +4629,7 @@ function SourceBtn({ icon: Icon, color, title, desc, onClick, badge }) {
   );
 }
 
-function BggImport({ onBack, onDone, onManual }) {
+function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   const { games, upcoming, currentUser, addOwner } = useApp();
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
@@ -4617,7 +4693,7 @@ function BggImport({ onBack, onDone, onManual }) {
           <Globe size={14} /> Description traduite automatiquement en français
         </div>
         <p style={{ color: "#5e5346", fontSize: 14, lineHeight: 1.6, maxHeight: 160, overflowY: "auto", margin: "0 0 18px", whiteSpace: "pre-line" }}>{preview.desc}</p>
-        <Btn full size="lg" variant="teal" onClick={() => onDone(preview)}><Plus size={18} /> Ajouter à ma ludothèque</Btn>
+        <Btn full size="lg" variant="teal" onClick={() => onDone(preview)}><Plus size={18} /> {forUpcoming ? "Ajouter aux jeux à venir" : "Ajouter à ma ludothèque"}</Btn>
       </div>
     );
   }
