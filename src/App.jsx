@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback, createContext, useContext } from "react";
-import * as XLSX from "xlsx";
 import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
@@ -2595,6 +2594,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [openedGameId, setOpenedGameId] = useState(null); // jeu joué cliqué pour ouvrir sa fiche
   const played = e.playedGames || [];
 
   // ids déjà notés pour ce moment (pour les masquer de la recherche)
@@ -2631,16 +2631,22 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
         <div style={{ display: "grid", gap: 8, marginBottom: adding ? 14 : 0 }}>
           {played.map((p) => {
             const mineToRemove = currentUser && (p.addedBy === currentUser.id || canManage);
+            const gameStillExists = !!games.find((g) => g.id === p.gameId);
             return (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "8px 12px" }}>
+              <div key={p.id} role={gameStillExists ? "button" : undefined} tabIndex={gameStillExists ? 0 : undefined}
+                onClick={() => { if (gameStillExists) setOpenedGameId(p.gameId); }}
+                title={gameStillExists ? "Voir la fiche du jeu (pour le noter par exemple)" : undefined}
+                style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "8px 12px", cursor: gameStillExists ? "pointer" : "default", transition: "background .15s" }}
+                onMouseEnter={(ev) => { if (gameStillExists) ev.currentTarget.style.background = "rgba(30,138,138,.08)"; }}
+                onMouseLeave={(ev) => { ev.currentTarget.style.background = "rgba(26,58,92,.04)"; }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: p.gameImg ? `center/cover url("${p.gameImg}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
                   {!p.gameImg && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{p.gameName.slice(0, 2).toUpperCase()}</span>}
                 </div>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{p.gameName}</span>
-                  <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>ajouté par {p.addedByName}</span>
+                  <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>ajouté par {p.addedByName}{gameStillExists ? " · cliquez pour noter" : ""}</span>
                 </span>
-                {mineToRemove && <button onClick={() => removePlayedGame(p.id)} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4 }}><Trash2 size={14} /></button>}
+                {mineToRemove && <button onClick={(ev) => { ev.stopPropagation(); removePlayedGame(p.id); }} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4 }}><Trash2 size={14} /></button>}
               </div>
             );
           })}
@@ -2676,6 +2682,11 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
 
       {!isParticipant && played.length === 0 && currentUser && (
         <span style={{ fontSize: 12.5, color: "#a89a86", display: "block", marginTop: 6 }}>Seuls les participants au moment peuvent ajouter des jeux joués.</span>
+      )}
+
+      {/* Fiche jeu ouverte au clic sur un jeu joué (permet de noter le jeu en direct) */}
+      {openedGameId && (
+        <GameDetailModal g={games.find((g) => g.id === openedGameId)} onClose={() => setOpenedGameId(null)} onAuth={() => {}} setToast={() => {}} />
       )}
     </div>
   );
@@ -3538,13 +3549,15 @@ const HYPE_LABELS = {
   5: { label: "Brûlant", color: "#b5283a" },
 };
 
-// Labels pour les 5 intentions d'achat
+// Labels pour les 7 intentions d'achat (du plus engagé au moins engagé)
 const INTENT_OPTIONS = [
-  { key: "preco",      label: "C'est précommandé",                 color: "#b5283a" },
-  { key: "day_one",    label: "Day one",                           color: "#e87317" },
-  { key: "promo",      label: "J'attends les promotions",          color: "#e8a317" },
-  { key: "complement", label: "Pour compléter une commande",       color: "#7ab8a8" },
-  { key: "no_way",     label: "No way",                            color: "#6e6256" },
+  { key: "preorder",   label: "Précommandé",               color: "#b5283a" },
+  { key: "release",    label: "À la sortie",               color: "#e87317" },
+  { key: "certain",    label: "Certainement",              color: "#e8a317" },
+  { key: "promo",      label: "En promotion",              color: "#c5a823" },
+  { key: "completion", label: "Pour compléter une commande", color: "#7ab8a8" },
+  { key: "unlikely",   label: "Peu probable",              color: "#8e8275" },
+  { key: "never",      label: "Jamais",                    color: "#6e6256" },
 ];
 
 /* ---- Thermomètre cliquable (1 à 5) ---- */
@@ -4892,6 +4905,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [duration, setDuration] = useState("");
   const [year, setYear] = useState("");
   const [sort, setSort] = useState("alpha");
+  const [view, setView] = useState("grid"); // "grid" | "list"
 
   const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
   const myMechanics = useMemo(() => {
@@ -4947,7 +4961,11 @@ function MyLudoPage({ setToast, setPage }) {
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    // Chargement à la demande de la lib XLSX (≈ 200 ko) : on ne paie pas son coût au démarrage,
+    // uniquement quand l'utilisateur déclenche réellement un export.
+    setToast("Préparation de l'export…");
+    const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
 
     // Feuille 1 : ma ludothèque détaillée
@@ -5092,10 +5110,34 @@ function MyLudoPage({ setToast, setPage }) {
               <option value="myNote">Mes meilleures notes</option>
               <option value="recent">Récents</option>
             </select>
+            <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
+              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
+              {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
+            </button>
           </div>
 
           {mine.length === 0 ? (
             <EmptyHint icon={Library} text="Aucun de vos jeux ne correspond à ces filtres." />
+          ) : view === "list" ? (
+            <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1 }}>Jeu</span>
+                <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
+                <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
+              </div>
+              {mine.map((g) => {
+                const { avg, count } = gameStats(g);
+                const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+                return (
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
               {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} />)}
