@@ -3660,7 +3660,7 @@ function UpcomingPage({ onAuth, setToast }) {
         <div>
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 32, margin: 0 }}>À venir</h1>
           <p style={{ color: "#6e6256", fontSize: 14.5, margin: "6px 0 0", maxWidth: 560 }}>
-            Les jeux qui viennent de sortir ou qui arrivent bientôt. Votez votre <b>thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi.
+            Les jeux qui viennent de sortir ou qui arrivent bientôt. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi.
           </p>
         </div>
         {currentUser
@@ -4289,6 +4289,19 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     return [...s].sort((a, b) => a.localeCompare(b, "fr"));
   }, [communGames]);
 
+  // Années présentes dans la ludothèque, du plus récent au plus ancien
+  // + flag indiquant s'il y a des jeux sans année renseignée (pour proposer le filtre "sans année")
+  const { allYears, hasNoYear } = useMemo(() => {
+    const s = new Set();
+    let none = false;
+    communGames.forEach((g) => {
+      const y = Number(g.year) || 0;
+      if (y > 0) s.add(y);
+      else none = true;
+    });
+    return { allYears: [...s].sort((a, b) => b - a), hasNoYear: none };
+  }, [communGames]);
+
   const filtered = useMemo(() => {
     let list = communGames.filter((g) => {
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
@@ -4308,15 +4321,12 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         if (duration === "121") okD = t > 120;
         else okD = t > 0 && t <= Number(duration);
       }
-      // filtre année : tranches d'ancienneté du jeu
+      // filtre année : "none" = sans année renseignée ; sinon année précise
       let okY = true;
       if (year) {
         const y = Number(g.year) || 0;
-        const now = new Date().getFullYear();
-        if (year === "current") okY = y === now;
-        else if (year === "5") okY = y >= now - 5;
-        else if (year === "10") okY = y >= now - 10;
-        else if (year === "classic") okY = y > 0 && y < 2000;
+        if (year === "none") okY = !g.year || y === 0;
+        else okY = y === Number(year);
       }
       return okQ && okM && okP && okD && okY;
     });
@@ -4379,10 +4389,8 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             </select>
             <select value={year} onChange={(e) => setYear(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes années</option>
-              <option value="current">Cette année</option>
-              <option value="5">5 dernières années</option>
-              <option value="10">10 dernières années</option>
-              <option value="classic">Avant 2000 (classiques)</option>
+              {allYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+              {hasNoYear && <option value="none">Sans année renseignée</option>}
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés (général)</option>
@@ -4892,6 +4900,18 @@ function MyLudoPage({ setToast, setPage }) {
     return [...s].sort((a, b) => a.localeCompare(b, "fr"));
   }, [allMine]);
 
+  // Années présentes dans ma ludothèque + flag pour les jeux sans année
+  const { allYears: myYears, hasNoYear: myHasNoYear } = useMemo(() => {
+    const s = new Set();
+    let none = false;
+    allMine.forEach((g) => {
+      const y = Number(g.year) || 0;
+      if (y > 0) s.add(y);
+      else none = true;
+    });
+    return { allYears: [...s].sort((a, b) => b - a), hasNoYear: none };
+  }, [allMine]);
+
   const mine = useMemo(() => {
     let list = allMine.filter((g) => {
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase());
@@ -4912,11 +4932,8 @@ function MyLudoPage({ setToast, setPage }) {
       let okY = true;
       if (year) {
         const y = Number(g.year) || 0;
-        const now = new Date().getFullYear();
-        if (year === "current") okY = y === now;
-        else if (year === "5") okY = y >= now - 5;
-        else if (year === "10") okY = y >= now - 10;
-        else if (year === "classic") okY = y > 0 && y < 2000;
+        if (year === "none") okY = !g.year || y === 0;
+        else okY = y === Number(year);
       }
       return okQ && okM && okP && okD && okY;
     });
@@ -5066,10 +5083,8 @@ function MyLudoPage({ setToast, setPage }) {
             </select>
             <select value={year} onChange={(e) => setYear(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes années</option>
-              <option value="current">Cette année</option>
-              <option value="5">5 dernières années</option>
-              <option value="10">10 dernières années</option>
-              <option value="classic">Avant 2000 (classiques)</option>
+              {myYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+              {myHasNoYear && <option value="none">Sans année renseignée</option>}
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="alpha">A → Z</option>
