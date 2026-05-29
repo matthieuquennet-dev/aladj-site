@@ -206,7 +206,9 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
   // ownersByGame[row.id] est un tableau d'objets { owner_id, confirmed, declared_by }
   // (auparavant c'était de simples ID — on garde la compat en testant)
   const ownerRows = ownersByGame[row.id] || [];
-  // Repli sur owner_id si la table de liaison est vide
+  // Repli sur owner_id si la table de liaison est TOTALEMENT vide (cas de migration / anciens jeux
+  // qui n'ont jamais eu de ligne dans game_owners). Si la table contient des lignes — même
+  // si toutes sont en attente — on les utilise telles quelles, sans inventer de propriétaire.
   let normalizedOwners = ownerRows;
   if (normalizedOwners.length === 0 && row.owner_id) normalizedOwners = [{ owner_id: row.owner_id, confirmed: true, declared_by: null }];
 
@@ -499,18 +501,20 @@ function AppProvider({ children }) {
 
   /* ---- Jeux ---- */
   const addGame = useCallback(async (d) => {
+    if (!currentUser) return { error: "Connectez-vous." };
     // d.forUserIds : autres membres pour lesquels on déclare la possession (en attente de confirmation)
     // d.selfOwns   : si true (défaut), j'inscris aussi MA possession (confirmée)
     const selfOwns = d.selfOwns !== false;
     const forUserIds = (d.forUserIds || []).filter((id) => id && id !== currentUser.id);
 
-    // owner_id initial : moi si je m'inscris, sinon le premier déclaré
-    const initialOwner = selfOwns ? currentUser.id : (forUserIds[0] || currentUser.id);
-
+    // owner_id sur la table games = TOUJOURS moi (le créateur de la fiche).
+    // C'est nécessaire pour respecter la RLS d'insert (auth.uid() = owner_id).
+    // La VRAIE possession est gérée par la table de liaison game_owners (avec confirmed/declared_by).
+    // Si je ne possède pas le jeu, j'en suis quand même le « créateur de fiche » côté metadata.
     const { data, error } = await supabase.from("games").insert({
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
       play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: d.img || "",
-      source: d.source || "manuel", owner_id: initialOwner,
+      source: d.source || "manuel", owner_id: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
 
@@ -524,7 +528,14 @@ function AppProvider({ children }) {
       // Autres membres : possession en attente de leur confirmation
       rows.push({ game_id: data.id, owner_id: uid, confirmed: false, declared_by: currentUser.id });
     });
-    if (rows.length > 0) await supabase.from("game_owners").insert(rows);
+    if (rows.length > 0) {
+      const { error: ownersErr } = await supabase.from("game_owners").insert(rows);
+      if (ownersErr) {
+        // On nettoie le jeu créé si l'inscription de possession échoue, sinon on aurait une fiche orpheline.
+        await supabase.from("games").delete().eq("id", data.id);
+        return { error: ownersErr.message };
+      }
+    }
 
     await loadData();
     return { game: data };
@@ -2176,6 +2187,7 @@ function EmptyHint({ icon: Icon, text }) {
    CARTES SOIRÉE
    ============================================================================= */
 function EventCardMini({ e, onOpen }) {
+  const { currentUser } = useApp();
   const filled = e.players.length + (e.guests?.length || 0);
   const reached = filled >= e.min;
   return (
@@ -2192,7 +2204,7 @@ function EventCardMini({ e, onOpen }) {
       </div>
       <div style={{ padding: 20 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: C.navy, fontWeight: 600, fontFamily: "'Fredoka',sans-serif", marginBottom: 10 }}>
-          <MapPin size={16} color={C.teal} /> {e.place}
+          <MapPin size={16} color={C.teal} /> {currentUser ? e.place : <i style={{ color: "#9c8d79", fontWeight: 500 }}>Lieu réservé aux membres connectés</i>}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#6e6256", fontSize: 14 }}>
           <Users size={16} color={reached ? C.teal : C.red} />
@@ -2554,7 +2566,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
-            {linkedPlace ? (
+            {!currentUser ? (
+              <span style={{ display: "flex", gap: 6, alignItems: "center", opacity: .8 }}><MapPin size={16} /> <i>Lieu réservé aux membres connectés</i></span>
+            ) : linkedPlace ? (
               <button onClick={() => setShowPlace(true)} style={{ display: "flex", gap: 6, alignItems: "center", background: "rgba(255,255,255,.18)", border: "none", borderRadius: 8, padding: "3px 10px", cursor: "pointer", color: "#fff", fontSize: 14.5, fontFamily: "'Nunito',sans-serif", textDecoration: "underline", textUnderlineOffset: 3 }} title="Voir les infos d'accès">
                 <MapPin size={16} /> {e.place} <Info size={13} />
               </button>
@@ -3160,7 +3174,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const wantIds = g.wantIds || [];
   const wanters = wantIds.map((id) => users.find((u) => u.id === id)).filter(Boolean);
   const iWant = currentUser && wantIds.includes(currentUser.id);
-  const iCanWant = currentUser && !isOwner && myRating === 0; // ça n'a pas de sens d'avoir envie de découvrir un jeu qu'on possède ou qu'on a déjà noté
+  const iCanWant = currentUser && myRating === 0; // ça n'a pas de sens d'avoir envie de découvrir un jeu qu'on a déjà noté (donc joué) ; mais on peut vouloir découvrir un jeu qu'on possède sans y avoir encore joué
 
   // distribution des notes (les demi-notes sont regroupées avec l'entier supérieur : 4,5 → ligne 5)
   const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: Object.values(g.ratings || {}).filter((v) => Math.ceil(v) === n).length }));
@@ -3295,8 +3309,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
           )}
         </div>
         {!currentUser && <p style={{ fontSize: 13, color: "#a89a86", margin: "0 0 8px" }}><a href="#" onClick={(e) => { e.preventDefault(); onAuth("login"); }} style={{ color: C.teal }}>Connectez-vous</a> pour ajouter ce jeu à votre envie de découverte.</p>}
-        {currentUser && isOwner && <p style={{ fontSize: 12.5, color: "#a89a86", margin: "0 0 8px" }}>Vous possédez ce jeu, vous n'avez plus à le découvrir 🙂</p>}
-        {currentUser && !isOwner && myRating > 0 && <p style={{ fontSize: 12.5, color: "#a89a86", margin: "0 0 8px" }}>Vous avez déjà noté ce jeu, vous l'avez donc joué.</p>}
+        {currentUser && myRating > 0 && <p style={{ fontSize: 12.5, color: "#a89a86", margin: "0 0 8px" }}>Vous avez noté ce jeu, vous l'avez donc joué — votre envie de découverte n'a plus lieu d'être.</p>}
         {wanters.length === 0 ? (
           <p style={{ fontSize: 13, color: "#a89a86", margin: 0 }}>Personne n'a encore exprimé l'envie de le découvrir.</p>
         ) : (
@@ -3514,9 +3527,10 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
     setBggLoadingId(id); setBggErr("");
     try {
       const d = await bggDetails(id);
-      await addExtension(g.id, { name: d.name || name, img: d.img || "" });
-      reset();
-      setToast("Extension ajoutée depuis BGG !");
+      // On bascule en mode édition manuel avec les données pré-remplies depuis BGG.
+      // L'utilisateur peut alors corriger le nom, l'image, etc. avant validation.
+      setF({ name: d.name || name, img: d.img || "" });
+      setMode("manual");
     } catch (e) {
       setBggErr("Impossible de récupérer cette fiche depuis BGG.");
     } finally { setBggLoadingId(null); }
@@ -4437,6 +4451,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
   const [year, setYear] = useState("");
+  const [wantFilter, setWantFilter] = useState(""); // "" | "mine" | "any" | "none"
   const [sort, setSort] = useState("note");
   const [view, setView] = useState("grid"); // "grid" | "list"
   const [selected, setSelected] = useState(null);
@@ -4505,14 +4520,23 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         if (year === "none") okY = !g.year || y === 0;
         else okY = y === Number(year);
       }
-      return okQ && okM && okP && okD && okY;
+      // filtre envies : "mine" = je veux le découvrir ; "any" = au moins un membre ; "none" = personne
+      let okW = true;
+      if (wantFilter) {
+        const wantIds = g.wantIds || [];
+        if (wantFilter === "mine") okW = currentUser && wantIds.includes(currentUser.id);
+        else if (wantFilter === "any") okW = wantIds.length > 0;
+        else if (wantFilter === "none") okW = wantIds.length === 0;
+      }
+      return okQ && okM && okP && okD && okY && okW;
     });
     if (sort === "note") list = rankGames(list);
     else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
     return list;
-  }, [communGames, q, mech, players, duration, year, sort, currentUser]);
+  }, [communGames, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
   // Top 20 : un jeu doit avoir au moins 2 votes pour entrer dans le classement
   // (évite qu'un seul avis très élevé propulse un jeu en tête).
@@ -4569,9 +4593,16 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               {allYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
               {hasNoYear && <option value="none">Sans année renseignée</option>}
             </select>
+            <select value={wantFilter} onChange={(e) => setWantFilter(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes envies ❤</option>
+              {currentUser && <option value="mine">Que j'ai envie de découvrir</option>}
+              <option value="any">Avec au moins une envie</option>
+              <option value="none">Sans envie</option>
+            </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés (général)</option>
               <option value="myNote">Mes meilleures notes</option>
+              <option value="wants">Plus d'envies ❤</option>
               <option value="alpha">A → Z</option>
               <option value="recent">Récents</option>
             </select>
@@ -4588,16 +4619,21 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               {/* en-tête de liste */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
                 <span style={{ flex: 1 }}>Jeu</span>
+                <span style={{ width: 60, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
                 <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
                 <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
               </div>
               {filtered.map((g) => {
                 const { avg, count } = gameStats(g);
                 const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+                const wantC = (g.wantIds || []).length;
                 return (
                   <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
                     <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ width: 60, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                      {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
+                    </span>
                     <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
                     <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
                   </button>
@@ -4954,20 +4990,57 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   };
 
   if (preview) {
+    // Helpers locaux pour modifier les champs du preview
+    const updatePreview = (patch) => setPreview({ ...preview, ...patch });
+    const toggleMech = (m) => {
+      const arr = preview.mechanics || [];
+      updatePreview({ mechanics: arr.includes(m) ? arr.filter((x) => x !== m) : [...arr, m] });
+    };
+    const addCustomMech = (m) => {
+      const trimmed = m.trim();
+      if (!trimmed) return;
+      const arr = preview.mechanics || [];
+      if (!arr.includes(trimmed)) updatePreview({ mechanics: [...arr, trimmed] });
+    };
     return (
       <div>
         <button onClick={() => setPreview(null)} style={backLinkStyle}><ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> Autre jeu</button>
         <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16 }}><GameCover g={preview} size="lg" /></div>
-        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 22, margin: "0 0 8px" }}>{preview.name} {preview.year && <span style={{ color: "#b6a78f", fontWeight: 400, fontSize: 16 }}>({preview.year})</span>}</h3>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-          {preview.min && <Badge color={C.teal}><Users size={12} /> {preview.min}–{preview.max}</Badge>}
-          {preview.time && <Badge color={C.amber}><Clock size={12} /> {preview.time} min</Badge>}
-          {preview.mechanics.map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
+
+        {/* Bandeau d'info : la fiche est modifiable avant validation */}
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.25)", borderRadius: 11, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#6e6256", display: "flex", alignItems: "center", gap: 8 }}>
+          <Info size={15} color={C.amber} /> Vous pouvez modifier les champs ci-dessous avant de valider.
         </div>
-        <div style={{ background: "rgba(30,138,138,.08)", borderRadius: 12, padding: "8px 12px", marginBottom: 12, fontSize: 12.5, color: C.teal, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-          <Globe size={14} /> Description traduite automatiquement en français
+
+        {/* Champs éditables */}
+        <Field label="Nom du jeu"><TextInput value={preview.name || ""} onChange={(e) => updatePreview({ name: e.target.value })} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+          <Field label="Année"><TextInput type="number" value={preview.year || ""} onChange={(e) => updatePreview({ year: Number(e.target.value) || "" })} /></Field>
+          <Field label="Joueurs min"><TextInput type="number" value={preview.min || ""} onChange={(e) => updatePreview({ min: Number(e.target.value) || "" })} /></Field>
+          <Field label="Joueurs max"><TextInput type="number" value={preview.max || ""} onChange={(e) => updatePreview({ max: Number(e.target.value) || "" })} /></Field>
+          <Field label="Durée (min)"><TextInput type="number" value={preview.time || ""} onChange={(e) => updatePreview({ time: Number(e.target.value) || "" })} /></Field>
         </div>
-        <p style={{ color: "#5e5346", fontSize: 14, lineHeight: 1.6, maxHeight: 160, overflowY: "auto", margin: "0 0 18px", whiteSpace: "pre-line" }}>{preview.desc}</p>
+
+        <Field label="Mécaniques" hint="Décochez celles avec lesquelles vous n'êtes pas d'accord, cochez-en d'autres, ou ajoutez-en de personnalisées.">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[...new Set([...MECHANIC_SUGGESTIONS, ...(preview.mechanics || [])])].map((m) => {
+              const active = (preview.mechanics || []).includes(m);
+              return <button key={m} type="button" onClick={() => toggleMech(m)} style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#8a7c6a" }}>{m}</button>;
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <TextInput placeholder="Ajouter une mécanique personnalisée et appuyer sur Entrée…" onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); addCustomMech(e.target.value); e.target.value = ""; }
+            }} />
+          </div>
+        </Field>
+
+        <Field label="Description">
+          <textarea rows={5} value={preview.desc || ""} onChange={(e) => updatePreview({ desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
+          <div style={{ background: "rgba(30,138,138,.08)", borderRadius: 8, padding: "6px 10px", marginTop: 6, fontSize: 12, color: C.teal, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Globe size={12} /> Description traduite automatiquement en français
+          </div>
+        </Field>
 
         {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
         {!forUpcoming && (
@@ -5193,12 +5266,22 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
         <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
         <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       </div>
-      <Field label="Mécaniques">
+      <Field label="Mécaniques" hint="Cliquez pour sélectionner, ou ajoutez vos propres mécaniques ci-dessous.">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-          {MECHANIC_SUGGESTIONS.map((m) => {
+          {[...new Set([...MECHANIC_SUGGESTIONS, ...(f.mechanics || [])])].map((m) => {
             const active = f.mechanics.includes(m);
             return <button key={m} type="button" onClick={() => toggleMech(m)} style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#8a7c6a" }}>{m}</button>;
           })}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <TextInput placeholder="Ajouter une mécanique personnalisée et appuyer sur Entrée…" onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const v = e.target.value.trim();
+              if (v && !f.mechanics.includes(v)) setF({ ...f, mechanics: [...f.mechanics, v] });
+              e.target.value = "";
+            }
+          }} />
         </div>
       </Field>
       <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
@@ -5263,6 +5346,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
   const [year, setYear] = useState("");
+  const [wantFilter, setWantFilter] = useState("");
   const [sort, setSort] = useState("alpha");
   const [view, setView] = useState("grid"); // "grid" | "list"
 
@@ -5315,14 +5399,22 @@ function MyLudoPage({ setToast, setPage }) {
         if (year === "none") okY = !g.year || y === 0;
         else okY = y === Number(year);
       }
-      return okQ && okM && okP && okD && okY;
+      let okW = true;
+      if (wantFilter) {
+        const wantIds = g.wantIds || [];
+        if (wantFilter === "mine") okW = currentUser && wantIds.includes(currentUser.id);
+        else if (wantFilter === "any") okW = wantIds.length > 0;
+        else if (wantFilter === "none") okW = wantIds.length === 0;
+      }
+      return okQ && okM && okP && okD && okY && okW;
     });
     if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "note") list = rankGames(list); // note générale
     else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
     return list;
-  }, [allMine, q, mech, players, duration, year, sort, currentUser]);
+  }, [allMine, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
@@ -5500,10 +5592,17 @@ function MyLudoPage({ setToast, setPage }) {
               {myYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
               {myHasNoYear && <option value="none">Sans année renseignée</option>}
             </select>
+            <select value={wantFilter} onChange={(e) => setWantFilter(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toutes envies ❤</option>
+              <option value="mine">Que j'ai envie de découvrir</option>
+              <option value="any">Avec au moins une envie</option>
+              <option value="none">Sans envie</option>
+            </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="alpha">A → Z</option>
               <option value="note">Mieux notés (général)</option>
               <option value="myNote">Mes meilleures notes</option>
+              <option value="wants">Plus d'envies ❤</option>
               <option value="recent">Récents</option>
             </select>
             <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
@@ -5518,16 +5617,21 @@ function MyLudoPage({ setToast, setPage }) {
             <div style={{ display: "grid", gap: 4 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
                 <span style={{ flex: 1 }}>Jeu</span>
+                <span style={{ width: 60, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
                 <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
                 <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
               </div>
               {mine.map((g) => {
                 const { avg, count } = gameStats(g);
                 const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+                const wantC = (g.wantIds || []).length;
                 return (
                   <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
                     <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ width: 60, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                      {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
+                    </span>
                     <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
                     <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
                   </button>
