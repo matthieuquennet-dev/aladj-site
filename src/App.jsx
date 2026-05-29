@@ -81,6 +81,65 @@ const MECHANIC_SUGGESTIONS = [
 ].sort((a, b) => a.localeCompare(b, "fr"));
 
 /* =============================================================================
+   STORAGE — Upload des images vers Supabase Storage
+   Les images sont stockées dans le bucket public "aladj-images", organisées par
+   dossier selon le type (games, extensions, upcoming, avatars, places).
+   Les URLs publiques sont mises en cache par les navigateurs → bien plus efficient
+   que stocker du base64 dans la base de données.
+   ============================================================================= */
+
+// Convertit une data URL base64 en Blob binaire pour upload Storage.
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(",");
+  const mime = meta.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+  const bin = atob(b64);
+  const len = bin.length;
+  const u8 = new Uint8Array(len);
+  for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime });
+}
+
+// Extrait l'extension de fichier depuis un mime type.
+function extFromMime(mime) {
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/gif") return "gif";
+  return "jpg";
+}
+
+// Si "image" est une data URL base64, l'uploade vers Storage et renvoie l'URL publique.
+// Si c'est déjà une URL (http... ou Storage), la renvoie telle quelle.
+// Si vide, renvoie "" (pas d'image).
+// folder : "games" | "extensions" | "upcoming" | "avatars" | "places"
+async function uploadImageToStorage(image, folder = "games") {
+  if (!image) return "";
+  // Déjà une URL externe (http, https, ou URL Supabase Storage) → on ne touche pas
+  if (!image.startsWith("data:")) return image;
+
+  try {
+    const blob = dataUrlToBlob(image);
+    const ext = extFromMime(blob.type);
+    // Nom unique : timestamp + random pour éviter les collisions
+    const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+    const { error } = await supabase.storage.from("aladj-images").upload(filename, blob, {
+      contentType: blob.type,
+      cacheControl: "604800", // 7 jours de cache navigateur → réduit drastiquement l'Egress
+    });
+    if (error) {
+      console.error("Storage upload échec :", error);
+      return image; // repli : on garde le base64 si l'upload plante
+    }
+    // URL publique stable
+    const { data } = supabase.storage.from("aladj-images").getPublicUrl(filename);
+    return data.publicUrl;
+  } catch (e) {
+    console.error("Storage upload exception :", e);
+    return image;
+  }
+}
+
+/* =============================================================================
    IMPORT BoardGameGeek
    -----------------------------------------------------------------------------
    Ces fonctions appellent une route serverless /api/bgg (incluse dans le projet)
@@ -511,9 +570,11 @@ function AppProvider({ children }) {
     // C'est nécessaire pour respecter la RLS d'insert (auth.uid() = owner_id).
     // La VRAIE possession est gérée par la table de liaison game_owners (avec confirmed/declared_by).
     // Si je ne possède pas le jeu, j'en suis quand même le « créateur de fiche » côté metadata.
+    // Si l'image est en base64, on l'envoie d'abord vers Supabase Storage et on ne garde que l'URL.
+    const imgUrl = await uploadImageToStorage(d.img || "", "games");
     const { data, error } = await supabase.from("games").insert({
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
-      play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: d.img || "",
+      play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: imgUrl,
       source: d.source || "manuel", owner_id: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
@@ -616,8 +677,9 @@ function AppProvider({ children }) {
   // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
   const addExtension = useCallback(async (gameId, data) => {
     if (!currentUser) return { error: "Connectez-vous." };
+    const imgUrl = await uploadImageToStorage(data.img || "", "extensions");
     const { data: row, error } = await supabase.from("extensions").insert({
-      game_id: gameId, name: data.name.trim(), image_url: data.img || "", created_by: currentUser.id,
+      game_id: gameId, name: data.name.trim(), image_url: imgUrl, created_by: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
     await supabase.from("extension_owners").insert({ extension_id: row.id, owner_id: currentUser.id });
@@ -646,9 +708,10 @@ function AppProvider({ children }) {
   }, [currentUser, loadData]);
 
   const updateGame = useCallback(async (id, patch) => {
+    const imgUrl = await uploadImageToStorage(patch.img || "", "games");
     const fields = {
       name: patch.name, year: patch.year || null, min_players: patch.min || null, max_players: patch.max || null,
-      play_time: patch.time || null, mechanics: patch.mechanics || [], description: patch.desc || "", image_url: patch.img || "",
+      play_time: patch.time || null, mechanics: patch.mechanics || [], description: patch.desc || "", image_url: imgUrl,
     };
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
     await supabase.from("games").update(fields).eq("id", id);
@@ -711,7 +774,7 @@ function AppProvider({ children }) {
     if (!currentUser) return { error: "Connectez-vous." };
     const fields = {};
     if (patch.name !== undefined) fields.name = patch.name.trim();
-    if (patch.avatar !== undefined) fields.avatar_url = patch.avatar;
+    if (patch.avatar !== undefined) fields.avatar_url = await uploadImageToStorage(patch.avatar, "avatars");
     if (patch.city !== undefined) fields.city = patch.city.trim();
     if (patch.bio !== undefined) fields.bio = patch.bio.slice(0, 500);
     if (patch.bggUrl !== undefined) fields.bgg_url = patch.bggUrl.trim();
@@ -719,7 +782,9 @@ function AppProvider({ children }) {
     if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
-    setCurrentUser((u) => u ? { ...u, ...patch, bio: patch.bio !== undefined ? patch.bio.slice(0, 500) : u.bio } : u);
+    // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
+    // mais en DB c'est désormais l'URL Storage
+    setCurrentUser((u) => u ? { ...u, ...patch, avatar: fields.avatar_url !== undefined ? fields.avatar_url : u.avatar, bio: patch.bio !== undefined ? patch.bio.slice(0, 500) : u.bio } : u);
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -801,9 +866,10 @@ function AppProvider({ children }) {
   // Créer une fiche À venir
   const addUpcoming = useCallback(async (d) => {
     if (!currentUser) return { error: "Connectez-vous." };
+    const imgUrl = await uploadImageToStorage(d.img || "", "upcoming");
     const { data, error } = await supabase.from("upcoming_games").insert({
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
-      play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: d.img || "",
+      play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: imgUrl,
       new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
       source: d.source || "manuel", created_by: currentUser.id,
     }).select().single();
@@ -822,7 +888,7 @@ function AppProvider({ children }) {
     if (patch.time !== undefined) fields.play_time = patch.time || null;
     if (patch.mechanics !== undefined) fields.mechanics = patch.mechanics || [];
     if (patch.desc !== undefined) fields.description = patch.desc || "";
-    if (patch.img !== undefined) fields.image_url = patch.img || "";
+    if (patch.img !== undefined) fields.image_url = await uploadImageToStorage(patch.img || "", "upcoming");
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice != null && patch.newPrice !== "" ? Number(patch.newPrice) : null;
     const { error } = await supabase.from("upcoming_games").update(fields).eq("id", id);
     if (error) return { error: error.message };
@@ -906,13 +972,14 @@ function AppProvider({ children }) {
       return { gameId: u.ludoGameId };
     }
     // sinon on crée la fiche ludo à partir des infos À venir
+    const imgUrl = await uploadImageToStorage(u.img || "", "games");
     const { data: game, error } = await supabase.from("games").insert({
       name: u.name, year: u.year || null, min_players: u.min || null, max_players: u.max || null,
-      play_time: u.time || null, mechanics: u.mechanics || [], description: u.desc || "", image_url: u.img || "",
+      play_time: u.time || null, mechanics: u.mechanics || [], description: u.desc || "", image_url: imgUrl,
       new_price: u.newPrice != null ? u.newPrice : null, source: u.source || "manuel", owner_id: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
-    await supabase.from("game_owners").insert({ game_id: game.id, owner_id: currentUser.id });
+    await supabase.from("game_owners").insert({ game_id: game.id, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id });
     // lier la fiche À venir à la nouvelle fiche ludo
     await supabase.from("upcoming_games").update({ ludo_game_id: game.id }).eq("id", upcId);
     await loadData();
@@ -4282,6 +4349,143 @@ function EditUpcomingModal({ u, onClose, setToast }) {
   );
 }
 
+/* =============================================================================
+   MIGRATION — Outil unique pour migrer toutes les images base64 vers Storage
+   À utiliser une seule fois par l'administrateur. Migre par lots et affiche
+   la progression. Conserve une copie de sauvegarde dans image_url_backup.
+   ============================================================================= */
+function MigrateImagesModal({ onClose, setToast }) {
+  const { reload } = useApp();
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  const [log, setLog] = useState([]);
+  const [stats, setStats] = useState({ scanned: 0, migrated: 0, skipped: 0, errors: 0 });
+
+  const addLog = (line) => setLog((prev) => [...prev, line]);
+
+  // Migre une table donnée (jeux, extensions, upcoming, etc.)
+  // - tableName : nom de la table Supabase
+  // - imgCol : nom de la colonne image (image_url ou avatar_url)
+  // - backupCol : nom de la colonne backup
+  // - folder : dossier dans le bucket Storage
+  const migrateTable = async (tableName, imgCol, backupCol, folder, label) => {
+    addLog(`📋 ${label} : analyse en cours…`);
+    // Récupère uniquement les lignes qui ont une image en base64 et pas encore migrées
+    const { data: rows, error } = await supabase
+      .from(tableName)
+      .select(`id, ${imgCol}`)
+      .like(imgCol, "data:%");
+    if (error) {
+      addLog(`❌ ${label} : ${error.message}`);
+      setStats((s) => ({ ...s, errors: s.errors + 1 }));
+      return;
+    }
+    if (!rows || rows.length === 0) {
+      addLog(`✅ ${label} : rien à migrer (0 image base64 trouvée).`);
+      return;
+    }
+    addLog(`🔄 ${label} : ${rows.length} image(s) à migrer…`);
+
+    let migrated = 0;
+    let errors = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const base64 = row[imgCol];
+      setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+      try {
+        const newUrl = await uploadImageToStorage(base64, folder);
+        if (newUrl === base64) {
+          // upload raté, on garde tel quel
+          addLog(`⚠️ ${label} #${row.id.slice(0, 8)} : upload échoué, ignoré.`);
+          errors++;
+          continue;
+        }
+        // On enregistre la nouvelle URL + le backup de l'ancienne (en cas de souci)
+        const updateFields = { [imgCol]: newUrl, [backupCol]: base64 };
+        const { error: updateErr } = await supabase.from(tableName).update(updateFields).eq("id", row.id);
+        if (updateErr) {
+          addLog(`❌ ${label} #${row.id.slice(0, 8)} : ${updateErr.message}`);
+          errors++;
+          continue;
+        }
+        migrated++;
+        setStats((s) => ({ ...s, migrated: s.migrated + 1 }));
+        // Petit log tous les 10 pour ne pas inonder
+        if (migrated % 10 === 0) addLog(`   … ${migrated} / ${rows.length} migrées`);
+      } catch (e) {
+        addLog(`❌ ${label} #${row.id.slice(0, 8)} : ${e.message}`);
+        errors++;
+      }
+    }
+    addLog(`✅ ${label} : terminé (${migrated} migrées, ${errors} erreurs).`);
+    if (errors > 0) setStats((s) => ({ ...s, errors: s.errors + errors }));
+  };
+
+  const start = async () => {
+    setRunning(true);
+    setLog([]);
+    setStats({ scanned: 0, migrated: 0, skipped: 0, errors: 0 });
+    addLog("🚀 Démarrage de la migration des images vers Supabase Storage…");
+    addLog("⏳ Cette opération peut prendre plusieurs minutes selon le nombre d'images.");
+    addLog("");
+
+    try {
+      await migrateTable("games",          "image_url",  "image_url_backup",  "games",      "Jeux");
+      await migrateTable("extensions",     "image_url",  "image_url_backup",  "extensions", "Extensions");
+      await migrateTable("upcoming_games", "image_url",  "image_url_backup",  "upcoming",   "Jeux à venir");
+      await migrateTable("profiles",       "avatar_url", "avatar_url_backup", "avatars",    "Avatars");
+      addLog("");
+      addLog("🎉 Migration terminée ! Rechargement des données…");
+      await reload();
+      setDone(true);
+      setToast("Migration terminée avec succès !");
+    } catch (e) {
+      addLog(`💥 Erreur fatale : ${e.message}`);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={running ? () => {} : onClose} title="Migration des images vers Storage" width={680}>
+      {!running && !done && (
+        <div>
+          <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+            <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 8px", display: "flex", alignItems: "center", gap: 6 }}>
+              <AlertTriangle size={16} color={C.amber} /> À lire avant de lancer
+            </h4>
+            <ul style={{ fontSize: 13.5, color: "#5e5346", margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+              <li>Cette opération transfère toutes les images stockées en base64 dans la base de données vers le bucket Supabase Storage <code>aladj-images</code>.</li>
+              <li>Les anciennes images base64 sont <b>conservées en backup</b> dans des colonnes dédiées (suppression définitive plus tard).</li>
+              <li>Cela peut prendre plusieurs minutes — <b>ne fermez pas la fenêtre</b> pendant l'opération.</li>
+              <li>L'opération est <b>idempotente</b> : si vous la relancez, seules les images encore en base64 seront migrées.</li>
+              <li>Lancez cette migration une seule fois après avoir bien créé le bucket via le script SQL.</li>
+            </ul>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn variant="amber" size="lg" onClick={start}><Sparkles size={16} /> Lancer la migration</Btn>
+            <Btn variant="soft" size="lg" onClick={onClose}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {(running || done) && (
+        <div>
+          <div style={{ background: done ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.1)", border: `1px solid ${done ? C.teal : C.amber}`, borderRadius: 12, padding: 14, marginBottom: 14, display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <div><b style={{ color: C.navy, fontSize: 22 }}>{stats.scanned}</b><br /><span style={{ fontSize: 12, color: "#9c8d79" }}>analysées</span></div>
+            <div><b style={{ color: C.teal, fontSize: 22 }}>{stats.migrated}</b><br /><span style={{ fontSize: 12, color: "#9c8d79" }}>migrées</span></div>
+            <div><b style={{ color: stats.errors > 0 ? C.red : "#9c8d79", fontSize: 22 }}>{stats.errors}</b><br /><span style={{ fontSize: 12, color: "#9c8d79" }}>erreurs</span></div>
+          </div>
+          <div style={{ background: "#f5efe2", borderRadius: 10, padding: 12, maxHeight: 360, overflowY: "auto", fontFamily: "monospace", fontSize: 12, color: "#3a3329" }}>
+            {log.map((line, i) => <div key={i} style={{ marginBottom: 2 }}>{line}</div>)}
+          </div>
+          {done && <Btn variant="teal" size="lg" onClick={onClose} style={{ marginTop: 14 }}><Check size={16} /> Fermer</Btn>}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function LocationsPage({ setToast }) {
   const { loans, currentUser, closeLoan } = useApp();
   const myLent = (loans || []).filter((l) => l.lenderId === currentUser?.id && !l.returned);
@@ -5351,6 +5555,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [wantFilter, setWantFilter] = useState("");
   const [sort, setSort] = useState("alpha");
   const [view, setView] = useState("grid"); // "grid" | "list"
+  const [showMigrate, setShowMigrate] = useState(false); // outil admin : migration images vers Storage
 
   // Possessions en attente : jeux où je suis listé comme propriétaire mais avec confirmed=false.
   // J'ai besoin de confirmer ou de refuser ces déclarations.
@@ -5482,6 +5687,7 @@ function MyLudoPage({ setToast, setPage }) {
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ma ludothèque</h1>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {currentUser.admin && <Btn variant="ghost" onClick={() => setShowMigrate(true)} title="Outil admin : migrer les images base64 vers Supabase Storage"><Sparkles size={17} /> Migrer images</Btn>}
           <Btn variant="ghost" onClick={exportExcel} disabled={mine.length === 0}><Download size={17} /> Export Excel</Btn>
           <Btn variant="amber" onClick={() => setShowAdd(true)}><Plus size={17} /> Ajouter un jeu</Btn>
         </div>
@@ -5650,6 +5856,7 @@ function MyLudoPage({ setToast, setPage }) {
 
       {showAdd && <AddGameFlow onClose={() => setShowAdd(false)} setToast={setToast} />}
       {selected && <GameDetailModal g={games.find((g) => g.id === selected)} onClose={() => setSelected(null)} onAuth={() => {}} setToast={setToast} />}
+      {showMigrate && <MigrateImagesModal onClose={() => setShowMigrate(false)} setToast={setToast} />}
     </div>
   );
 }
