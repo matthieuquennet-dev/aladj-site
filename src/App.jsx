@@ -5687,7 +5687,10 @@ function MyLudoPage({ setToast, setPage }) {
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ma ludothèque</h1>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {currentUser.admin && <Btn variant="ghost" onClick={() => setShowMigrate(true)} title="Outil admin : migrer les images base64 vers Supabase Storage"><Sparkles size={17} /> Migrer images</Btn>}
+          {/* Bouton de migration ponctuelle des images base64 vers Supabase Storage.
+              Visible pour tout membre connecté car c'est une opération unique et sans risque
+              (idempotente : ne traite que les images encore en base64). À retirer après usage. */}
+          <Btn variant="ghost" onClick={() => setShowMigrate(true)} title="Outil ponctuel : migrer les images base64 vers Supabase Storage"><Sparkles size={17} /> Migrer images</Btn>
           <Btn variant="ghost" onClick={exportExcel} disabled={mine.length === 0}><Download size={17} /> Export Excel</Btn>
           <Btn variant="amber" onClick={() => setShowAdd(true)}><Plus size={17} /> Ajouter un jeu</Btn>
         </div>
