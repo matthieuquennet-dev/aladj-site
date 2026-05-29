@@ -199,25 +199,57 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}, discoveriesByGame = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
-  // liste des propriétaires (table de liaison) ; repli sur owner_id si liaison vide
-  let ownerIds = ownersByGame[row.id] || [];
-  if (ownerIds.length === 0 && row.owner_id) ownerIds = [row.owner_id];
-  // décisionnaires d'abord, puis ordre alphabétique
-  const owners = ownerIds
-    .map((id) => ({ id, name: nameById[id] || "Membre", role: roleById[id] || "non" }))
+
+  // ownersByGame[row.id] est un tableau d'objets { owner_id, confirmed, declared_by }
+  // (auparavant c'était de simples ID — on garde la compat en testant)
+  const ownerRows = ownersByGame[row.id] || [];
+  // Repli sur owner_id si la table de liaison est vide
+  let normalizedOwners = ownerRows;
+  if (normalizedOwners.length === 0 && row.owner_id) normalizedOwners = [{ owner_id: row.owner_id, confirmed: true, declared_by: null }];
+
+  const ownerToInfo = (o) => ({
+    id: o.owner_id,
+    name: nameById[o.owner_id] || "Membre",
+    role: roleById[o.owner_id] || "non",
+    confirmed: o.confirmed !== false,
+    declaredBy: o.declared_by || null,
+    declaredByName: o.declared_by ? (nameById[o.declared_by] || "un membre") : null,
+  });
+
+  // Possesseurs confirmés (affichés normalement)
+  const confirmedOwners = normalizedOwners
+    .filter((o) => o.confirmed !== false)
+    .map(ownerToInfo)
     .sort((a, b) => {
       if (a.role === "decideur" && b.role !== "decideur") return -1;
       if (b.role === "decideur" && a.role !== "decideur") return 1;
       return a.name.localeCompare(b.name, "fr");
     });
+
+  // Possessions en attente (déclarées par un autre, le concerné n'a pas encore confirmé)
+  const pendingOwners = normalizedOwners
+    .filter((o) => o.confirmed === false)
+    .map(ownerToInfo)
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+  // Pour la rétro-compatibilité, "owners" et "ownerIds" listent les confirmés.
+  // Le code existant qui consulte g.owners / g.ownerIds continue de fonctionner.
+  const owners = confirmedOwners;
+  const ownerIds = confirmedOwners.map((o) => o.id);
+
+  // Envies de découvrir : liste des user IDs qui veulent découvrir ce jeu
+  const wantIds = discoveriesByGame[row.id] || [];
+
   return {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
     time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     owners, ownerIds,
+    confirmedOwners, pendingOwners,           // nouvelles structures
+    wantIds,                                  // envies de découvrir : liste d'IDs
     extensions: extsByGame[row.id] || [],
     newPrice: row.new_price != null ? Number(row.new_price) : null,
     shared: row.shared !== false,
@@ -267,7 +299,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }] = await Promise.all([
         supabase.from("profiles").select("*").order("name"),
         supabase.from("games").select("*"),
         supabase.from("ratings").select("*"),
@@ -287,6 +319,7 @@ function AppProvider({ children }) {
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
         supabase.from("upcoming_comments").select("*").order("created_at"),
+        supabase.from("game_discoveries").select("*"),
       ]);
 
       // table de correspondance id -> nom
@@ -312,8 +345,12 @@ function AppProvider({ children }) {
       const commentsByGame = {};
       (gameComments || []).forEach((c) => { (commentsByGame[c.game_id] ||= []).push(c); });
       // propriétaires multiples par jeu (table de liaison game_owners)
+      // On stocke les lignes complètes pour récupérer confirmed et declared_by
       const ownersByGame = {};
-      (gameOwners || []).forEach((o) => { (ownersByGame[o.game_id] ||= []).push(o.owner_id); });
+      (gameOwners || []).forEach((o) => { (ownersByGame[o.game_id] ||= []).push(o); });
+      // Envies de découvrir : qui veut découvrir quoi
+      const discoveriesByGame = {};
+      (discRows || []).forEach((d) => { (discoveriesByGame[d.game_id] ||= []).push(d.user_id); });
       // extensions par jeu, avec leurs propriétaires
       const extOwnersByExt = {};
       (extOwners || []).forEach((o) => { (extOwnersByExt[o.extension_id] ||= []).push(o.owner_id); });
@@ -327,7 +364,7 @@ function AppProvider({ children }) {
       });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
-      const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame));
+      const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
       mappedGames.forEach((g) => { gamesIndexById[g.id] = g; });
@@ -462,14 +499,33 @@ function AppProvider({ children }) {
 
   /* ---- Jeux ---- */
   const addGame = useCallback(async (d) => {
+    // d.forUserIds : autres membres pour lesquels on déclare la possession (en attente de confirmation)
+    // d.selfOwns   : si true (défaut), j'inscris aussi MA possession (confirmée)
+    const selfOwns = d.selfOwns !== false;
+    const forUserIds = (d.forUserIds || []).filter((id) => id && id !== currentUser.id);
+
+    // owner_id initial : moi si je m'inscris, sinon le premier déclaré
+    const initialOwner = selfOwns ? currentUser.id : (forUserIds[0] || currentUser.id);
+
     const { data, error } = await supabase.from("games").insert({
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
       play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: d.img || "",
-      source: d.source || "manuel", owner_id: currentUser.id,
+      source: d.source || "manuel", owner_id: initialOwner,
     }).select().single();
     if (error) return { error: error.message };
-    // on inscrit le créateur comme premier propriétaire dans la liaison
-    await supabase.from("game_owners").insert({ game_id: data.id, owner_id: currentUser.id });
+
+    // Inscriptions dans la table de liaison
+    const rows = [];
+    if (selfOwns) {
+      // Moi : possession confirmée d'office
+      rows.push({ game_id: data.id, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id });
+    }
+    forUserIds.forEach((uid) => {
+      // Autres membres : possession en attente de leur confirmation
+      rows.push({ game_id: data.id, owner_id: uid, confirmed: false, declared_by: currentUser.id });
+    });
+    if (rows.length > 0) await supabase.from("game_owners").insert(rows);
+
     await loadData();
     return { game: data };
   }, [currentUser, loadData]);
@@ -477,7 +533,10 @@ function AppProvider({ children }) {
   // Se rattacher à un jeu existant ("je l'ai aussi") — sans recréer de fiche
   const addOwner = useCallback(async (gameId) => {
     if (!currentUser) return { error: "Connectez-vous." };
-    const { error } = await supabase.from("game_owners").insert({ game_id: gameId, owner_id: currentUser.id });
+    // Je m'ajoute moi-même : possession confirmée d'office
+    const { error } = await supabase.from("game_owners").insert({
+      game_id: gameId, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id,
+    });
     if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
     await loadData();
     return {};
@@ -501,6 +560,46 @@ function AppProvider({ children }) {
     }
     await loadData();
   }, [currentUser, loadData, games]);
+
+  // ---- Possessions par procuration ----
+  // Confirmer une possession en attente : "oui, je possède bien ce jeu"
+  const confirmOwnership = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    await supabase.from("game_owners").update({ confirmed: true })
+      .eq("game_id", gameId).eq("owner_id", currentUser.id);
+    await loadData();
+  }, [currentUser, loadData]);
+
+  // Refuser une possession en attente : on retire la ligne, et on supprime la fiche si elle devient orpheline.
+  const declineOwnership = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    await supabase.from("game_owners").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
+    const { data: remaining } = await supabase.from("game_owners").select("owner_id").eq("game_id", gameId);
+    if (!remaining || remaining.length === 0) {
+      await supabase.from("games").delete().eq("id", gameId);
+    } else {
+      const game = games.find((g) => g.id === gameId);
+      if (game && game.ownerId === currentUser.id) {
+        await supabase.from("games").update({ owner_id: remaining[0].owner_id }).eq("id", gameId);
+      }
+    }
+    await loadData();
+  }, [currentUser, loadData, games]);
+
+  // ---- Envies de découvrir ----
+  // Bascule l'envie de découvrir un jeu (toggle). Si déjà présent → retire, sinon → ajoute.
+  const toggleDiscover = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    const g = games.find((x) => x.id === gameId);
+    const already = g && (g.wantIds || []).includes(currentUser.id);
+    if (already) {
+      await supabase.from("game_discoveries").delete()
+        .eq("game_id", gameId).eq("user_id", currentUser.id);
+    } else {
+      await supabase.from("game_discoveries").insert({ game_id: gameId, user_id: currentUser.id });
+    }
+    await loadData();
+  }, [currentUser, games, loadData]);
 
   // ---- Extensions ----
   // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
@@ -621,6 +720,9 @@ function AppProvider({ children }) {
       await supabase.from("ratings").delete().eq("game_id", id).eq("user_id", currentUser.id);
     } else {
       await supabase.from("ratings").upsert({ game_id: id, user_id: currentUser.id, value });
+      // Si je note un jeu, mon envie de le découvrir n'a plus lieu d'être : je le retire automatiquement.
+      // (sans gravité si je ne l'avais pas marqué : la requête supprime simplement zéro ligne.)
+      await supabase.from("game_discoveries").delete().eq("game_id", id).eq("user_id", currentUser.id);
     }
     await loadData();
   }, [currentUser, games, loadData]);
@@ -905,6 +1007,7 @@ function AppProvider({ children }) {
     register, login, logout, addGame, updateGame, removeGame, rateGame, clearRating,
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
+    confirmOwnership, declineOwnership, toggleDiscover,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
@@ -2987,6 +3090,12 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
         onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
         <div style={{ position: "relative" }}>
           <GameCover g={g} />
+          {(g.wantIds || []).length > 0 && (
+            <div title={`${g.wantIds.length} membre${g.wantIds.length > 1 ? "s veulent" : " veut"} découvrir ce jeu`}
+              style={{ position: "absolute", top: 10, left: 10, background: C.red, color: "#fff", borderRadius: 999, padding: "4px 9px 4px 7px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.18)" }}>
+              <Heart size={13} fill="#fff" color="#fff" /> {g.wantIds.length}
+            </div>
+          )}
           <div title={myGame ? (iVoted ? "Votre note" : "Vous n'avez pas encore noté ce jeu") : (iVoted ? "Moyenne — vous avez voté" : "Moyenne — vous n'avez pas encore voté")}
             style={{ position: "absolute", top: 10, right: 10, background: badgeBg, color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
             {badgeContent}
@@ -3004,10 +3113,14 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: "#9c8d79" }}>chez {(() => {
-              const os = g.owners && g.owners.length ? g.owners : (g.ownerName ? [{ name: g.ownerName }] : []);
-              const shown = os.slice(0, 2).map((o) => o.name).join(", ");
-              const extra = os.length - 2;
-              return <><b style={{ color: C.teal }}>{shown}</b>{extra > 0 ? ` +${extra}` : ""}</>;
+              // Affichage : possesseurs confirmés en priorité, puis pendings avec mention "X selon Y"
+              const confirmed = (g.confirmedOwners || g.owners || []).map((o) => ({ name: o.name }));
+              const pending = (g.pendingOwners || []).map((o) => ({ name: o.name, declaredByName: o.declaredByName }));
+              const all = [...confirmed, ...pending];
+              if (all.length === 0 && g.ownerName) all.push({ name: g.ownerName });
+              const shown = all.slice(0, 2).map((o) => o.declaredByName ? `${o.name} selon ${o.declaredByName}` : o.name).join(", ");
+              const extra = all.length - 2;
+              return <><b style={{ color: C.teal }}>{shown || "—"}</b>{extra > 0 ? ` +${extra}` : ""}</>;
             })()}</span>
             <span style={{ fontSize: 11.5, color: "#8a7c6a", fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{count} vote{count > 1 ? "s" : ""}</span>
           </div>
@@ -3032,14 +3145,22 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, toggleDiscover } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
-  const owners = g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName }] : []);
-  const isOwner = currentUser && owners.some((o) => o.id === currentUser.id);
+  const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
+  const pendingOwners = g.pendingOwners || [];
+  const owners = confirmedOwners;
+  const isOwner = currentUser && confirmedOwners.some((o) => o.id === currentUser.id);
   const canManage = currentUser && (isOwner || currentUser.admin);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
+
+  // Envies de découvrir : qui les a, est-ce que c'est moi ?
+  const wantIds = g.wantIds || [];
+  const wanters = wantIds.map((id) => users.find((u) => u.id === id)).filter(Boolean);
+  const iWant = currentUser && wantIds.includes(currentUser.id);
+  const iCanWant = currentUser && !isOwner && myRating === 0; // ça n'a pas de sens d'avoir envie de découvrir un jeu qu'on possède ou qu'on a déjà noté
 
   // distribution des notes (les demi-notes sont regroupées avec l'entier supérieur : 4,5 → ligne 5)
   const dist = [5, 4, 3, 2, 1].map((n) => ({ n, c: Object.values(g.ratings || {}).filter((v) => Math.ceil(v) === n).length }));
@@ -3142,6 +3263,49 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             {currentUser.admin && owners.length > 0 && (
               <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
             )}
+          </div>
+        )}
+
+        {/* Possessions en attente de confirmation (déclarées par d'autres membres) */}
+        {pendingOwners.length > 0 && (
+          <div style={{ marginTop: 14, padding: "10px 14px", background: "rgba(232,163,23,.08)", borderRadius: 11, border: "1px dashed rgba(232,163,23,.4)" }}>
+            <span style={{ fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5 }}>Possessions à confirmer</span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {pendingOwners.map((o) => (
+                <span key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", borderRadius: 999, padding: "4px 11px", fontSize: 13, color: "#5e5346", border: "1px solid #ece2d0" }}>
+                  <span style={{ width: 18, height: 18, borderRadius: 5, background: "#cdbfa8", color: "#fff", display: "grid", placeItems: "center", fontSize: 10 }}>{o.name[0].toUpperCase()}</span>
+                  <b>{o.name}</b> selon <i>{o.declaredByName}</i>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section : envie de découvrir */}
+      <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+            <Heart size={16} fill={wantIds.length ? C.red : "none"} color={C.red} /> Envie de découvrir ({wantIds.length})
+          </h4>
+          {currentUser && iCanWant && (
+            iWant
+              ? <Btn size="sm" variant="soft" onClick={async () => { await toggleDiscover(g.id); setToast("Envie retirée."); }}><X size={13} /> Je n'ai plus envie</Btn>
+              : <Btn size="sm" variant="amber" onClick={async () => { await toggleDiscover(g.id); setToast("Vous avez envie de découvrir ce jeu !"); }}><Heart size={13} /> J'ai envie de le découvrir</Btn>
+          )}
+        </div>
+        {!currentUser && <p style={{ fontSize: 13, color: "#a89a86", margin: "0 0 8px" }}><a href="#" onClick={(e) => { e.preventDefault(); onAuth("login"); }} style={{ color: C.teal }}>Connectez-vous</a> pour ajouter ce jeu à votre envie de découverte.</p>}
+        {currentUser && isOwner && <p style={{ fontSize: 12.5, color: "#a89a86", margin: "0 0 8px" }}>Vous possédez ce jeu, vous n'avez plus à le découvrir 🙂</p>}
+        {currentUser && !isOwner && myRating > 0 && <p style={{ fontSize: 12.5, color: "#a89a86", margin: "0 0 8px" }}>Vous avez déjà noté ce jeu, vous l'avez donc joué.</p>}
+        {wanters.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#a89a86", margin: 0 }}>Personne n'a encore exprimé l'envie de le découvrir.</p>
+        ) : (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {wanters.map((u) => (
+              <span key={u.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(181,40,58,.08)", color: C.red, borderRadius: 999, padding: "4px 11px", fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <Heart size={11} fill={C.red} color={C.red} /> {u.name}
+              </span>
+            ))}
           </div>
         )}
       </div>
@@ -4515,26 +4679,72 @@ function CustomRankModal({ onClose, onOpenGame }) {
   const [duration, setDuration] = useState("");
   const toggle = (id) => setChosen((c) => c.includes(id) ? c.filter((x) => x !== id) : [...c, id]);
 
-  const ranked = useMemo(() => {
-    if (chosen.length === 0) return [];
-    let list = rankGames(games, chosen, true).filter((g) => g._count > 0);
-    // filtre nombre de joueurs
+  // Le résultat est segmenté en deux : d'abord les jeux qu'au moins un membre
+  // de la tablée veut découvrir (triés par nombre d'envies décroissant), puis
+  // le reste suivant le tri classique (note → moins joués → alpha).
+  const { discoverGames, regularGames } = useMemo(() => {
+    if (chosen.length === 0) return { discoverGames: [], regularGames: [] };
+    const chosenSet = new Set(chosen);
+
+    // Pour les envies : on ne demande pas que le jeu soit noté
+    // (au contraire, ce sont des jeux que les membres veulent découvrir).
+    let discover = games
+      .map((g) => {
+        const wantersInTable = (g.wantIds || []).filter((id) => chosenSet.has(id));
+        return { ...g, _wantCount: wantersInTable.length, _wanters: wantersInTable };
+      })
+      .filter((g) => g._wantCount > 0);
+
+    // Filtre nombre de joueurs sur le groupe "envies"
     if (players) {
       const want = Number(players);
-      list = list.filter((g) => {
+      discover = discover.filter((g) => {
         const min = Number(g.min) || 1;
         const max = g.max ? Number(g.max) : Infinity;
         return players === "7" ? max >= 7 : (want >= min && want <= max);
       });
     }
-    // filtre durée
     if (duration) {
-      list = list.filter((g) => {
+      discover = discover.filter((g) => {
         const t = Number(g.time) || 0;
         return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
       });
     }
-    return list.slice(0, 12);
+    // Tri : nombre d'envies dans la tablée DESC, puis le tri classique
+    discover.sort((a, b) => {
+      if (b._wantCount !== a._wantCount) return b._wantCount - a._wantCount;
+      // critères secondaires : note moyenne (parmi tablée), moins joué, alpha
+      const aVals = Object.entries(a.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
+      const bVals = Object.entries(b.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
+      const aAvg = aVals.length ? aVals.reduce((s, v) => s + v, 0) / aVals.length : 0;
+      const bAvg = bVals.length ? bVals.reduce((s, v) => s + v, 0) / bVals.length : 0;
+      if (bAvg !== aAvg) return bAvg - aAvg;
+      const pa = a.playCount || 0, pb = b.playCount || 0;
+      if (pa !== pb) return pa - pb;
+      return a.name.localeCompare(b.name, "fr");
+    });
+
+    // Classique : jeux notés par au moins un membre, tri actuel (note → moins joué → alpha)
+    let regular = rankGames(games, chosen, true).filter((g) => g._count > 0);
+    if (players) {
+      const want = Number(players);
+      regular = regular.filter((g) => {
+        const min = Number(g.min) || 1;
+        const max = g.max ? Number(g.max) : Infinity;
+        return players === "7" ? max >= 7 : (want >= min && want <= max);
+      });
+    }
+    if (duration) {
+      regular = regular.filter((g) => {
+        const t = Number(g.time) || 0;
+        return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
+      });
+    }
+    // Retirer du "régulier" les jeux déjà présents dans "découvertes" pour éviter les doublons
+    const discoverIds = new Set(discover.map((g) => g.id));
+    regular = regular.filter((g) => !discoverIds.has(g.id));
+
+    return { discoverGames: discover.slice(0, 12), regularGames: regular.slice(0, 12) };
   }, [games, chosen, players, duration]);
 
   return (
@@ -4583,28 +4793,67 @@ function CustomRankModal({ onClose, onOpenGame }) {
 
       {chosen.length === 0 ? (
         <EmptyHint icon={Users} text="Sélectionnez au moins un membre." />
-      ) : ranked.length === 0 ? (
-        <EmptyHint icon={Star} text={players || duration ? "Aucun jeu noté ne correspond à ces filtres." : "Ces membres n'ont pas encore noté de jeux."} />
+      ) : (discoverGames.length === 0 && regularGames.length === 0) ? (
+        <EmptyHint icon={Star} text={players || duration ? "Aucun jeu ne correspond à ces filtres." : "Ces membres n'ont pas encore noté de jeux ni exprimé d'envies."} />
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 2 }}>
-            {chosen.length} membre(s) · {ranked.length} jeu(x) trouvé(s) · <i>à note égale, les jeux les moins joués remontent</i>
-          </div>
-          {ranked.map((g, i) => (
-            <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
-              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
-                <span style={{ fontSize: 12, color: "#9c8d79" }}>
-                  {g._count} vote(s) parmi la sélection · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
-                  {" · "}<span style={{ color: (g.playCount || 0) === 0 ? C.teal : "#9c8d79", fontWeight: (g.playCount || 0) === 0 ? 700 : 400 }}>{(g.playCount || 0) === 0 ? "jamais joué" : `joué ${g.playCount} fois`}</span>
-                </span>
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
-                <Star size={16} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
-              </span>
-            </button>
-          ))}
+        <div style={{ display: "grid", gap: 18 }}>
+          {/* Section 1 : envies de découverte de la tablée */}
+          {discoverGames.length > 0 && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Heart size={16} fill={C.red} color={C.red} />
+                <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Envies de découverte ({discoverGames.length})</h4>
+              </div>
+              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux qu'au moins un membre de la tablée souhaite découvrir — l'occasion parfaite !</p>
+              <div style={{ display: "grid", gap: 8 }}>
+                {discoverGames.map((g, i) => {
+                  const wanterNames = g._wanters.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean).join(", ");
+                  return (
+                    <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(181,40,58,.1)" : "rgba(181,40,58,.04)", border: `1px solid ${i === 0 ? "rgba(181,40,58,.3)" : "rgba(181,40,58,.15)"}`, borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: C.red, width: 26 }}>{i + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
+                        <span style={{ fontSize: 12, color: "#9c8d79" }}>
+                          <b style={{ color: C.red }}>{g._wantCount} envie{g._wantCount > 1 ? "s" : ""}</b> ({wanterNames}) · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
+                        </span>
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.red, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18 }}>
+                        <Heart size={16} fill={C.red} /> {g._wantCount}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Section 2 : classement classique sur les notes */}
+          {regularGames.length > 0 && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Star size={16} fill={C.amber} color={C.amber} />
+                <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Mieux notés par la tablée ({regularGames.length})</h4>
+              </div>
+              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>{chosen.length} membre(s) · à note égale, les jeux les moins joués remontent.</p>
+              <div style={{ display: "grid", gap: 8 }}>
+                {regularGames.map((g, i) => (
+                  <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
+                      <span style={{ fontSize: 12, color: "#9c8d79" }}>
+                        {g._count} vote(s) parmi la sélection · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
+                        {" · "}<span style={{ color: (g.playCount || 0) === 0 ? C.teal : "#9c8d79", fontWeight: (g.playCount || 0) === 0 ? 700 : 400 }}>{(g.playCount || 0) === 0 ? "jamais joué" : `joué ${g.playCount} fois`}</span>
+                      </span>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17 }}>
+                      <Star size={16} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Modal>
@@ -4651,7 +4900,7 @@ function SourceBtn({ icon: Icon, color, title, desc, onClick, badge }) {
 }
 
 function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
-  const { games, upcoming, currentUser, addOwner } = useApp();
+  const { games, upcoming, users, currentUser, addOwner } = useApp();
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -4660,6 +4909,11 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   const [importing, setImporting] = useState(null);
   const [translating, setTranslating] = useState(false);
   const [preview, setPreview] = useState(null);
+  // Procuration : ne s'applique que pour la ludothèque (pas pour les fiches À venir).
+  const [ownership, setOwnership] = useState("self");
+  const [forUserIds, setForUserIds] = useState([]);
+  const toggleForUser = (uid) => setForUserIds((arr) => arr.includes(uid) ? arr.filter((x) => x !== uid) : [...arr, uid]);
+  const otherUsers = useMemo(() => (users || []).filter((u) => u.id !== currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [users, currentUser]);
 
   // jeux déjà présents dans la base au nom proche de la recherche
   // jeux déjà présents dans la base au nom proche de la recherche
@@ -4714,7 +4968,55 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           <Globe size={14} /> Description traduite automatiquement en français
         </div>
         <p style={{ color: "#5e5346", fontSize: 14, lineHeight: 1.6, maxHeight: 160, overflowY: "auto", margin: "0 0 18px", whiteSpace: "pre-line" }}>{preview.desc}</p>
-        <Btn full size="lg" variant="teal" onClick={() => onDone(preview)}><Plus size={18} /> {forUpcoming ? "Ajouter aux jeux à venir" : "Ajouter à ma ludothèque"}</Btn>
+
+        {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
+        {!forUpcoming && (
+          <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Ma ludothèque.">
+            <div style={{ display: "grid", gap: 8 }}>
+              {[
+                { v: "self",  t: "Je le possède" },
+                { v: "other", t: "Un autre membre le possède" },
+                { v: "both",  t: "Plusieurs membres le possèdent (dont moi)" },
+              ].map((opt) => {
+                const active = ownership === opt.v;
+                return (
+                  <button key={opt.v} type="button" onClick={() => setOwnership(opt.v)}
+                    style={{ display: "flex", gap: 12, alignItems: "center", padding: "9px 14px", borderRadius: 11, cursor: "pointer", textAlign: "left", border: `2px solid ${active ? C.teal : "#e6dcc9"}`, background: active ? "rgba(30,138,138,.06)" : "#fff" }}>
+                    <span style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${active ? C.teal : "#c5b69c"}`, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                      {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.teal }} />}
+                    </span>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{opt.t}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {(ownership === "other" || ownership === "both") && (
+              <div style={{ marginTop: 12, padding: "12px 14px", background: "rgba(232,163,23,.08)", borderRadius: 11 }}>
+                <span style={{ display: "block", fontSize: 12.5, color: "#6e6256", marginBottom: 8 }}>Sélectionnez le ou les membres propriétaires :</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {otherUsers.map((u) => {
+                    const active = forUserIds.includes(u.id);
+                    return (
+                      <button key={u.id} type="button" onClick={() => toggleForUser(u.id)}
+                        style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.amber : "#e6dcc9"}`, background: active ? C.amber : "#fff", color: active ? "#fff" : "#8a7c6a" }}>
+                        {active && <Check size={12} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </Field>
+        )}
+
+        <Btn full size="lg" variant="teal" onClick={() => {
+          if (!forUpcoming && ownership === "other" && forUserIds.length === 0) { setErr("Sélectionnez au moins un membre, ou choisissez « Je le possède »."); return; }
+          onDone({
+            ...preview,
+            selfOwns: forUpcoming ? true : (ownership === "self" || ownership === "both"),
+            forUserIds: forUpcoming ? [] : ((ownership === "other" || ownership === "both") ? forUserIds : []),
+          });
+        }}><Plus size={18} /> {forUpcoming ? "Ajouter aux jeux à venir" : "Ajouter à ma ludothèque"}</Btn>
       </div>
     );
   }
@@ -4796,11 +5098,18 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
 const backLinkStyle = { background: "none", border: "none", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, marginBottom: 14, padding: 0, fontSize: 14 };
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
-  const { games, upcoming, currentUser, addOwner } = useApp();
+  const { games, upcoming, users, currentUser, addOwner } = useApp();
   const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
+  // Procuration : "self" = je le possède / "other" = quelqu'un d'autre le possède.
+  // forUserIds = les autres membres pour qui on déclare la possession.
+  const [ownership, setOwnership] = useState("self");
+  const [forUserIds, setForUserIds] = useState([]);
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
+  const toggleForUser = (uid) => setForUserIds((arr) => arr.includes(uid) ? arr.filter((x) => x !== uid) : [...arr, uid]);
+  // Membres sélectionnables (tous sauf moi)
+  const otherUsers = useMemo(() => (users || []).filter((u) => u.id !== currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [users, currentUser]);
 
   // jeux existants au nom proche (qu'on les possède ou non)
   const similar = useMemo(() => {
@@ -4815,7 +5124,15 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
 
   const submit = () => {
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
-    onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "" });
+    if (ownership === "other" && forUserIds.length === 0) {
+      setErr("Sélectionnez au moins un membre qui possède ce jeu, ou choisissez « Je le possède »."); return;
+    }
+    onDone({
+      ...f, name: f.name.trim(),
+      year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "",
+      selfOwns: ownership === "self" || ownership === "both",
+      forUserIds: (ownership === "other" || ownership === "both") ? forUserIds : [],
+    });
   };
   return (
     <div>
@@ -4886,6 +5203,48 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
       </Field>
       <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation & mécaniques"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} placeholder="Décrivez le jeu, son thème, ses mécaniques..." style={{ ...inputStyle, resize: "vertical" }} /></Field>
+
+      {/* Bloc : qui possède ce jeu ? (procuration possible) */}
+      <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Ma ludothèque.">
+        <div style={{ display: "grid", gap: 8 }}>
+          {[
+            { v: "self",  t: "Je le possède",                                d: "Vous êtes inscrit·e comme propriétaire." },
+            { v: "other", t: "Un autre membre le possède",                   d: "La fiche sera créée à son nom, à confirmer par sa part." },
+            { v: "both",  t: "Plusieurs membres le possèdent (dont moi)",    d: "Vous et d'autres membres êtes propriétaires." },
+          ].map((opt) => {
+            const active = ownership === opt.v;
+            return (
+              <button key={opt.v} type="button" onClick={() => setOwnership(opt.v)}
+                style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 14px", borderRadius: 11, cursor: "pointer", textAlign: "left", border: `2px solid ${active ? C.teal : "#e6dcc9"}`, background: active ? "rgba(30,138,138,.06)" : "#fff" }}>
+                <span style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${active ? C.teal : "#c5b69c"}`, marginTop: 1, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                  {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.teal }} />}
+                </span>
+                <span>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{opt.t}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", marginTop: 2 }}>{opt.d}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {(ownership === "other" || ownership === "both") && (
+          <div style={{ marginTop: 12, padding: "12px 14px", background: "rgba(232,163,23,.08)", borderRadius: 11 }}>
+            <span style={{ display: "block", fontSize: 12.5, color: "#6e6256", marginBottom: 8 }}>Sélectionnez le ou les membres propriétaires :</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {otherUsers.map((u) => {
+                const active = forUserIds.includes(u.id);
+                return (
+                  <button key={u.id} type="button" onClick={() => toggleForUser(u.id)}
+                    style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.amber : "#e6dcc9"}`, background: active ? C.amber : "#fff", color: active ? "#fff" : "#8a7c6a" }}>
+                    {active && <Check size={12} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Field>
+
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter le jeu</Btn>
     </div>
@@ -4896,7 +5255,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, setShareLibrary, toggleGameShared } = useApp();
+  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -4906,6 +5265,13 @@ function MyLudoPage({ setToast, setPage }) {
   const [year, setYear] = useState("");
   const [sort, setSort] = useState("alpha");
   const [view, setView] = useState("grid"); // "grid" | "list"
+
+  // Possessions en attente : jeux où je suis listé comme propriétaire mais avec confirmed=false.
+  // J'ai besoin de confirmer ou de refuser ces déclarations.
+  const myPending = useMemo(
+    () => games.filter((g) => (g.pendingOwners || []).some((o) => o.id === currentUser?.id)),
+    [games, currentUser]
+  );
 
   const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
   const myMechanics = useMemo(() => {
@@ -5032,6 +5398,36 @@ function MyLudoPage({ setToast, setPage }) {
         <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" />
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
+
+      {/* Possessions à confirmer (déclarées par d'autres membres) */}
+      {myPending.length > 0 && (
+        <div style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Info size={18} color={C.amber} />
+            <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: 0 }}>
+              {myPending.length === 1 ? "Une possession à confirmer" : `${myPending.length} possessions à confirmer`}
+            </h3>
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {myPending.map((g) => {
+              const pending = (g.pendingOwners || []).find((o) => o.id === currentUser.id);
+              const declarer = pending?.declaredByName || "un membre";
+              return (
+                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#fff", borderRadius: 11, flexWrap: "wrap" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 9, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})` }} />
+                  <span style={{ flex: 1, minWidth: 200, fontSize: 13.5, color: "#5e5346" }}>
+                    <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif" }}>{declarer}</b> a indiqué que vous possédiez <b style={{ color: C.navy }}>{g.name}</b>.
+                  </span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Btn size="sm" variant="teal" onClick={async () => { await confirmOwnership(g.id); setToast(`« ${g.name} » confirmé dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
+                    <Btn size="sm" variant="danger" onClick={async () => { await declineOwnership(g.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Interrupteur global de partage de la ludothèque */}
       <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderRadius: 14, background: currentUser.shareLibrary !== false ? "rgba(30,138,138,.08)" : "rgba(181,40,58,.07)", border: "1px solid #ece2d0", marginBottom: 28, cursor: "pointer" }}>
