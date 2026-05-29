@@ -3140,16 +3140,18 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
           </div>
         </div>
       </button>
-      {/* Badge de partage (uniquement sur mes propres jeux) */}
+      {/* Badge de partage (uniquement sur mes propres jeux) — placé en bas à gauche
+          pour ne pas masquer le badge cœur des envies de découverte (en haut à gauche). */}
       {myGame && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleShare(!isShared); }}
           title={!globalShare ? "Votre ludothèque est privée (réglage global)" : isShared ? "Partagé dans la ludothèque commune — cliquez pour rendre privé" : "Privé — cliquez pour partager"}
           disabled={!globalShare}
           style={{
-            position: "absolute", top: 10, left: 10, border: "none", borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700,
+            position: "absolute", top: 130, left: 10, border: "none", borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700,
             cursor: globalShare ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 5,
             background: !globalShare ? "rgba(120,110,95,.85)" : isShared ? "rgba(30,138,138,.92)" : "rgba(120,110,95,.85)", color: "#fff",
+            boxShadow: "0 2px 8px rgba(0,0,0,.15)",
           }}>
           {!globalShare ? <><EyeOff size={12} /> Privé</> : isShared ? <><Check size={12} /> Partagé</> : <><EyeOff size={12} /> Privé</>}
         </button>
