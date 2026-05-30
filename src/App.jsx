@@ -109,28 +109,68 @@ function extFromMime(mime) {
 }
 
 // Si "image" est une data URL base64, l'uploade vers Storage et renvoie l'URL publique.
-// Si c'est déjà une URL (http... ou Storage), la renvoie telle quelle.
+// Si c'est déjà dans NOTRE bucket Storage, la renvoie telle quelle (rien à faire).
+// Sinon (base64 OU URL externe BGG/autre), on uploade vers Storage.
 // Si vide, renvoie "" (pas d'image).
 // folder : "games" | "extensions" | "upcoming" | "avatars" | "places"
 async function uploadImageToStorage(image, folder = "games") {
   if (!image) return "";
-  // Déjà une URL externe (http, https, ou URL Supabase Storage) → on ne touche pas
-  if (!image.startsWith("data:")) return image;
+  // Déjà dans notre Storage → rien à faire
+  if (image.includes("/storage/v1/object/public/aladj-images/")) return image;
 
+  // On va obtenir un Blob, soit depuis base64, soit en téléchargeant l'URL.
+  let blob = null;
+
+  if (image.startsWith("data:")) {
+    // Cas 1 : data URL base64 → conversion directe en Blob
+    try { blob = dataUrlToBlob(image); }
+    catch (e) { console.error("dataUrlToBlob échec :", e); return image; }
+  } else if (/^https?:\/\//i.test(image)) {
+    // Cas 2 : URL externe (BGG ou autre) → téléchargement via plusieurs voies
+    // (directe, puis proxies CORS en repli), chaque tentative limitée à 8 secondes.
+    const tries = [
+      image,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(image)}`,
+      `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(image)}`,
+    ];
+    for (const u of tries) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        const res = await fetch(u, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+        const b = await res.blob();
+        if (!b.type.startsWith("image/")) continue;
+        if (b.size > 5 * 1024 * 1024) {
+          console.warn(`uploadImageToStorage : image trop lourde (${Math.round(b.size/1024)}Ko), URL externe conservée`);
+          return image; // trop lourd pour Storage → on garde l'URL externe
+        }
+        blob = b; break;
+      } catch (e) { /* on essaie la voie suivante */ }
+    }
+    if (!blob) {
+      // Aucune voie n'a fonctionné → on garde l'URL externe (au moins l'image s'affichera)
+      console.warn("uploadImageToStorage : téléchargement impossible, URL externe conservée");
+      return image;
+    }
+  } else {
+    // Format inconnu, on laisse tel quel
+    return image;
+  }
+
+  // Upload vers Storage avec cache navigateur 7 jours
   try {
-    const blob = dataUrlToBlob(image);
     const ext = extFromMime(blob.type);
-    // Nom unique : timestamp + random pour éviter les collisions
     const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
     const { error } = await supabase.storage.from("aladj-images").upload(filename, blob, {
       contentType: blob.type,
-      cacheControl: "604800", // 7 jours de cache navigateur → réduit drastiquement l'Egress
+      cacheControl: "604800",
     });
     if (error) {
       console.error("Storage upload échec :", error);
-      return image; // repli : on garde le base64 si l'upload plante
+      return image; // repli : on garde la valeur d'origine si l'upload plante
     }
-    // URL publique stable
     const { data } = supabase.storage.from("aladj-images").getPublicUrl(filename);
     return data.publicUrl;
   } catch (e) {
