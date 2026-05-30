@@ -4363,61 +4363,155 @@ function MigrateImagesModal({ onClose, setToast }) {
 
   const addLog = (line) => setLog((prev) => [...prev, line]);
 
-  // Migre une table donnée (jeux, extensions, upcoming, etc.)
-  // - tableName : nom de la table Supabase
-  // - imgCol : nom de la colonne image (image_url ou avatar_url)
-  // - backupCol : nom de la colonne backup
-  // - folder : dossier dans le bucket Storage
-  const migrateTable = async (tableName, imgCol, backupCol, folder, label) => {
-    addLog(`📋 ${label} : analyse en cours…`);
-    // Récupère uniquement les lignes qui ont une image en base64 et pas encore migrées
+  // Détermine si une URL est déjà dans NOTRE bucket Storage Supabase (= déjà migrée).
+  // Le bucket public a une URL stable qui contient "/storage/v1/object/public/aladj-images/"
+  const isAlreadyInStorage = (url) => typeof url === "string" && url.includes("/storage/v1/object/public/aladj-images/");
+
+  // Détermine si une URL est externe (BGG, autre hébergeur)
+  const isExternalUrl = (url) => typeof url === "string" && /^https?:\/\//i.test(url) && !isAlreadyInStorage(url);
+
+  // Détermine si une valeur est une image en base64
+  const isBase64 = (url) => typeof url === "string" && url.startsWith("data:");
+
+  /* -----------------------------------------------------------------
+     PHASE 1 — Migrer les images en base64
+     Avec diagnostic détaillé en cas d'échec (taille, format, erreur exacte).
+     ----------------------------------------------------------------- */
+  const migrateBase64InTable = async (tableName, imgCol, backupCol, folder, label) => {
+    addLog(`📋 ${label} (base64) : analyse en cours…`);
     const { data: rows, error } = await supabase
       .from(tableName)
       .select(`id, ${imgCol}`)
       .like(imgCol, "data:%");
-    if (error) {
-      addLog(`❌ ${label} : ${error.message}`);
-      setStats((s) => ({ ...s, errors: s.errors + 1 }));
-      return;
-    }
-    if (!rows || rows.length === 0) {
-      addLog(`✅ ${label} : rien à migrer (0 image base64 trouvée).`);
-      return;
-    }
-    addLog(`🔄 ${label} : ${rows.length} image(s) à migrer…`);
+    if (error) { addLog(`❌ ${label} : ${error.message}`); return; }
+    if (!rows || rows.length === 0) { addLog(`✅ ${label} : 0 image base64.`); return; }
+    addLog(`🔄 ${label} : ${rows.length} image(s) base64 à migrer…`);
 
-    let migrated = 0;
-    let errors = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
+    let migrated = 0, errors = 0;
+    for (const row of rows) {
       const base64 = row[imgCol];
       setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+      const idShort = row.id.slice(0, 8);
       try {
-        const newUrl = await uploadImageToStorage(base64, folder);
-        if (newUrl === base64) {
-          // upload raté, on garde tel quel
-          addLog(`⚠️ ${label} #${row.id.slice(0, 8)} : upload échoué, ignoré.`);
-          errors++;
-          continue;
+        // Diagnostic : taille
+        const sizeKb = Math.round(base64.length * 0.75 / 1024); // base64 = ~1.33x la taille binaire
+        // Décodage en Blob avec gestion d'erreur
+        let blob;
+        try {
+          blob = dataUrlToBlob(base64);
+        } catch (e) {
+          addLog(`⚠️  ${label} #${idShort} (${sizeKb}Ko) : décodage base64 échoué — ${e.message}`);
+          errors++; continue;
         }
-        // On enregistre la nouvelle URL + le backup de l'ancienne (en cas de souci)
+        // Vérification taille
+        if (blob.size > 5 * 1024 * 1024) {
+          addLog(`⚠️  ${label} #${idShort} (${Math.round(blob.size/1024)}Ko) : trop volumineux (max 5 Mo) — ignoré.`);
+          errors++; continue;
+        }
+        // Upload
+        const ext = extFromMime(blob.type);
+        const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("aladj-images").upload(filename, blob, {
+          contentType: blob.type,
+          cacheControl: "604800",
+        });
+        if (upErr) {
+          addLog(`⚠️  ${label} #${idShort} (${sizeKb}Ko, ${blob.type}) : ${upErr.message}`);
+          errors++; continue;
+        }
+        const { data: pub } = supabase.storage.from("aladj-images").getPublicUrl(filename);
+        const newUrl = pub.publicUrl;
+        // Mise à jour DB avec backup
         const updateFields = { [imgCol]: newUrl, [backupCol]: base64 };
-        const { error: updateErr } = await supabase.from(tableName).update(updateFields).eq("id", row.id);
-        if (updateErr) {
-          addLog(`❌ ${label} #${row.id.slice(0, 8)} : ${updateErr.message}`);
-          errors++;
-          continue;
+        const { error: updErr } = await supabase.from(tableName).update(updateFields).eq("id", row.id);
+        if (updErr) {
+          addLog(`❌ ${label} #${idShort} : ${updErr.message}`);
+          errors++; continue;
         }
         migrated++;
         setStats((s) => ({ ...s, migrated: s.migrated + 1 }));
-        // Petit log tous les 10 pour ne pas inonder
         if (migrated % 10 === 0) addLog(`   … ${migrated} / ${rows.length} migrées`);
       } catch (e) {
-        addLog(`❌ ${label} #${row.id.slice(0, 8)} : ${e.message}`);
+        addLog(`💥 ${label} #${idShort} : ${e.message || e}`);
         errors++;
       }
     }
-    addLog(`✅ ${label} : terminé (${migrated} migrées, ${errors} erreurs).`);
+    addLog(`✅ ${label} (base64) : ${migrated} migrées, ${errors} erreurs.`);
+    if (errors > 0) setStats((s) => ({ ...s, errors: s.errors + errors }));
+  };
+
+  /* -----------------------------------------------------------------
+     PHASE 2 — Rapatrier les URLs externes (BGG et autres)
+     Télécharge l'image via plusieurs proxies si nécessaire, l'uploade
+     dans Storage, et remplace l'URL dans la base.
+     ----------------------------------------------------------------- */
+  const rapatrierExternalInTable = async (tableName, imgCol, backupCol, folder, label) => {
+    addLog(`📋 ${label} (URL externes) : analyse en cours…`);
+    // On récupère tout, puis on filtre côté JS pour exclure le Storage et les vides
+    const { data: rows, error } = await supabase
+      .from(tableName)
+      .select(`id, ${imgCol}`)
+      .like(imgCol, "http%");
+    if (error) { addLog(`❌ ${label} : ${error.message}`); return; }
+    const toFetch = (rows || []).filter((r) => isExternalUrl(r[imgCol]));
+    if (toFetch.length === 0) { addLog(`✅ ${label} : 0 URL externe à rapatrier.`); return; }
+    addLog(`🔄 ${label} : ${toFetch.length} URL(s) externe(s) à rapatrier…`);
+
+    let migrated = 0, errors = 0;
+    for (const row of toFetch) {
+      const url = row[imgCol];
+      setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
+      const idShort = row.id.slice(0, 8);
+      // On essaie plusieurs voies : directe, puis via proxies CORS
+      const tries = [
+        url,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+      ];
+      let blob = null;
+      for (const u of tries) {
+        try {
+          const res = await fetch(u);
+          if (!res.ok) continue;
+          const b = await res.blob();
+          if (!b.type.startsWith("image/")) continue;
+          if (b.size > 5 * 1024 * 1024) {
+            addLog(`⚠️  ${label} #${idShort} : image trop lourde (${Math.round(b.size/1024)}Ko), ignorée.`);
+            blob = "skip"; break;
+          }
+          blob = b; break;
+        } catch (e) { /* on essaie la voie suivante */ }
+      }
+      if (!blob || blob === "skip") {
+        if (blob !== "skip") addLog(`⚠️  ${label} #${idShort} : téléchargement impossible (${url.slice(0, 50)}…)`);
+        errors++; continue;
+      }
+      try {
+        const ext = extFromMime(blob.type);
+        const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("aladj-images").upload(filename, blob, {
+          contentType: blob.type, cacheControl: "604800",
+        });
+        if (upErr) {
+          addLog(`⚠️  ${label} #${idShort} : upload ${upErr.message}`);
+          errors++; continue;
+        }
+        const { data: pub } = supabase.storage.from("aladj-images").getPublicUrl(filename);
+        const updateFields = { [imgCol]: pub.publicUrl, [backupCol]: url };
+        const { error: updErr } = await supabase.from(tableName).update(updateFields).eq("id", row.id);
+        if (updErr) {
+          addLog(`❌ ${label} #${idShort} : ${updErr.message}`);
+          errors++; continue;
+        }
+        migrated++;
+        setStats((s) => ({ ...s, migrated: s.migrated + 1 }));
+        if (migrated % 10 === 0) addLog(`   … ${migrated} / ${toFetch.length} rapatriées`);
+      } catch (e) {
+        addLog(`💥 ${label} #${idShort} : ${e.message || e}`);
+        errors++;
+      }
+    }
+    addLog(`✅ ${label} (URL externes) : ${migrated} rapatriées, ${errors} erreurs.`);
     if (errors > 0) setStats((s) => ({ ...s, errors: s.errors + errors }));
   };
 
@@ -4430,10 +4524,20 @@ function MigrateImagesModal({ onClose, setToast }) {
     addLog("");
 
     try {
-      await migrateTable("games",          "image_url",  "image_url_backup",  "games",      "Jeux");
-      await migrateTable("extensions",     "image_url",  "image_url_backup",  "extensions", "Extensions");
-      await migrateTable("upcoming_games", "image_url",  "image_url_backup",  "upcoming",   "Jeux à venir");
-      await migrateTable("profiles",       "avatar_url", "avatar_url_backup", "avatars",    "Avatars");
+      // PHASE 1 — base64
+      addLog("═══════ PHASE 1 : images en base64 ═══════");
+      await migrateBase64InTable("games",          "image_url",  "image_url_backup",  "games",      "Jeux");
+      await migrateBase64InTable("extensions",     "image_url",  "image_url_backup",  "extensions", "Extensions");
+      await migrateBase64InTable("upcoming_games", "image_url",  "image_url_backup",  "upcoming",   "Jeux à venir");
+      await migrateBase64InTable("profiles",       "avatar_url", "avatar_url_backup", "avatars",    "Avatars");
+      addLog("");
+      // PHASE 2 — URLs externes (BGG, etc.)
+      addLog("═══════ PHASE 2 : URLs externes (BGG, etc.) ═══════");
+      addLog("ℹ️  Téléchargement et rapatriement dans Storage pour bénéficier du cache CDN.");
+      await rapatrierExternalInTable("games",          "image_url",  "image_url_backup",  "games",      "Jeux");
+      await rapatrierExternalInTable("extensions",     "image_url",  "image_url_backup",  "extensions", "Extensions");
+      await rapatrierExternalInTable("upcoming_games", "image_url",  "image_url_backup",  "upcoming",   "Jeux à venir");
+      await rapatrierExternalInTable("profiles",       "avatar_url", "avatar_url_backup", "avatars",    "Avatars");
       addLog("");
       addLog("🎉 Migration terminée ! Rechargement des données…");
       await reload();
@@ -4455,11 +4559,11 @@ function MigrateImagesModal({ onClose, setToast }) {
               <AlertTriangle size={16} color={C.amber} /> À lire avant de lancer
             </h4>
             <ul style={{ fontSize: 13.5, color: "#5e5346", margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-              <li>Cette opération transfère toutes les images stockées en base64 dans la base de données vers le bucket Supabase Storage <code>aladj-images</code>.</li>
-              <li>Les anciennes images base64 sont <b>conservées en backup</b> dans des colonnes dédiées (suppression définitive plus tard).</li>
-              <li>Cela peut prendre plusieurs minutes — <b>ne fermez pas la fenêtre</b> pendant l'opération.</li>
-              <li>L'opération est <b>idempotente</b> : si vous la relancez, seules les images encore en base64 seront migrées.</li>
-              <li>Lancez cette migration une seule fois après avoir bien créé le bucket via le script SQL.</li>
+              <li><b>Phase 1</b> : migration des images stockées en <b>base64</b> dans la base de données.</li>
+              <li><b>Phase 2</b> : rapatriement des images stockées en <b>URLs externes</b> (BGG, etc.) dans Storage pour bénéficier du cache CDN.</li>
+              <li>Les anciennes valeurs sont <b>conservées en backup</b> dans des colonnes dédiées.</li>
+              <li>Cela peut prendre <b>10 à 30 minutes</b> selon le nombre d'images — <b>ne fermez pas la fenêtre</b>.</li>
+              <li>L'opération est <b>idempotente</b> : relancer ne traite que ce qui reste à faire.</li>
             </ul>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
