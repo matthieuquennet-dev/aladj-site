@@ -4462,7 +4462,9 @@ function MigrateImagesModal({ onClose, setToast }) {
       const url = row[imgCol];
       setStats((s) => ({ ...s, scanned: s.scanned + 1 }));
       const idShort = row.id.slice(0, 8);
-      // On essaie plusieurs voies : directe, puis via proxies CORS
+      // On essaie plusieurs voies : directe, puis via proxies CORS.
+      // Chaque tentative est limitée à 8 secondes — si la voie ne répond pas
+      // rapidement, on passe à la suivante au lieu d'attendre 60s+.
       const tries = [
         url,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -4471,7 +4473,10 @@ function MigrateImagesModal({ onClose, setToast }) {
       let blob = null;
       for (const u of tries) {
         try {
-          const res = await fetch(u);
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 8000); // 8s max par tentative
+          const res = await fetch(u, { signal: ctrl.signal });
+          clearTimeout(timer);
           if (!res.ok) continue;
           const b = await res.blob();
           if (!b.type.startsWith("image/")) continue;
@@ -4480,7 +4485,7 @@ function MigrateImagesModal({ onClose, setToast }) {
             blob = "skip"; break;
           }
           blob = b; break;
-        } catch (e) { /* on essaie la voie suivante */ }
+        } catch (e) { /* on essaie la voie suivante (timeout ou erreur réseau) */ }
       }
       if (!blob || blob === "skip") {
         if (blob !== "skip") addLog(`⚠️  ${label} #${idShort} : téléchargement impossible (${url.slice(0, 50)}…)`);
