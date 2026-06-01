@@ -569,13 +569,14 @@ function AppProvider({ children }) {
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
   /* ---- Charger les e-mails des membres (réservé aux admins) ---- */
-  // La vue member_emails ne renvoie des lignes que si le lecteur est admin (filtre SQL).
+  // On appelle la fonction get_member_emails() (security definer) : elle ne renvoie
+  // des données que si l'appelant est admin (garde-fou interne côté base).
   useEffect(() => {
     let cancelled = false;
     if (currentUser && currentUser.admin) {
-      supabase.from("member_emails").select("id,email")
-        .then(({ data }) => {
-          if (cancelled || !data) return;
+      supabase.rpc("get_member_emails")
+        .then(({ data, error }) => {
+          if (cancelled || error || !data) return;
           const map = {};
           data.forEach((r) => { map[r.id] = r.email; });
           setMemberEmails(map);
@@ -1780,6 +1781,7 @@ function AuthModal({ mode, onClose, setToast }) {
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
+  const [welcome, setWelcome] = useState(null); // { name } → affiche l'écran de bienvenue + consigne de présentation
   useEffect(() => setTab(mode), [mode]);
 
   const submit = async () => {
@@ -1795,13 +1797,51 @@ function AuthModal({ mode, onClose, setToast }) {
     setBusy(false);
     if (res.error) { setErr(res.error); return; }
     if (res.needsConfirm) {
-      setInfo("Compte créé ! Vérifiez votre boîte mail pour confirmer votre adresse, puis connectez-vous.");
-      setTab("login");
+      // Confirmation e-mail requise : on affiche l'écran de bienvenue avec la consigne de présentation,
+      // en précisant aussi qu'il faut confirmer son adresse.
+      setWelcome({ name: res.user.name, needsConfirm: true });
+      return;
+    }
+    if (tab === "register") {
+      // Inscription réussie et connecté directement → écran de bienvenue avec consigne de présentation.
+      setWelcome({ name: res.user.name, needsConfirm: false });
       return;
     }
     onClose();
-    setToast(tab === "login" ? `Bienvenue ${res.user.name} !` : `Compte créé — bienvenue ${res.user.name} !`);
+    setToast(`Bienvenue ${res.user.name} !`);
   };
+
+  // Écran de bienvenue après inscription : rappelle de se présenter à l'association.
+  if (welcome) {
+    return (
+      <Modal open onClose={onClose} title="Bienvenue à l'ALADJ !" width={480}>
+        <div style={{ textAlign: "center", padding: "6px 4px" }}>
+          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}>
+            <Sparkles size={28} color={C.teal} />
+          </div>
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 20, margin: "0 0 6px" }}>
+            Compte créé — bienvenue {welcome.name} !
+          </h3>
+          {welcome.needsConfirm && (
+            <p style={{ fontSize: 14, color: "#b5283a", fontWeight: 600, margin: "0 0 14px", lineHeight: 1.5 }}>
+              Pensez d'abord à confirmer votre adresse via le mail que nous venons de vous envoyer, puis connectez-vous.
+            </p>
+          )}
+          <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 14, padding: "16px 18px", margin: "0 0 20px", textAlign: "left" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <Info size={18} color={C.amber} style={{ flexShrink: 0, marginTop: 2 }} />
+              <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: 0 }}>
+                <b>N'oubliez pas de vous présenter&nbsp;!</b> Faites-vous connaître auprès de l'association, soit par e-mail à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 600 }}>aladj50200@gmail.com</a>, soit dans la conversation Signal «&nbsp;Organisation jeux&nbsp;». Cela nous permet de faire connaissance et de vous accueillir comme il se doit.
+              </p>
+            </div>
+          </div>
+          <Btn full variant="teal" size="lg" onClick={() => { onClose(); setToast(`Bienvenue ${welcome.name} !`); }}>
+            <Check size={17} /> J'ai compris
+          </Btn>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open onClose={onClose} title={tab === "login" ? "Connexion" : "Rejoindre l'association"} width={480}>
