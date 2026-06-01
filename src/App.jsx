@@ -381,6 +381,8 @@ function AppProvider({ children }) {
   const [ready, setReady] = useState(false);
   const [authUser, setAuthUser] = useState(null);     // utilisateur Supabase Auth
   const [currentUser, setCurrentUser] = useState(null); // profil (avec name, role)
+  const [bannedNotice, setBannedNotice] = useState(false); // affiché si un membre banni tente de se connecter
+  const [memberEmails, setMemberEmails] = useState({}); // { userId: email } — chargé uniquement si admin
   const [users, setUsers] = useState([]);
   const [games, setGames] = useState([]);
   const [events, setEvents] = useState([]);
@@ -401,7 +403,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
         supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at"),
         supabase.from("ratings").select("*"),
         supabase.from("events").select("*"),
@@ -464,7 +466,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -555,9 +557,34 @@ function AppProvider({ children }) {
       }).select().single();
       data = created;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [] });
+    // Membre banni : on bloque l'accès et on le déconnecte immédiatement.
+    if (data && data.banned) {
+      setBannedNotice(true);
+      await supabase.auth.signOut();
+      setCurrentUser(null);
+      return;
+    }
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [] });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
+
+  /* ---- Charger les e-mails des membres (réservé aux admins) ---- */
+  // La vue member_emails ne renvoie des lignes que si le lecteur est admin (filtre SQL).
+  useEffect(() => {
+    let cancelled = false;
+    if (currentUser && currentUser.admin) {
+      supabase.from("member_emails").select("id,email")
+        .then(({ data }) => {
+          if (cancelled || !data) return;
+          const map = {};
+          data.forEach((r) => { map[r.id] = r.email; });
+          setMemberEmails(map);
+        });
+    } else {
+      setMemberEmails({});
+    }
+    return () => { cancelled = true; };
+  }, [currentUser]);
 
   /* ---- Abonnement temps réel : recharge quand la base change ---- */
   useEffect(() => {
@@ -597,6 +624,26 @@ function AppProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => { await supabase.auth.signOut(); setCurrentUser(null); }, []);
+
+  /* ---- Modération admin : bannir / débannir un membre ---- */
+  // Bannissement logique : le membre ne pourra plus se connecter, mais ses jeux
+  // et ses notes restent en base (pas de dégât sur la ludothèque commune).
+  const banUser = useCallback(async (userId) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    if (userId === currentUser.id) return { error: "Vous ne pouvez pas vous bannir vous-même." };
+    const { error } = await supabase.from("profiles").update({ banned: true }).eq("id", userId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  const unbanUser = useCallback(async (userId) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    const { error } = await supabase.from("profiles").update({ banned: false }).eq("id", userId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
 
   /* ---- Jeux ---- */
   const addGame = useCallback(async (d) => {
@@ -1126,6 +1173,7 @@ function AppProvider({ children }) {
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
+    banUser, unbanUser, memberEmails, bannedNotice, setBannedNotice,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
@@ -2111,9 +2159,12 @@ function HomePage({ setPage, onAuth }) {
         <div style={{ background: `linear-gradient(135deg, ${C.teal}, ${C.navy})`, borderRadius: 22, padding: "32px 28px", color: "#fff", textAlign: "center", boxShadow: "0 8px 24px rgba(18,41,63,.12)" }}>
           <Mail size={32} style={{ marginBottom: 12, opacity: .9 }} />
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "0 0 8px" }}>Une question ? Envie de nous rejoindre ?</h2>
-          <p style={{ fontSize: 15, opacity: .9, margin: "0 0 22px", lineHeight: 1.55, maxWidth: 540, marginLeft: "auto", marginRight: "auto" }}>
+          <p style={{ fontSize: 15, opacity: .9, margin: "0 0 18px", lineHeight: 1.55, maxWidth: 540, marginLeft: "auto", marginRight: "auto" }}>
             Écrivez-nous directement, on vous répond avec plaisir.
           </p>
+          <div style={{ background: "rgba(255,255,255,.14)", borderRadius: 14, padding: "14px 20px", margin: "0 auto 22px", maxWidth: 560, fontSize: 14.5, lineHeight: 1.6 }}>
+            <b>Nouveau membre&nbsp;?</b> Pensez à vous présenter auprès de l'association, soit dans la conversation Signal «&nbsp;Organisation jeux&nbsp;», soit par e-mail. Cela nous permet de faire connaissance et de vous accueillir comme il se doit&nbsp;!
+          </div>
           <a href="mailto:aladj50200@gmail.com" style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "#fff", color: C.navy, padding: "13px 26px", borderRadius: 13, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, boxShadow: "0 4px 14px rgba(0,0,0,.15)" }}>
             <Mail size={18} /> aladj50200@gmail.com
           </a>
@@ -2128,37 +2179,81 @@ function HomePage({ setPage, onAuth }) {
 
 /* ---- Pop-up : liste des membres, couleur selon statut ---- */
 function MembersModal({ onClose, onPickMember }) {
-  const { users } = useApp();
-  const sorted = [...users].sort((a, b) => a.name.localeCompare(b.name));
+  const { users, currentUser, memberEmails, banUser, unbanUser } = useApp();
+  const isAdmin = currentUser && currentUser.admin;
+  const [busyId, setBusyId] = useState(null);
+  const [confirmBan, setConfirmBan] = useState(null); // id du membre en attente de confirmation de bannissement
+  // Tri : les bannis en bas, puis alphabétique
+  const sorted = [...users].sort((a, b) => {
+    if (a.banned !== b.banned) return a.banned ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const doBan = async (id) => {
+    setBusyId(id);
+    await banUser(id);
+    setBusyId(null); setConfirmBan(null);
+  };
+  const doUnban = async (id) => {
+    setBusyId(id);
+    await unbanUser(id);
+    setBusyId(null);
+  };
+
   return (
-    <Modal open onClose={onClose} title={`Les membres de l'association (${users.length})`} width={460}>
-      <div style={{ display: "flex", gap: 14, marginBottom: 16, fontSize: 12.5, color: "#8a7c6a" }}>
+    <Modal open onClose={onClose} title={`Les membres de l'association (${users.length})`} width={isAdmin ? 540 : 460}>
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, fontSize: 12.5, color: "#8a7c6a", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.amber }} /> Décisionnaire</span>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.teal }} /> Non décisionnaire</span>
+        {isAdmin && <span style={{ display: "flex", alignItems: "center", gap: 6, color: C.purple, fontWeight: 700 }}><ShieldCheck size={13} /> Vue administrateur</span>}
       </div>
       <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
         {sorted.map((m) => {
           const color = m.role === "decideur" ? C.amber : C.teal;
+          const email = memberEmails[m.id];
+          const isMe = currentUser && m.id === currentUser.id;
           return (
-            <button key={m.id} onClick={() => onPickMember(m.id)} style={{
-              display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 13, border: "1px solid #efe6d6",
-              background: "#fff", cursor: "pointer", textAlign: "left", transition: "background .15s",
-            }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0,0,0,.02)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
-              <span style={{ width: 38, height: 38, borderRadius: 11, overflow: "hidden", background: color, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
-                {m.avatar
-                  ? <img src={m.avatar} alt={m.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : m.name[0].toUpperCase()}
-              </span>
-              <span style={{ flex: 1 }}>
-                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>{m.name}</span>
-                <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}</span>
-              </span>
-              <ChevronRight size={18} color="#c9bba6" />
-            </button>
+            <div key={m.id} style={{
+              display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 13,
+              border: m.banned ? `1px solid ${C.red}` : "1px solid #efe6d6",
+              background: m.banned ? "rgba(181,40,58,.05)" : "#fff", opacity: m.banned ? 0.85 : 1,
+            }}>
+              <button onClick={() => onPickMember(m.id)} title="Voir sa ludothèque" style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}>
+                <span style={{ width: 38, height: 38, borderRadius: 11, overflow: "hidden", background: color, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+                  {m.avatar
+                    ? <img src={m.avatar} alt={m.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : m.name[0].toUpperCase()}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>
+                    {m.name}
+                    {m.admin && <ShieldCheck size={13} color={C.purple} />}
+                    {m.banned && <span style={{ fontSize: 10.5, background: C.red, color: "#fff", borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>BANNI</span>}
+                  </span>
+                  <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}</span>
+                  {isAdmin && email && <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79", marginTop: 1 }}>{email}</span>}
+                </span>
+              </button>
+              {isAdmin && !isMe && (
+                m.banned ? (
+                  <Btn size="sm" variant="teal" onClick={() => doUnban(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : <>Débannir</>}</Btn>
+                ) : confirmBan === m.id ? (
+                  <span style={{ display: "flex", gap: 5 }}>
+                    <Btn size="sm" variant="danger" onClick={() => doBan(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : "Confirmer"}</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setConfirmBan(null)}>Non</Btn>
+                  </span>
+                ) : (
+                  <Btn size="sm" variant="soft" onClick={() => setConfirmBan(m.id)} title="Bannir ce membre"><Lock size={13} /></Btn>
+                )
+              )}
+              {!isAdmin && <ChevronRight size={18} color="#c9bba6" />}
+            </div>
           );
         })}
       </div>
-      <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>Cliquez sur un membre pour voir sa ludothèque.</p>
+      <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>
+        {isAdmin ? "Cliquez sur un membre pour voir sa ludothèque. Le bannissement bloque l'accès au site sans supprimer ses jeux." : "Cliquez sur un membre pour voir sa ludothèque."}
+      </p>
     </Modal>
   );
 }
@@ -4682,9 +4777,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     return list;
   }, [communGames, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
-  // Top 20 : un jeu doit avoir au moins 3 votes pour entrer dans le classement
-  // (évite qu'un ou deux avis très élevés propulsent un jeu en tête).
-  const top = useMemo(() => rankGames(communGames).filter((g) => g._count >= 3).slice(0, 20), [communGames]);
+  // Top 20 : un jeu doit avoir au moins 4 votes pour entrer dans le classement
+  // (évite que quelques avis isolés propulsent un jeu en tête).
+  const top = useMemo(() => rankGames(communGames).filter((g) => g._count >= 4).slice(0, 20), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
   return (
@@ -4817,7 +4912,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <Trophy size={20} color={C.amber} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
-            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 3 votes. Notez des jeux pour faire vivre le classement !</p>}
+            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
             <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
@@ -5917,7 +6012,7 @@ function ConfigScreen() {
    ROOT
    ============================================================================= */
 function Shell() {
-  const { ready, fatalError, currentUser } = useApp();
+  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice } = useApp();
   const [page, setPage] = useState("accueil");
   const [auth, setAuth] = useState(null);
   const [toast, setToast] = useState("");
@@ -5956,6 +6051,19 @@ function Shell() {
       </main>
       <Footer setPage={setPage} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} setToast={setToast} />}
+      {bannedNotice && (
+        <Modal open onClose={() => setBannedNotice(false)} title="Accès suspendu" width={440}>
+          <div style={{ textAlign: "center", padding: "8px 4px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(181,40,58,.1)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}>
+              <Lock size={26} color={C.red} />
+            </div>
+            <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.6, margin: "0 0 18px" }}>
+              Votre accès au site a été suspendu. Si vous pensez qu'il s'agit d'une erreur, contactez l'association à l'adresse <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 600 }}>aladj50200@gmail.com</a>.
+            </p>
+            <Btn variant="soft" onClick={() => setBannedNotice(false)}>Fermer</Btn>
+          </div>
+        </Modal>
+      )}
       <Toast msg={toast} onDone={() => setToast("")} />
     </div>
   );
