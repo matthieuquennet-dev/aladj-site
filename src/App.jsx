@@ -402,7 +402,7 @@ function AppProvider({ children }) {
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
-        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,source,owner_id,new_price,shared,created_at"),
+        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at"),
         supabase.from("ratings").select("*"),
         supabase.from("events").select("*"),
         supabase.from("event_players").select("*"),
@@ -2174,6 +2174,12 @@ function MemberLibraryModal({ memberId, onClose }) {
     return a.name.localeCompare(b.name, "fr");
   });
   const initial = member ? member.name[0].toUpperCase() : "?";
+  // Nombre d'extensions que ce membre possède
+  const theirExtCount = (() => {
+    let n = 0;
+    games.forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).includes(memberId)) n++; }));
+    return n;
+  })();
   return (
     <Modal open onClose={onClose} title={member ? member.name : "Membre"} width={640}>
       {member && (
@@ -2214,7 +2220,7 @@ function MemberLibraryModal({ memberId, onClose }) {
       )}
 
       <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
-        Sa ludothèque ({theirGames.length}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· classée par ses notes</span>
+        Sa ludothèque ({theirGames.length}{theirExtCount > 0 ? ` + ${theirExtCount} ${theirExtCount > 1 ? "extensions" : "extension"}` : ""}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· classée par ses notes</span>
       </h4>
       {theirGames.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
@@ -3184,7 +3190,7 @@ function GameCover({ g, size = "md" }) {
   );
 }
 
-function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
+function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth }) {
   const { currentUser } = useApp();
   const { avg, count } = gameStats(g);
   const isShared = g.shared !== false;
@@ -3204,6 +3210,10 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
     badgeContent = <><Star size={13} fill={C.amber} color={C.amber} /> {count ? avg.toFixed(2).replace(".", ",") : "—"}</>;
   }
 
+  // Mode "deux notes" : on affiche la moyenne (ambre) en haut à droite,
+  // et juste en dessous la note personnelle (turquoise) si l'utilisateur est connecté.
+  const bothNotes = showBoth && currentUser;
+
   return (
     <div style={{ position: "relative" }}>
       <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
@@ -3217,10 +3227,22 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare }) {
               <Heart size={13} fill="#fff" color="#fff" /> {g.wantIds.length}
             </div>
           )}
-          <div title={myGame ? (iVoted ? "Votre note" : "Vous n'avez pas encore noté ce jeu") : (iVoted ? "Moyenne — vous avez voté" : "Moyenne — vous n'avez pas encore voté")}
-            style={{ position: "absolute", top: 10, right: 10, background: badgeBg, color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
-            {badgeContent}
-          </div>
+          {bothNotes ? (
+            // Deux badges empilés : moyenne (ambre) puis ma note (turquoise)
+            <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
+              <div title="Note moyenne de l'association" style={{ background: "rgba(232,163,23,.95)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+                <Star size={13} fill="#fff" color="#fff" /> {count ? avg.toFixed(2).replace(".", ",") : "—"}
+              </div>
+              <div title={iVoted ? "Votre note" : "Vous n'avez pas encore noté ce jeu"} style={{ background: iVoted ? "rgba(30,138,138,.95)" : "rgba(18,41,63,.6)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 4 }}>
+                {iVoted ? <><Heart size={11} fill="#fff" color="#fff" /> {String(myRating).replace(".", ",")}</> : <span style={{ fontSize: 11 }}>non noté</span>}
+              </div>
+            </div>
+          ) : (
+            <div title={myGame ? (iVoted ? "Votre note" : "Vous n'avez pas encore noté ce jeu") : (iVoted ? "Moyenne — vous avez voté" : "Moyenne — vous n'avez pas encore voté")}
+              style={{ position: "absolute", top: 10, right: 10, background: badgeBg, color: "#fff", borderRadius: 999, padding: "4px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+              {badgeContent}
+            </div>
+          )}
         </div>
         <div style={{ padding: 16 }}>
           <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 4px", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</h3>
@@ -3278,6 +3300,19 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const canManage = currentUser && (isOwner || currentUser.admin);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
+
+  // La description n'est pas chargée dans le listing (pour alléger l'Egress) :
+  // on la récupère à la demande, uniquement quand la fiche est ouverte.
+  const [desc, setDesc] = useState(g.desc || "");
+  useEffect(() => {
+    let cancelled = false;
+    // Si la description n'est pas déjà connue, on la charge pour ce seul jeu.
+    if (!g.desc && g.id) {
+      supabase.from("games").select("description").eq("id", g.id).single()
+        .then(({ data }) => { if (!cancelled && data) setDesc(data.description || ""); });
+    }
+    return () => { cancelled = true; };
+  }, [g.id, g.desc]);
 
   // Envies de découvrir : qui les a, est-ce que c'est moi ?
   const wantIds = g.wantIds || [];
@@ -3339,7 +3374,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {/* présentation */}
       <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 8px" }}><BookOpen size={16} style={{ verticalAlign: "-2px" }} /> Présentation</h4>
-      <p style={{ color: "#5e5346", fontSize: 14.5, lineHeight: 1.6, margin: "0 0 18px", whiteSpace: "pre-line" }}>{g.desc || "Pas encore de description pour ce jeu."}</p>
+      <p style={{ color: "#5e5346", fontSize: 14.5, lineHeight: 1.6, margin: "0 0 18px", whiteSpace: "pre-line" }}>{desc || "Pas encore de description pour ce jeu."}</p>
 
       {(g.mechanics || []).length > 0 && (
         <>
@@ -3441,7 +3476,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       {/* commentaires sur le jeu */}
       <GameComments g={g} onAuth={onAuth} onClose={onClose} />
 
-      {editing && <EditGameModal g={g} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
+      {editing && <EditGameModal g={{ ...g, desc }} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
     </Modal>
   );
@@ -3726,7 +3761,6 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
             </>
           )}
         </div>
-      )}
       )}
 
       {!currentUser && exts.length === 0 && <span style={{ fontSize: 13, color: "#a89a86" }}> Connectez-vous pour ajouter une extension.</span>}
@@ -4807,6 +4841,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [duration, setDuration] = useState("");
   const [year, setYear] = useState("");
   const [wantFilter, setWantFilter] = useState(""); // "" | "mine" | "any" | "none"
+  const [showBoth, setShowBoth] = useState(false); // afficher moyenne + ma note simultanément sur les cartes
   const [sort, setSort] = useState("note");
   const [view, setView] = useState("grid"); // "grid" | "list"
   const [selected, setSelected] = useState(null);
@@ -4965,6 +5000,12 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
               {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
             </button>
+            {currentUser && view === "grid" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, padding: "0 4px" }} title="Afficher la note moyenne et votre note en même temps">
+                <input type="checkbox" checked={showBoth} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: "pointer" }} />
+                Voir les 2 notes
+              </label>
+            )}
           </div>
 
           {filtered.length === 0 ? (
@@ -4997,7 +5038,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {filtered.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} />)}
+              {filtered.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth} />)}
             </div>
           )}
         </div>
@@ -5704,6 +5745,7 @@ function MyLudoPage({ setToast, setPage }) {
   const [wantFilter, setWantFilter] = useState("");
   const [sort, setSort] = useState("alpha");
   const [view, setView] = useState("grid"); // "grid" | "list"
+  const [showBoth, setShowBoth] = useState(false); // afficher moyenne + ma note simultanément sur les cartes
   const [showMigrate, setShowMigrate] = useState(false); // outil admin : migration images vers Storage
 
   // Possessions en attente : jeux où je suis listé comme propriétaire mais avec confirmed=false.
@@ -5714,6 +5756,12 @@ function MyLudoPage({ setToast, setPage }) {
   );
 
   const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
+  // Nombre d'extensions que le membre possède (à travers tous les jeux de l'association)
+  const myExtCount = useMemo(() => {
+    let n = 0;
+    games.forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).includes(currentUser?.id)) n++; }));
+    return n;
+  }, [games, currentUser]);
   const myMechanics = useMemo(() => {
     const s = new Set();
     allMine.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
@@ -5782,6 +5830,17 @@ function MyLudoPage({ setToast, setPage }) {
     const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
 
+    // Les descriptions ne sont pas chargées dans le listing (allègement Egress).
+    // On les récupère ici, uniquement pour mes jeux, juste avant l'export.
+    const descById = {};
+    try {
+      const ids = allMine.map((g) => g.id);
+      if (ids.length > 0) {
+        const { data: descRows } = await supabase.from("games").select("id,description").in("id", ids);
+        (descRows || []).forEach((r) => { descById[r.id] = r.description || ""; });
+      }
+    } catch (e) { /* en cas d'échec, on exporte sans les descriptions */ }
+
     // Feuille 1 : ma ludothèque détaillée
     const rows = allMine.map((g) => {
       const { avg, count } = gameStats(g);
@@ -5796,7 +5855,7 @@ function MyLudoPage({ setToast, setPage }) {
         "Nombre de votes": count,
         "Ma note": g.ratings?.[currentUser.id] || "",
         "Source": g.source || "manuel",
-        "Présentation": (g.desc || "").replace(/\n/g, " "),
+        "Présentation": (descById[g.id] || g.desc || "").replace(/\n/g, " "),
         "Image": g.img || "",
         "Ajouté le": g.addedAt ? new Date(g.addedAt).toLocaleDateString("fr-FR") : "",
       };
@@ -5848,6 +5907,7 @@ function MyLudoPage({ setToast, setPage }) {
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
         <StatCard icon={Library} color={C.teal} n={mine.length} label="jeux apportés" />
+        <StatCard icon={Package} color={C.red} n={myExtCount} label={myExtCount > 1 ? "extensions" : "extension"} />
         <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" />
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
@@ -5970,6 +6030,12 @@ function MyLudoPage({ setToast, setPage }) {
               style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
               {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
             </button>
+            {view === "grid" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, padding: "0 4px" }} title="Afficher la note moyenne et votre note en même temps">
+                <input type="checkbox" checked={showBoth} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: "pointer" }} />
+                Voir les 2 notes
+              </label>
+            )}
           </div>
 
           {mine.length === 0 ? (
@@ -6001,7 +6067,7 @@ function MyLudoPage({ setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} />)}
+              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} showBoth={showBoth} />)}
             </div>
           )}
         </>
