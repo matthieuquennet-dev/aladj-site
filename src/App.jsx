@@ -401,8 +401,8 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }] = await Promise.all([
-        supabase.from("profiles").select("*").order("name"),
-        supabase.from("games").select("*"),
+        supabase.from("profiles").select("id,name,role,is_admin,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
+        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,source,owner_id,new_price,shared,created_at"),
         supabase.from("ratings").select("*"),
         supabase.from("events").select("*"),
         supabase.from("event_players").select("*"),
@@ -411,12 +411,12 @@ function AppProvider({ children }) {
         supabase.from("game_comments").select("*").order("created_at"),
         supabase.from("places").select("*").order("name"),
         supabase.from("game_owners").select("*"),
-        supabase.from("extensions").select("*").order("name"),
+        supabase.from("extensions").select("id,game_id,name,image_url,created_by").order("name"),
         supabase.from("extension_owners").select("*"),
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
         supabase.from("game_weights").select("*"),
         supabase.from("event_games").select("*"),
-        supabase.from("upcoming_games").select("*").order("name"),
+        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id").order("name"),
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
         supabase.from("upcoming_comments").select("*").order("created_at"),
