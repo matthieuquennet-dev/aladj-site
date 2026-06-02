@@ -1237,12 +1237,40 @@ function recommendGames(games, currentUserId) {
     if (n > 0) similarity[uid] = 1 - (sum / n) / 5;
   });
 
-  // --- (b) Mécaniques que j'apprécie (présentes dans mes jeux bien notés ≥ 4)
+  // --- (b) Mécaniques que j'apprécie (jeux notés ≥ 4) ET que je n'aime pas (jeux notés ≤ 2)
   const likedMech = {};
+  const dislikedMech = {};
   games.forEach((g) => {
-    if ((myRatings[g.id] || 0) >= 4) (g.mechanics || []).forEach((m) => { likedMech[m] = (likedMech[m] || 0) + 1; });
+    const r = myRatings[g.id] || 0;
+    if (r >= 4) (g.mechanics || []).forEach((m) => { likedMech[m] = (likedMech[m] || 0) + 1; });
+    else if (r > 0 && r <= 2) (g.mechanics || []).forEach((m) => { dislikedMech[m] = (dislikedMech[m] || 0) + 1; });
   });
   const maxMech = Math.max(1, ...Object.values(likedMech));
+
+  // --- (c) Format préféré : nombre de joueurs et durée de mes jeux bien notés (≥ 4)
+  //     On calcule une fourchette "habituelle" pour donner un petit bonus aux jeux similaires.
+  const likedPlayers = [];
+  const likedTimes = [];
+  games.forEach((g) => {
+    if ((myRatings[g.id] || 0) >= 4) {
+      const mid = g.min && g.max ? (Number(g.min) + Number(g.max)) / 2 : (Number(g.min) || Number(g.max) || 0);
+      if (mid > 0) likedPlayers.push(mid);
+      if (Number(g.time) > 0) likedTimes.push(Number(g.time));
+    }
+  });
+  const avg = (arr) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+  const prefPlayers = avg(likedPlayers); // 0 si pas de signal
+  const prefTime = avg(likedTimes);
+
+  // --- (d) Envies de découvrir des membres proches (signal social)
+  //     Pour chaque jeu, on regarde si des membres qui me ressemblent veulent le découvrir.
+  const discoverPeerScore = (g) => {
+    const wanters = g.wantIds || [];
+    if (wanters.length === 0) return 0;
+    let s = 0;
+    wanters.forEach((uid) => { if (uid !== currentUserId) s += (similarity[uid] || 0.3); });
+    return Math.min(1, s / 3); // plafonné : 3 membres proches qui le veulent = score max
+  };
 
   // --- Score de chaque jeu candidat (non noté par moi)
   const candidates = games.filter((g) => !ratedIds.has(g.id));
@@ -1255,20 +1283,73 @@ function recommendGames(games, currentUserId) {
       if (sim != null && sim > 0) { wSum += sim * val; wTot += sim; }
     });
     const peerScore = wTot > 0 ? (wSum / wTot) / 5 : 0; // 0..1
-    // composante "mécaniques aimées"
+
+    // composante "mécaniques aimées" moins "mécaniques détestées"
     const mechHits = (g.mechanics || []).reduce((s, m) => s + (likedMech[m] || 0), 0);
-    const mechScore = Math.min(1, mechHits / (maxMech * 2)); // 0..1
-    // dominante profils (0.7) + appoint mécaniques (0.3) ; petit bonus si bien noté globalement
+    const mechMiss = (g.mechanics || []).reduce((s, m) => s + (dislikedMech[m] || 0), 0);
+    const mechScore = Math.max(0, Math.min(1, (mechHits - mechMiss * 0.7) / (maxMech * 2))); // 0..1, pénalisé
+
+    // score de base : dominante profils (0.7) + appoint mécaniques (0.3)
     const globalAvg = gameStats(g).avg / 5;
-    const score = wTot > 0 ? (0.7 * peerScore + 0.3 * mechScore) : (0.5 * mechScore + 0.3 * globalAvg);
-    return { game: g, score, hasSignal: wTot > 0 || mechHits > 0 };
+    let base = wTot > 0 ? (0.7 * peerScore + 0.3 * mechScore) : (0.5 * mechScore + 0.3 * globalAvg);
+
+    // bonus additif "format préféré" (15% max) : proximité du nb de joueurs et de la durée
+    let formatBonus = 0;
+    if (prefPlayers > 0 && (g.min || g.max)) {
+      const mid = g.min && g.max ? (Number(g.min) + Number(g.max)) / 2 : (Number(g.min) || Number(g.max));
+      const diff = Math.abs(mid - prefPlayers);
+      formatBonus += 0.075 * Math.max(0, 1 - diff / 4); // 4 joueurs d'écart = bonus nul
+    }
+    if (prefTime > 0 && Number(g.time) > 0) {
+      const diff = Math.abs(Number(g.time) - prefTime);
+      formatBonus += 0.075 * Math.max(0, 1 - diff / 90); // 90 min d'écart = bonus nul
+    }
+
+    // bonus social "envie de découvrir des pairs"
+    const discoverBonus = 0.1 * discoverPeerScore(g);
+
+    const score = base + formatBonus + discoverBonus;
+
+    // raison principale affichée à l'utilisateur (explication de la reco)
+    let reason = "";
+    if (wTot > 0 && peerScore >= mechScore) reason = "Apprécié par des membres proches de vous";
+    else if (mechHits > 0) {
+      const topMech = (g.mechanics || []).filter((m) => likedMech[m]).sort((a, b) => (likedMech[b] || 0) - (likedMech[a] || 0))[0];
+      reason = topMech ? `Vous aimez les jeux « ${topMech} »` : "Correspond à vos goûts";
+    } else if (discoverPeerScore(g) > 0) reason = "Des membres proches veulent le découvrir";
+    else reason = "Bien noté par l'association";
+
+    return { game: g, score, reason, mechanics: g.mechanics || [], hasSignal: wTot > 0 || mechHits > 0 || discoverPeerScore(g) > 0 };
   });
 
-  return scored
-    .filter((s) => s.hasSignal && s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10)
-    .map((s) => s.game);
+  // on ne garde que les jeux avec un vrai signal et un score positif
+  const pool = scored.filter((s) => s.hasSignal && s.score > 0).sort((a, b) => b.score - a.score);
+
+  // --- Diversité douce (MMR à 15%) : on construit la liste un jeu à la fois,
+  //     en pénalisant légèrement les jeux trop semblables (mêmes mécaniques) à ceux déjà choisis.
+  const DIVERSITY = 0.15;
+  const selected = [];
+  const remaining = [...pool];
+  while (selected.length < 10 && remaining.length > 0) {
+    let bestIdx = 0, bestVal = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const cand = remaining[i];
+      // similarité max avec un jeu déjà sélectionné = proportion de mécaniques partagées
+      let maxSim = 0;
+      selected.forEach((sel) => {
+        const setA = new Set(cand.mechanics);
+        const shared = sel.mechanics.filter((m) => setA.has(m)).length;
+        const denom = Math.max(1, Math.min(cand.mechanics.length, sel.mechanics.length));
+        maxSim = Math.max(maxSim, shared / denom);
+      });
+      const adjusted = cand.score - DIVERSITY * maxSim;
+      if (adjusted > bestVal) { bestVal = adjusted; bestIdx = i; }
+    }
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  // on renvoie les jeux enrichis de leur "raison" (pour l'affichage)
+  return selected.map((s) => ({ ...s.game, _recoReason: s.reason }));
 }
 /* =============================================================================
    COMPOSANTS UI
@@ -5862,7 +5943,7 @@ function MyLudoPage({ setToast, setPage }) {
       {recommendations.length > 0 && (
         <div style={{ marginBottom: 32 }}>
           <SectionTitle kicker="Suggestions" title="Des jeux qui pourraient vous plaire" noMargin />
-          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "8px 0 16px" }}>D'après vos notes, les goûts des membres proches de vous et les mécaniques que vous appréciez.</p>
+          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "8px 0 16px" }}>D'après vos notes, les goûts des membres proches de vous, les mécaniques et formats que vous appréciez, et les envies de découverte.</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
             {recommendations.map((g) => {
               const st = gameStats(g);
@@ -5872,6 +5953,11 @@ function MyLudoPage({ setToast, setPage }) {
                   <div style={{ padding: "9px 11px" }}>
                     <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
                     <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}{st.count > 0 ? ` · ★ ${st.avg.toFixed(2).replace(".", ",")}` : ""}</div>
+                    {g._recoReason && (
+                      <div style={{ marginTop: 6, fontSize: 10.5, color: C.teal, background: "rgba(30,138,138,.08)", borderRadius: 6, padding: "3px 7px", lineHeight: 1.3, display: "inline-block" }}>
+                        {g._recoReason}
+                      </div>
+                    )}
                   </div>
                 </button>
               );
