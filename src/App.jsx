@@ -67,6 +67,22 @@ function formatDateShort(iso) {
   const d = new Date(iso + "T00:00:00");
   return `${d.getDate()} ${FR_MONTHS[d.getMonth()].slice(0, 4)}.`;
 }
+// "il y a X minutes / heures / jours" à partir d'un timestamp ISO complet
+function timeAgoFr(iso) {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `il y a ${h} h`;
+  const j = Math.floor(h / 24);
+  if (j < 7) return `il y a ${j} jour${j > 1 ? "s" : ""}`;
+  const sem = Math.floor(j / 7);
+  if (sem < 5) return `il y a ${sem} sem.`;
+  const mois = Math.floor(j / 30);
+  return `il y a ${mois} mois`;
+}
 
 const MECHANIC_SUGGESTIONS = [
   "Coopératif", "Draft de cartes", "Placement d'ouvriers", "Pose de tuiles", "Dés",
@@ -396,7 +412,12 @@ function AppProvider({ children }) {
   const [loans, setLoans] = useState([]);
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
+  const [notifications, setNotifications] = useState([]); // notifications du membre connecté
+  const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
   const [fatalError, setFatalError] = useState(null);
+  // Ref vers l'id du membre connecté, lisible dans loadData sans le mettre en dépendance.
+  const currentUserIdRef = useRef(null);
+  useEffect(() => { currentUserIdRef.current = currentUser?.id || null; }, [currentUser]);
 
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
@@ -408,7 +429,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
         supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at"),
         supabase.from("ratings").select("*"),
@@ -429,6 +450,8 @@ function AppProvider({ children }) {
         supabase.from("upcoming_intent").select("*"),
         supabase.from("upcoming_comments").select("*").order("created_at"),
         supabase.from("game_discoveries").select("*"),
+        currentUserIdRef.current ? supabase.from("notifications").select("*").eq("recipient_id", currentUserIdRef.current).order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
       ]);
 
       // table de correspondance id -> nom
@@ -530,6 +553,14 @@ function AppProvider({ children }) {
       // Règle de bascule : si la fiche ludo liée a ≥ 2 votes, on cache la fiche À venir.
       // On garde tout en base (la fiche reste consultable techniquement) mais on filtre l'affichage.
       setUpcoming(allUpc.filter((u) => u.ludoVotes < 2));
+
+      // Notifications du membre connecté + jeux rejetés des suggestions
+      setNotifications((notifRows || []).map((n) => ({
+        id: n.id, recipientId: n.recipient_id, actorId: n.actor_id, type: n.type,
+        message: n.message, linkKind: n.link_kind, linkId: n.link_id, read: n.read === true,
+        createdAt: n.created_at,
+      })));
+      setDismissedIds((dismissedRows || []).map((d) => d.game_id));
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -573,6 +604,13 @@ function AppProvider({ children }) {
     if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [] });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
+
+  // Quand l'identité du membre connecté change (connexion / déconnexion), on recharge
+  // les données afin de récupérer SES notifications et SES rejets de suggestions
+  // (qui dépendent de currentUserIdRef, non disponible au tout premier chargement).
+  useEffect(() => {
+    if (currentUser?.id) loadData();
+  }, [currentUser?.id, loadData]);
 
   /* ---- Charger les e-mails des membres (réservé aux admins) ---- */
   // On appelle la fonction get_member_emails() (security definer) : elle ne renvoie
@@ -763,6 +801,18 @@ function AppProvider({ children }) {
         .eq("game_id", gameId).eq("user_id", currentUser.id);
     } else {
       await supabase.from("game_discoveries").insert({ game_id: gameId, user_id: currentUser.id });
+      // Notifier les propriétaires du jeu qu'un membre souhaite le découvrir (sauf moi).
+      if (g) {
+        const recipients = [...new Set((g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []))]
+          .filter((id) => id && id !== currentUser.id);
+        if (recipients.length > 0) {
+          await supabase.from("notifications").insert(recipients.map((rid) => ({
+            recipient_id: rid, actor_id: currentUser.id, type: "discovery",
+            message: `${currentUser.name} aimerait découvrir votre jeu « ${g.name} »`,
+            link_kind: "game", link_id: gameId,
+          })));
+        }
+      }
     }
     await loadData();
   }, [currentUser, games, loadData]);
@@ -1098,15 +1148,38 @@ function AppProvider({ children }) {
   }, [loadData]);
 
   // ---- Commentaires de soirée ----
+  // Insère des notifications pour une liste de destinataires (en excluant l'acteur lui-même).
+  // recipients : tableau d'IDs. On ne notifie jamais l'auteur de l'action.
+  const notifyUsers = useCallback(async (recipients, { type, message, linkKind = null, linkId = null }) => {
+    if (!currentUser) return;
+    const unique = [...new Set(recipients)].filter((id) => id && id !== currentUser.id);
+    if (unique.length === 0) return;
+    const rows = unique.map((rid) => ({
+      recipient_id: rid, actor_id: currentUser.id, type, message,
+      link_kind: linkKind, link_id: linkId,
+    }));
+    await supabase.from("notifications").insert(rows); // best-effort, on n'interrompt pas en cas d'échec
+  }, [currentUser]);
+
   const addComment = useCallback(async (eventId, content) => {
     if (!currentUser) return { error: "Connectez-vous." };
     const { error } = await supabase.from("event_comments").insert({
       event_id: eventId, author_id: currentUser.id, content: content.trim(),
     });
     if (error) return { error: error.message };
+    // Notifier les participants du moment (hôte + inscrits), sauf l'auteur du commentaire.
+    const ev = events.find((e) => e.id === eventId);
+    if (ev) {
+      const recipients = [ev.hostId, ...(ev.players || []).map((p) => p.id)];
+      await notifyUsers(recipients, {
+        type: "event_comment",
+        message: `${currentUser.name} a commenté le moment du ${formatDateFr(ev.date)}`,
+        linkKind: "event", linkId: eventId,
+      });
+    }
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, loadData, events, notifyUsers]);
 
   const updateComment = useCallback(async (commentId, content) => {
     const { error } = await supabase.from("event_comments").update({
@@ -1127,9 +1200,19 @@ function AppProvider({ children }) {
     if (!currentUser) return { error: "Connectez-vous." };
     const { error } = await supabase.from("game_comments").insert({ game_id: gameId, author_id: currentUser.id, content: content.trim() });
     if (error) return { error: error.message };
+    // Notifier les propriétaires (confirmés) du jeu, sauf l'auteur du commentaire.
+    const g = games.find((x) => x.id === gameId);
+    if (g) {
+      const recipients = (g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []);
+      await notifyUsers(recipients, {
+        type: "game_comment",
+        message: `${currentUser.name} a commenté votre jeu « ${g.name} »`,
+        linkKind: "game", linkId: gameId,
+      });
+    }
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, loadData, games, notifyUsers]);
 
   const updateGameComment = useCallback(async (commentId, content) => {
     const { error } = await supabase.from("game_comments").update({ content: content.trim(), updated_at: new Date().toISOString() }).eq("id", commentId);
@@ -1142,6 +1225,27 @@ function AppProvider({ children }) {
     await supabase.from("game_comments").delete().eq("id", commentId);
     await loadData();
   }, [loadData]);
+
+  // ---- Notifications : marquer lues ----
+  // Marque une notification précise comme lue (mise à jour locale immédiate + base).
+  const markNotificationRead = useCallback(async (notifId) => {
+    setNotifications((prev) => prev.map((n) => n.id === notifId ? { ...n, read: true } : n));
+    await supabase.from("notifications").update({ read: true }).eq("id", notifId);
+  }, []);
+
+  // Marque toutes mes notifications comme lues.
+  const markAllNotificationsRead = useCallback(async () => {
+    if (!currentUser) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    await supabase.from("notifications").update({ read: true }).eq("recipient_id", currentUser.id).eq("read", false);
+  }, [currentUser]);
+
+  // ---- Suggestions : rejeter un jeu ("ça ne m'intéresse pas") ----
+  const dismissReco = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    setDismissedIds((prev) => prev.includes(gameId) ? prev : [...prev, gameId]); // maj locale immédiate
+    await supabase.from("reco_dismissed").insert({ user_id: currentUser.id, game_id: gameId });
+  }, [currentUser]);
 
   // ---- Lieux réutilisables (partagés entre tous) ----
   const addPlace = useCallback(async (data) => {
@@ -1181,6 +1285,8 @@ function AppProvider({ children }) {
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, memberEmails, bannedNotice, setBannedNotice,
+    notifications, markNotificationRead, markAllNotificationsRead,
+    dismissedIds, dismissReco,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
@@ -1213,7 +1319,7 @@ function isEventVisible(e) {
 
 // Moteur de recommandations : propose des jeux non notés par l'utilisateur,
 // en combinant (a) les goûts des membres aux profils proches, (b) les mécaniques qu'il aime.
-function recommendGames(games, currentUserId) {
+function recommendGames(games, currentUserId, dismissedIds = []) {
   if (!currentUserId) return [];
   const myRatings = {}; // gameId -> ma note
   games.forEach((g) => { const v = g.ratings?.[currentUserId]; if (v) myRatings[g.id] = v; });
@@ -1274,12 +1380,14 @@ function recommendGames(games, currentUserId) {
 
   // --- Score de chaque jeu candidat (non noté par moi)
   // Candidats : jeux que je n'ai pas notés, que je ne possède pas déjà,
-  // et pour lesquels je n'ai pas déjà exprimé une envie de découvrir
-  // (inutile de me suggérer ce que j'ai, ce que j'ai jugé, ou ce que je veux déjà découvrir).
+  // pour lesquels je n'ai pas déjà exprimé une envie de découvrir,
+  // et que je n'ai pas rejetés ("ça ne m'intéresse pas").
+  const dismissed = new Set(dismissedIds);
   const candidates = games.filter((g) =>
     !ratedIds.has(g.id)
     && !(g.ownerIds || []).includes(currentUserId)
     && !(g.wantIds || []).includes(currentUserId)
+    && !dismissed.has(g.id)
   );
   const scored = candidates.map((g) => {
     // composante "profils similaires" : moyenne pondérée des notes des autres par leur proximité
@@ -1711,10 +1819,11 @@ const NAV = [
 ];
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout } = useApp();
+  const { currentUser, logout, notifications } = useApp();
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => !n.auth || currentUser);
+  const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
 
   return (
     <>
@@ -1733,13 +1842,16 @@ function Navbar({ page, setPage, onAuth }) {
         <nav style={{ display: "flex", gap: 4, marginLeft: 12 }} className="aladj-desktop-nav">
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
+            const showBadge = n.key === "ma-ludo" && unreadNotifs > 0;
             return (
               <button key={n.key} onClick={() => setPage(n.key)} style={{
+                position: "relative",
                 display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 11, border: "none",
                 cursor: "pointer", fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 14.5,
                 background: active ? C.navy : "transparent", color: active ? "#fff" : C.navy, transition: "background .15s",
               }}>
                 <Icon size={17} /> {n.label}
+                {showBadge && <span style={{ position: "absolute", top: 3, right: 5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "grid", placeItems: "center" }}>{unreadNotifs}</span>}
               </button>
             );
           })}
@@ -5729,7 +5841,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership } = useApp();
+  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -5815,7 +5927,7 @@ function MyLudoPage({ setToast, setPage }) {
   }, [allMine, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
-  const recommendations = useMemo(() => recommendGames(games, currentUser?.id), [games, currentUser]);
+  const recommendations = useMemo(() => recommendGames(games, currentUser?.id, dismissedIds), [games, currentUser, dismissedIds]);
 
   const exportExcel = async () => {
     // Chargement à la demande de la lib XLSX (≈ 200 ko) : on ne paie pas son coût au démarrage,
@@ -5901,6 +6013,48 @@ function MyLudoPage({ setToast, setPage }) {
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
 
+      {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
+      {notifications.length > 0 && (() => {
+        const unreadCount = notifications.filter((n) => !n.read).length;
+        const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
+        const iconFor = (t) => t === "game_comment" ? PenLine : t === "event_comment" ? Calendar : t === "discovery" ? Heart : Info;
+        return (
+          <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                <Sparkles size={18} color={C.teal} /> Notifications
+                {unreadCount > 0 && <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{unreadCount}</span>}
+              </h3>
+              {unreadCount > 0 && <Btn size="sm" variant="soft" onClick={() => markAllNotificationsRead()}>Tout marquer comme lu</Btn>}
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {shown.map((n) => {
+                const Icon = iconFor(n.type);
+                return (
+                  <button key={n.id} onClick={() => {
+                    markNotificationRead(n.id);
+                    if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
+                    else if (n.linkKind === "event") setPage("soirees");
+                  }} style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
+                    background: n.read ? "#fff" : "rgba(30,138,138,.1)", border: n.read ? "1px solid #ece2d0" : `1px solid ${C.teal}`,
+                  }}>
+                    <span style={{ width: 32, height: 32, borderRadius: 9, flexShrink: 0, background: n.read ? "#f0e8d8" : "rgba(30,138,138,.18)", display: "grid", placeItems: "center" }}>
+                      <Icon size={15} color={n.read ? "#9c8d79" : C.teal} />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13.5, color: "#5e5346", lineHeight: 1.4 }}>{n.message}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#a89a86", marginTop: 1 }}>{timeAgoFr(n.createdAt)}</span>
+                    </span>
+                    {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Possessions à confirmer (déclarées par d'autres membres) */}
       {myPending.length > 0 && (
         <div style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
@@ -5955,18 +6109,25 @@ function MyLudoPage({ setToast, setPage }) {
             {recommendations.map((g) => {
               const st = gameStats(g);
               return (
-                <button key={g.id} onClick={() => setSelected(g.id)} style={{ textAlign: "left", border: "1px solid #efe6d6", borderRadius: 14, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
-                  <GameCover g={g} />
-                  <div style={{ padding: "9px 11px" }}>
-                    <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
-                    <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}{st.count > 0 ? ` · ★ ${st.avg.toFixed(2).replace(".", ",")}` : ""}</div>
-                    {g._recoReason && (
-                      <div style={{ marginTop: 6, fontSize: 10.5, color: C.teal, background: "rgba(30,138,138,.08)", borderRadius: 6, padding: "3px 7px", lineHeight: 1.3, display: "inline-block" }}>
-                        {g._recoReason}
-                      </div>
-                    )}
-                  </div>
-                </button>
+                <div key={g.id} style={{ position: "relative", border: "1px solid #efe6d6", borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+                  <button onClick={() => setSelected(g.id)} style={{ textAlign: "left", border: "none", background: "none", cursor: "pointer", padding: 0, width: "100%", display: "block" }}>
+                    <GameCover g={g} />
+                    <div style={{ padding: "9px 11px" }}>
+                      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
+                      <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}{st.count > 0 ? ` · ★ ${st.avg.toFixed(2).replace(".", ",")}` : ""}</div>
+                      {g._recoReason && (
+                        <div style={{ marginTop: 6, fontSize: 10.5, color: C.teal, background: "rgba(30,138,138,.08)", borderRadius: 6, padding: "3px 7px", lineHeight: 1.3, display: "inline-block" }}>
+                          {g._recoReason}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                  {/* Bouton "ça ne m'intéresse pas" : retire définitivement ce jeu des suggestions */}
+                  <button onClick={() => { dismissReco(g.id); setToast("Suggestion masquée — on ne vous la proposera plus."); }}
+                    title="Ça ne m'intéresse pas" style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", border: "none", background: "rgba(18,41,63,.55)", color: "#fff", cursor: "pointer", display: "grid", placeItems: "center", backdropFilter: "blur(2px)" }}>
+                    <X size={15} />
+                  </button>
+                </div>
               );
             })}
           </div>
