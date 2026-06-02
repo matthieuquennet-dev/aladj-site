@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, createContext, useContext } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from "react";
 import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
@@ -282,12 +282,18 @@ const translateMechanics = (arr) => (arr || []).map((m) => MECH_FR[m] || m);
 async function translateText(text) {
   if (!text) return "";
   try {
+    // Timeout de 8 s : sur mobile, une connexion lente pouvait laisser le fetch
+    // en attente très longtemps et bloquer l'affichage de l'aperçu du jeu.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(`/api/translate`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: text.slice(0, 1500) }),
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
     if (res.ok) { const data = await res.json(); if (data.translated) return data.translated; }
-  } catch (e) { /* repli : texte original */ }
+  } catch (e) { /* repli : texte original (timeout, hors-ligne, quota dépassé…) */ }
   return text;
 }
 
@@ -1542,6 +1548,12 @@ function ImageField({ value, onChange }) {
 
 /* ---- Modale ---- */
 function Modal({ open, onClose, children, title, width = 560 }) {
+  // On ne ferme sur clic de l'arrière-plan QUE si le geste de souris a commencé
+  // ET s'est terminé sur l'arrière-plan lui-même. Cela évite les fermetures
+  // intempestives quand on sélectionne du texte dans un champ et que le geste
+  // déborde hors de la fenêtre (cas classique du "mousedown dedans, mouseup dehors").
+  const downOnOverlay = useRef(false);
+
   useEffect(() => {
     if (!open) return;
     const h = (e) => e.key === "Escape" && onClose();
@@ -1550,11 +1562,14 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
-      display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
-    }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
+    <div
+      onMouseDown={(e) => { downOnOverlay.current = e.target === e.currentTarget; }}
+      onMouseUp={(e) => { if (downOnOverlay.current && e.target === e.currentTarget) onClose(); downOnOverlay.current = false; }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
+      }}>
+      <div style={{
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
         border: "1px solid #ece2d0", animation: "popIn .25s ease", overflow: "hidden",
       }}>
@@ -5261,9 +5276,12 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
     try {
       const d = await bggDetails(id);
       setTranslating(true);
+      // La traduction et la conversion des mécaniques ne doivent JAMAIS empêcher
+      // l'affichage de l'aperçu éditable. On les protège individuellement.
       let desc = d.desc;
-      try { desc = await translateText(d.desc); } catch (e) { /* on garde la VO si la trad échoue */ }
-      const mechanics = translateMechanics(d.mechanics);
+      try { desc = await translateText(d.desc); } catch (e) { /* on garde la VO */ }
+      let mechanics = d.mechanics || [];
+      try { mechanics = translateMechanics(d.mechanics); } catch (e) { /* on garde les mécaniques d'origine */ }
       setTranslating(false);
       setPreview({ ...d, desc, mechanics });
     } catch (e) {
