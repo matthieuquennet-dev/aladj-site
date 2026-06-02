@@ -1273,7 +1273,14 @@ function recommendGames(games, currentUserId) {
   };
 
   // --- Score de chaque jeu candidat (non noté par moi)
-  const candidates = games.filter((g) => !ratedIds.has(g.id));
+  // Candidats : jeux que je n'ai pas notés, que je ne possède pas déjà,
+  // et pour lesquels je n'ai pas déjà exprimé une envie de découvrir
+  // (inutile de me suggérer ce que j'ai, ce que j'ai jugé, ou ce que je veux déjà découvrir).
+  const candidates = games.filter((g) =>
+    !ratedIds.has(g.id)
+    && !(g.ownerIds || []).includes(currentUserId)
+    && !(g.wantIds || []).includes(currentUserId)
+  );
   const scored = candidates.map((g) => {
     // composante "profils similaires" : moyenne pondérée des notes des autres par leur proximité
     let wSum = 0, wTot = 0;
