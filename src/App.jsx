@@ -5214,75 +5214,96 @@ function CustomRankModal({ onClose, onOpenGame }) {
   const [chosen, setChosen] = useState([]);
   const [players, setPlayers] = useState("");
   const [duration, setDuration] = useState("");
+  const [mechFilter, setMechFilter] = useState([]); // mécaniques sélectionnées (multi)
+  const [mode, setMode] = useState("consensus"); // "consensus" (valeurs sûres) | "discovery" (découverte)
+  const [limit, setLimit] = useState(40); // nombre de propositions affichées par section
   const toggle = (id) => setChosen((c) => c.includes(id) ? c.filter((x) => x !== id) : [...c, id]);
+  const toggleMech = (m) => setMechFilter((c) => c.includes(m) ? c.filter((x) => x !== m) : [...c, m]);
 
-  // Le résultat est segmenté en deux : d'abord les jeux qu'au moins un membre
-  // de la tablée veut découvrir (triés par nombre d'envies décroissant), puis
-  // le reste suivant le tri classique (note → moins joués → alpha).
-  const { discoverGames, regularGames } = useMemo(() => {
-    if (chosen.length === 0) return { discoverGames: [], regularGames: [] };
+  // Liste des mécaniques présentes dans la ludothèque (pour le filtre)
+  const allMechanics = useMemo(() => {
+    const s = new Set();
+    games.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
+    return [...s].sort((a, b) => a.localeCompare(b, "fr"));
+  }, [games]);
+
+  // Helpers de filtrage communs aux trois sections
+  const matchPlayers = (g) => {
+    if (!players) return true;
+    const want = Number(players);
+    const min = Number(g.min) || 1;
+    const max = g.max ? Number(g.max) : Infinity;
+    return players === "7" ? max >= 7 : (want >= min && want <= max);
+  };
+  const matchDuration = (g) => {
+    if (!duration) return true;
+    const t = Number(g.time) || 0;
+    return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
+  };
+  const matchMech = (g) => mechFilter.length === 0 || mechFilter.every((m) => (g.mechanics || []).includes(m));
+  const passFilters = (g) => matchPlayers(g) && matchDuration(g) && matchMech(g);
+
+  // Calcul des trois sections : envies de découverte, notés par la tablée, autres jeux disponibles
+  const { discoverGames, regularGames, otherGames } = useMemo(() => {
+    if (chosen.length === 0) return { discoverGames: [], regularGames: [], otherGames: [] };
     const chosenSet = new Set(chosen);
 
-    // Pour les envies : on ne demande pas que le jeu soit noté
-    // (au contraire, ce sont des jeux que les membres veulent découvrir).
+    // moyenne des notes de la tablée pour un jeu (0 si aucune note)
+    const tableAvg = (g) => {
+      const vals = Object.entries(g.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
+      return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+    };
+    const tableCount = (g) => Object.keys(g.ratings || {}).filter((uid) => chosenSet.has(uid)).length;
+
+    // --- Section 1 : envies de découverte de la tablée ---
     let discover = games
       .map((g) => {
         const wantersInTable = (g.wantIds || []).filter((id) => chosenSet.has(id));
         return { ...g, _wantCount: wantersInTable.length, _wanters: wantersInTable };
       })
-      .filter((g) => g._wantCount > 0);
-
-    // Filtre nombre de joueurs sur le groupe "envies"
-    if (players) {
-      const want = Number(players);
-      discover = discover.filter((g) => {
-        const min = Number(g.min) || 1;
-        const max = g.max ? Number(g.max) : Infinity;
-        return players === "7" ? max >= 7 : (want >= min && want <= max);
-      });
-    }
-    if (duration) {
-      discover = discover.filter((g) => {
-        const t = Number(g.time) || 0;
-        return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
-      });
-    }
-    // Tri : nombre d'envies dans la tablée DESC, puis le tri classique
+      .filter((g) => g._wantCount > 0 && passFilters(g));
     discover.sort((a, b) => {
       if (b._wantCount !== a._wantCount) return b._wantCount - a._wantCount;
-      // critères secondaires : note moyenne (parmi tablée), moins joué, alpha
-      const aVals = Object.entries(a.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
-      const bVals = Object.entries(b.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
-      const aAvg = aVals.length ? aVals.reduce((s, v) => s + v, 0) / aVals.length : 0;
-      const bAvg = bVals.length ? bVals.reduce((s, v) => s + v, 0) / bVals.length : 0;
-      if (bAvg !== aAvg) return bAvg - aAvg;
+      const d = tableAvg(b) - tableAvg(a);
+      if (d !== 0) return d;
       const pa = a.playCount || 0, pb = b.playCount || 0;
       if (pa !== pb) return pa - pb;
       return a.name.localeCompare(b.name, "fr");
     });
 
-    // Classique : jeux notés par au moins un membre, tri actuel (note → moins joué → alpha)
-    let regular = rankGames(games, chosen, true).filter((g) => g._count > 0);
-    if (players) {
-      const want = Number(players);
-      regular = regular.filter((g) => {
-        const min = Number(g.min) || 1;
-        const max = g.max ? Number(g.max) : Infinity;
-        return players === "7" ? max >= 7 : (want >= min && want <= max);
-      });
-    }
-    if (duration) {
-      regular = regular.filter((g) => {
-        const t = Number(g.time) || 0;
-        return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
-      });
-    }
-    // Retirer du "régulier" les jeux déjà présents dans "découvertes" pour éviter les doublons
+    // --- Section 2 : jeux notés par la tablée ---
+    let regular = rankGames(games, chosen, true).filter((g) => g._count > 0 && passFilters(g));
     const discoverIds = new Set(discover.map((g) => g.id));
     regular = regular.filter((g) => !discoverIds.has(g.id));
 
-    return { discoverGames: discover.slice(0, 12), regularGames: regular.slice(0, 12) };
-  }, [games, chosen, players, duration]);
+    // --- Section 3 : autres jeux disponibles (non notés par la tablée) ---
+    // Classés par note générale de l'association (résout le manque de votes de la tablée).
+    const usedIds = new Set([...discoverIds, ...regular.map((g) => g.id)]);
+    let others = games
+      .filter((g) => !usedIds.has(g.id) && passFilters(g) && tableCount(g) === 0)
+      .map((g) => { const st = gameStats(g); return { ...g, _globalAvg: st.avg, _globalCount: st.count }; });
+    others.sort((a, b) => {
+      // mode "découverte" : on privilégie les jeux jamais joués par l'asso
+      if (mode === "discovery") {
+        const pa = a.playCount || 0, pb = b.playCount || 0;
+        if ((pa === 0) !== (pb === 0)) return pa === 0 ? -1 : 1;
+      }
+      if (b._globalAvg !== a._globalAvg) return b._globalAvg - a._globalAvg;
+      if (b._globalCount !== a._globalCount) return b._globalCount - a._globalCount;
+      return a.name.localeCompare(b.name, "fr");
+    });
+
+    // mode "découverte" : on remonte les envies en priorité ; mode "consensus" : les notés
+    if (mode === "discovery") {
+      // en découverte, on ne change pas l'ordre des sections mais on pourrait pondérer ;
+      // ici on garde la structure claire en 3 sections.
+    }
+
+    return { discoverGames: discover, regularGames: regular, otherGames: others };
+  }, [games, chosen, players, duration, mechFilter, mode]);
+
+  // Réinitialise la limite d'affichage quand les critères changent
+  useEffect(() => { setLimit(40); }, [chosen, players, duration, mechFilter, mode]);
 
   return (
     <Modal open onClose={onClose} title="Classement pour votre tablée" width={620}>
@@ -5328,10 +5349,42 @@ function CustomRankModal({ onClose, onOpenGame }) {
         {chosen.length > 1 && <button onClick={() => setPlayers(String(Math.min(chosen.length, 7)))} style={{ background: "rgba(30,138,138,.1)", border: "none", borderRadius: 10, padding: "0 14px", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>Pour {chosen.length} joueurs</button>}
       </div>
 
+      {/* Bascule mode : valeurs sûres (consensus) vs découverte */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, background: "#f0e8d8", borderRadius: 11, padding: 4, width: "fit-content" }}>
+        {[["consensus", "🛡️ Valeurs sûres"], ["discovery", "✨ Découverte"]].map(([val, label]) => (
+          <button key={val} onClick={() => setMode(val)} style={{
+            padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+            background: mode === val ? "#fff" : "transparent", color: mode === val ? C.navy : "#9c8d79",
+            boxShadow: mode === val ? "0 1px 4px rgba(0,0,0,.1)" : "none",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* Filtre mécaniques (multi-sélection) */}
+      {allMechanics.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 12.5, color: "#8a7c6a", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, marginBottom: 8 }}>
+            Filtrer par mécaniques {mechFilter.length > 0 && <span style={{ color: C.teal }}>({mechFilter.length} sélectionnée{mechFilter.length > 1 ? "s" : ""})</span>}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 110, overflowY: "auto" }}>
+            {allMechanics.map((m) => {
+              const active = mechFilter.includes(m);
+              return (
+                <button key={m} onClick={() => toggleMech(m)} style={{
+                  padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 600, fontSize: 12.5,
+                  border: `1.5px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#6e6256",
+                }}>{m}</button>
+              );
+            })}
+          </div>
+          {mechFilter.length > 0 && <button onClick={() => setMechFilter([])} style={{ marginTop: 8, background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>Effacer les mécaniques</button>}
+        </div>
+      )}
+
       {chosen.length === 0 ? (
         <EmptyHint icon={Users} text="Sélectionnez au moins un membre." />
-      ) : (discoverGames.length === 0 && regularGames.length === 0) ? (
-        <EmptyHint icon={Star} text={players || duration ? "Aucun jeu ne correspond à ces filtres." : "Ces membres n'ont pas encore noté de jeux ni exprimé d'envies."} />
+      ) : (discoverGames.length === 0 && regularGames.length === 0 && otherGames.length === 0) ? (
+        <EmptyHint icon={Star} text="Aucun jeu ne correspond à ces filtres." />
       ) : (
         <div style={{ display: "grid", gap: 18 }}>
           {/* Section 1 : envies de découverte de la tablée */}
@@ -5343,7 +5396,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux qu'au moins un membre de la tablée souhaite découvrir — l'occasion parfaite !</p>
               <div style={{ display: "grid", gap: 8 }}>
-                {discoverGames.map((g, i) => {
+                {discoverGames.slice(0, limit).map((g, i) => {
                   const wanterNames = g._wanters.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean).join(", ");
                   return (
                     <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(181,40,58,.1)" : "rgba(181,40,58,.04)", border: `1px solid ${i === 0 ? "rgba(181,40,58,.3)" : "rgba(181,40,58,.15)"}`, borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
@@ -5373,7 +5426,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>{chosen.length} membre(s) · à note égale, les jeux les moins joués remontent.</p>
               <div style={{ display: "grid", gap: 8 }}>
-                {regularGames.map((g, i) => (
+                {regularGames.slice(0, limit).map((g, i) => (
                   <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -5390,6 +5443,44 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Section 3 : autres jeux disponibles (non notés par la tablée) */}
+          {otherGames.length > 0 && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Library size={16} color={C.teal} />
+                <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Autres jeux disponibles ({otherGames.length})</h4>
+              </div>
+              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux compatibles que la tablée n'a pas encore notés — classés par note de l'association.</p>
+              <div style={{ display: "grid", gap: 8 }}>
+                {otherGames.slice(0, limit).map((g, i) => (
+                  <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(30,138,138,.05)", border: "1px solid rgba(30,138,138,.12)", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: "#b6a78f", width: 26 }}>{i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
+                      <span style={{ fontSize: 12, color: "#9c8d79" }}>
+                        {g._globalCount > 0 ? `${g._globalCount} vote(s) dans l'asso` : "pas encore noté"} · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
+                        {" · "}<span style={{ color: (g.playCount || 0) === 0 ? C.teal : "#9c8d79", fontWeight: (g.playCount || 0) === 0 ? 700 : 400 }}>{(g.playCount || 0) === 0 ? "jamais joué" : `joué ${g.playCount} fois`}</span>
+                      </span>
+                    </span>
+                    {g._globalCount > 0 && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 5, color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16 }}>
+                        <Star size={15} fill={C.teal} /> {g._globalAvg.toFixed(2).replace(".", ",")}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Bouton "Voir plus" si au moins une section dépasse la limite affichée */}
+          {(discoverGames.length > limit || regularGames.length > limit || otherGames.length > limit) && (
+            <button onClick={() => setLimit((l) => l + 40)} style={{
+              justifySelf: "center", padding: "10px 24px", borderRadius: 12, border: `2px solid ${C.teal}`, background: "#fff", color: C.teal,
+              cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14,
+            }}>Voir plus de jeux</button>
           )}
         </div>
       )}
