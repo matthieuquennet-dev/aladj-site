@@ -175,13 +175,14 @@ async function uploadImageToStorage(image, folder = "games") {
     return image;
   }
 
-  // Upload vers Storage avec cache navigateur 7 jours
+  // Upload vers Storage avec cache navigateur 30 jours (réduit le Cached Egress :
+  // une image déjà vue n'est redemandée à Supabase qu'au bout d'un mois).
   try {
     const ext = extFromMime(blob.type);
     const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
     const { error } = await supabase.storage.from("aladj-images").upload(filename, blob, {
       contentType: blob.type,
-      cacheControl: "604800",
+      cacheControl: "2592000",
     });
     if (error) {
       console.error("Storage upload échec :", error);
