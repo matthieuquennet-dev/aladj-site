@@ -104,95 +104,37 @@ const MECHANIC_SUGGESTIONS = [
    que stocker du base64 dans la base de données.
    ============================================================================= */
 
-// Convertit une data URL base64 en Blob binaire pour upload Storage.
-function dataUrlToBlob(dataUrl) {
-  const [meta, b64] = dataUrl.split(",");
-  const mime = meta.match(/data:([^;]+)/)?.[1] || "image/jpeg";
-  const bin = atob(b64);
-  const len = bin.length;
-  const u8 = new Uint8Array(len);
-  for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
-  return new Blob([u8], { type: mime });
-}
-
-// Extrait l'extension de fichier depuis un mime type.
-function extFromMime(mime) {
-  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
-  if (mime === "image/png") return "png";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/gif") return "gif";
-  return "jpg";
-}
-
-// Si "image" est une data URL base64, l'uploade vers Storage et renvoie l'URL publique.
-// Si c'est déjà dans NOTRE bucket Storage, la renvoie telle quelle (rien à faire).
-// Sinon (base64 OU URL externe BGG/autre), on uploade vers Storage.
-// Si vide, renvoie "" (pas d'image).
+// Envoie une image vers Cloudflare R2 (via la fonction serverless /api/r2-upload)
+// et renvoie l'URL publique R2. Les images sont servies par R2 (egress gratuit).
+// - Si vide → "" (pas d'image)
+// - Si déjà une URL R2 → renvoyée telle quelle (rien à faire)
+// - Si base64 OU URL externe (BGG, ancien Supabase) → uploadée vers R2
 // folder : "games" | "extensions" | "upcoming" | "avatars" | "places"
+const R2_PUBLIC_PREFIX = "https://pub-a3613b9531e948d684f5307f0105183b.r2.dev";
 async function uploadImageToStorage(image, folder = "games") {
   if (!image) return "";
-  // Déjà dans notre Storage → rien à faire
-  if (image.includes("/storage/v1/object/public/aladj-images/")) return image;
+  // Déjà sur notre R2 → rien à faire
+  if (image.startsWith(R2_PUBLIC_PREFIX)) return image;
 
-  // On va obtenir un Blob, soit depuis base64, soit en téléchargeant l'URL.
-  let blob = null;
-
-  if (image.startsWith("data:")) {
-    // Cas 1 : data URL base64 → conversion directe en Blob
-    try { blob = dataUrlToBlob(image); }
-    catch (e) { console.error("dataUrlToBlob échec :", e); return image; }
-  } else if (/^https?:\/\//i.test(image)) {
-    // Cas 2 : URL externe (BGG ou autre) → téléchargement via plusieurs voies
-    // (directe, puis proxies CORS en repli), chaque tentative limitée à 8 secondes.
-    const tries = [
-      image,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(image)}`,
-      `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(image)}`,
-    ];
-    for (const u of tries) {
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 8000);
-        const res = await fetch(u, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (!res.ok) continue;
-        const b = await res.blob();
-        if (!b.type.startsWith("image/")) continue;
-        if (b.size > 5 * 1024 * 1024) {
-          console.warn(`uploadImageToStorage : image trop lourde (${Math.round(b.size/1024)}Ko), URL externe conservée`);
-          return image; // trop lourd pour Storage → on garde l'URL externe
-        }
-        blob = b; break;
-      } catch (e) { /* on essaie la voie suivante */ }
-    }
-    if (!blob) {
-      // Aucune voie n'a fonctionné → on garde l'URL externe (au moins l'image s'affichera)
-      console.warn("uploadImageToStorage : téléchargement impossible, URL externe conservée");
-      return image;
-    }
-  } else {
-    // Format inconnu, on laisse tel quel
-    return image;
-  }
-
-  // Upload vers Storage avec cache navigateur 30 jours (réduit le Cached Egress :
-  // une image déjà vue n'est redemandée à Supabase qu'au bout d'un mois).
   try {
-    const ext = extFromMime(blob.type);
-    const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
-    const { error } = await supabase.storage.from("aladj-images").upload(filename, blob, {
-      contentType: blob.type,
-      cacheControl: "2592000",
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000); // 20 s (le serveur peut télécharger une URL externe)
+    const res = await fetch("/api/r2-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, folder }),
+      signal: ctrl.signal,
     });
-    if (error) {
-      console.error("Storage upload échec :", error);
-      return image; // repli : on garde la valeur d'origine si l'upload plante
+    clearTimeout(timer);
+    if (!res.ok) {
+      console.error("Upload R2 échec :", res.status);
+      return image; // repli : on garde la valeur d'origine
     }
-    const { data } = supabase.storage.from("aladj-images").getPublicUrl(filename);
-    return data.publicUrl;
+    const data = await res.json();
+    return data.url || image;
   } catch (e) {
-    console.error("Storage upload exception :", e);
-    return image;
+    console.error("Upload R2 exception :", e);
+    return image; // repli : on garde la valeur d'origine
   }
 }
 
@@ -2433,6 +2375,173 @@ function HomePage({ setPage, onAuth }) {
   );
 }
 
+/* ---- Admin : migration des images vers Cloudflare R2 (one-shot, idempotent) ----
+   Rapatrie en lot les images encore hébergées ailleurs (ancien stockage Supabase,
+   BoardGameGeek) vers R2. Réutilise uploadImageToStorage(), donc cohérent avec le
+   code live. Relançable sans risque : les URL déjà sur R2 sont ignorées. */
+function R2MigrationSection() {
+  // Tables + colonne image. NB : la migration des avatars dépend des règles RLS de
+  // "profiles" ; si l'admin ne peut pas écrire le profil des autres, ces lignes
+  // ressortiront en échec (il faudra alors une policy admin ou une RPC dédiée).
+  const TARGETS = [
+    { table: "games", col: "image_url", folder: "games", label: "Jeux" },
+    { table: "extensions", col: "image_url", folder: "extensions", label: "Extensions" },
+    { table: "upcoming_games", col: "image_url", folder: "upcoming", label: "Sorties à venir" },
+    { table: "profiles", col: "avatar_url", folder: "avatars", label: "Avatars" },
+  ];
+
+  const [phase, setPhase] = useState("idle"); // idle | confirm | scanning | running | done
+  const [total, setTotal] = useState(0);
+  const [done, setDone] = useState(0);
+  const [errCount, setErrCount] = useState(0);
+  const [current, setCurrent] = useState("");
+  const [summary, setSummary] = useState(null); // { byTable: { label: { ok, err, total } } }
+
+  const run = async () => {
+    setPhase("scanning");
+    setDone(0); setErrCount(0); setSummary(null); setCurrent("");
+
+    // 1) Recensement — on ne lit que id + colonne image (requête économe en egress).
+    const work = [];
+    const byTable = {};
+    for (const t of TARGETS) {
+      byTable[t.label] = { ok: 0, err: 0, total: 0 };
+      const { data, error } = await supabase.from(t.table).select(`id, ${t.col}`);
+      if (error) continue;
+      for (const row of data || []) {
+        const url = row[t.col];
+        if (url && !url.startsWith(R2_PUBLIC_PREFIX)) {
+          work.push({ ...t, id: row.id, url });
+          byTable[t.label].total++;
+        }
+      }
+    }
+    setTotal(work.length);
+    if (work.length === 0) { setSummary({ byTable }); setPhase("done"); return; }
+
+    // 2) Traitement avec une petite concurrence (4 en parallèle).
+    setPhase("running");
+    let okN = 0, errN = 0, idx = 0;
+    const CONCURRENCY = 4;
+
+    const worker = async () => {
+      while (idx < work.length) {
+        const item = work[idx++];
+        setCurrent(`${item.label} · ${String(item.id).slice(0, 8)}`);
+        try {
+          const newUrl = await uploadImageToStorage(item.url, item.folder);
+          if (newUrl && newUrl.startsWith(R2_PUBLIC_PREFIX)) {
+            // .select() pour confirmer l'écriture (détecte un blocage RLS silencieux)
+            const { data: upd, error } = await supabase
+              .from(item.table).update({ [item.col]: newUrl }).eq("id", item.id).select(item.col);
+            if (!error && Array.isArray(upd) && upd.length > 0) {
+              okN++; byTable[item.label].ok++;
+            } else {
+              errN++; byTable[item.label].err++;
+            }
+          } else {
+            errN++; byTable[item.label].err++; // uploadImageToStorage a renvoyé l'URL d'origine = échec
+          }
+        } catch {
+          errN++; byTable[item.label].err++;
+        }
+        setDone(okN); setErrCount(errN);
+      }
+    };
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    setSummary({ byTable });
+    setCurrent("");
+    setPhase("done");
+  };
+
+  const processed = done + errCount;
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px dashed #e2d8c8" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.purple, fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>
+        <Package size={15} /> Maintenance — migration des images vers R2
+      </div>
+      <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "0 0 12px", lineHeight: 1.5 }}>
+        Rapatrie les images encore hébergées ailleurs (ancien stockage Supabase, BoardGameGeek) vers Cloudflare R2.
+        Opération relançable sans risque : ce qui est déjà sur R2 est ignoré.
+      </p>
+
+      {phase === "idle" && (
+        <Btn size="sm" variant="purple" onClick={() => setPhase("confirm")}>
+          <Package size={14} /> Préparer la migration
+        </Btn>
+      )}
+
+      {phase === "confirm" && (
+        <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: C.navyDeep, marginBottom: 10, lineHeight: 1.5 }}>
+            <AlertTriangle size={15} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>Chaque image encore sur Supabase sera téléchargée une dernière fois (un peu d'egress) puis repoussée sur R2. Les images BGG, elles, ne touchent pas l'egress Supabase. À lancer de préférence sur un cycle de quota frais. Garde l'onglet ouvert le temps du traitement.</span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="purple" onClick={run}><Package size={14} /> Lancer maintenant</Btn>
+            <Btn size="sm" variant="soft" onClick={() => setPhase("idle")}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {(phase === "scanning" || phase === "running") && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.teal, fontWeight: 600, marginBottom: 8 }}>
+            <Loader2 size={15} className="aladj-spin" />
+            {phase === "scanning" ? "Recensement des images…" : `Migration : ${processed}/${total}`}
+          </div>
+          {phase === "running" && (
+            <>
+              <div style={{ height: 8, background: "rgba(26,58,92,.1)", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: C.teal, transition: "width .2s" }} />
+              </div>
+              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "#8a7c6a", marginTop: 6 }}>
+                <span style={{ color: C.teal }}>✓ {done}</span>
+                {errCount > 0 && <span style={{ color: C.red }}>✗ {errCount}</span>}
+                {current && <span style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: 11, opacity: 0.7 }}>{current}</span>}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {phase === "done" && summary && (
+        <div>
+          {total === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.teal, fontWeight: 600 }}>
+              <Check size={15} /> Tout est déjà sur R2, rien à migrer.
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: errCount > 0 ? C.amber : C.teal, fontWeight: 600, marginBottom: 8 }}>
+              {errCount > 0 ? <AlertTriangle size={15} /> : <Check size={15} />}
+              Migration terminée : {done} réussie{done > 1 ? "s" : ""}{errCount > 0 ? `, ${errCount} en échec` : ""}.
+            </div>
+          )}
+          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#6e6253" }}>
+            {Object.entries(summary.byTable).filter(([, s]) => s.total > 0).map(([label, s]) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>{label}</span>
+                <span><span style={{ color: C.teal }}>{s.ok} ✓</span>{s.err > 0 && <span style={{ color: C.red, marginLeft: 8 }}>{s.err} ✗</span>}</span>
+              </div>
+            ))}
+          </div>
+          {errCount > 0 && (
+            <p style={{ fontSize: 11.5, color: "#a89a86", marginTop: 8, lineHeight: 1.5 }}>
+              Les échecs sur les avatars viennent souvent des règles RLS de la table profiles. Pour le reste, il suffit en général de relancer : les images déjà migrées sont ignorées.
+            </p>
+          )}
+          <div style={{ marginTop: 10 }}>
+            <Btn size="sm" variant="soft" onClick={run}>Relancer le balayage</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---- Pop-up : liste des membres, couleur selon statut ---- */
 function MembersModal({ onClose, onPickMember }) {
   const { users, currentUser, memberEmails, banUser, unbanUser } = useApp();
@@ -2510,6 +2619,7 @@ function MembersModal({ onClose, onPickMember }) {
       <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>
         {isAdmin ? "Cliquez sur un membre pour voir sa ludothèque. Le bannissement bloque l'accès au site sans supprimer ses jeux." : "Cliquez sur un membre pour voir sa ludothèque."}
       </p>
+      {isAdmin && <R2MigrationSection />}
     </Modal>
   );
 }
