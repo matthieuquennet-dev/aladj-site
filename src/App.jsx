@@ -7,6 +7,7 @@ import {
   Euro, Lock, ArrowRightLeft, Package
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
+import PlayTimer from "./PlayTimer";
 
 /* =============================================================================
    ALADJ — À l'assaut des jeux  ·  version connectée à Supabase
