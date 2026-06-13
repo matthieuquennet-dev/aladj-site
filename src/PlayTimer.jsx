@@ -1,0 +1,642 @@
+// =====================================================================
+//  ALADJ — PlayTimer : chronométrage des parties (multi-device, "claim")
+// ---------------------------------------------------------------------
+//  Composant autonome à monter en modale plein écran.
+//
+//  PROPS
+//   - supabase     : ton client Supabase (obligatoire)
+//   - currentUser  : { id, name, avatar_url } du membre connecté, ou null
+//                    (null = invité -> connexion anonyme automatique)
+//   - gameId       : uuid d'un jeu (lancement depuis une fiche de jeu)
+//   - eventId      : uuid d'une soirée (lancement depuis un moment jeux)
+//   - joinCode     : code à 6 caractères (on REJOINT une partie existante)
+//   - onExit       : callback de fermeture
+//
+//  USAGE
+//   Hôte depuis une fiche de jeu :
+//     <PlayTimer supabase={supabase} currentUser={me} gameId={jeu.id} onExit={...} />
+//   Hôte depuis un moment jeux :
+//     <PlayTimer supabase={supabase} currentUser={me} eventId={soiree.id} onExit={...} />
+//   Joueur qui rejoint (ex. via un lien ?chrono=CODE détecté au chargement) :
+//     <PlayTimer supabase={supabase} currentUser={me /* ou null */} joinCode={code} onExit={...} />
+//
+//  PRÉREQUIS : socle SQL + supplément exécutés, et "Anonymous Sign-Ins"
+//  activé dans Supabase (pour les invités sur leur propre téléphone).
+// =====================================================================
+
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+
+const C = {
+  navy: '#1A3A5C', teal: '#1E8A8A', amber: '#E8A317', red: '#B5283A',
+  purple: '#6B3A7A', cream: '#FBF7EF', white: '#FFFFFF',
+};
+const ACCENTS = [C.teal, C.amber, C.red, C.purple, C.navy];
+const TITLE = "'Fredoka', system-ui, sans-serif";
+const BODY = "'Nunito', system-ui, sans-serif";
+
+const fmt = (s) => {
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
+};
+const initials = (name = '?') =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+
+function Avatar({ name, url, color, size = 44 }) {
+  const st = {
+    width: size, height: size, borderRadius: '50%', flex: '0 0 auto',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontFamily: TITLE, fontWeight: 600, color: C.white, fontSize: size * 0.38,
+    background: color, objectFit: 'cover', overflow: 'hidden',
+  };
+  if (url) return <img src={url} alt={name} style={st} />;
+  return <div style={st}>{initials(name)}</div>;
+}
+
+export default function PlayTimer({ supabase, currentUser, gameId, eventId, joinCode, onExit }) {
+  const [phase, setPhase] = useState('loading'); // loading|setup|lobby|running|done|error
+  const [error, setError] = useState(null);
+  const [myUid, setMyUid] = useState(null);
+
+  // session live
+  const [session, setSession] = useState(null);     // ligne play_sessions
+  const [players, setPlayers] = useState([]);        // play_session_players + nom/avatar résolus
+  const [totals, setTotals] = useState({});          // player_id -> { total, max }
+  const [summary, setSummary] = useState(null);      // v_session_summary (fin)
+
+  // setup (hôte)
+  const [game, setGame] = useState(null);            // { id, name, play_time, image_url }
+  const [eventGames, setEventGames] = useState([]);  // jeux d'une soirée
+  const [boxMin, setBoxMin] = useState('');
+  const [draft, setDraft] = useState([]);            // joueurs à ajouter (avant création)
+  const [guestInput, setGuestInput] = useState('');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberHits, setMemberHits] = useState([]);
+
+  // ui running
+  const [hostView, setHostView] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const channelRef = useRef(null);
+
+  const sid = session?.id;
+  const isHost = !!(session && myUid && session.host_profile_id === myUid);
+  const myPlayer = useMemo(
+    () => players.find((p) => p.auth_user_id && p.auth_user_id === myUid) || null,
+    [players, myUid]
+  );
+
+  // ---- auth : garantit un auth.uid() (anonyme si besoin) -------------
+  const ensureAuth = useCallback(async () => {
+    const { data } = await supabase.auth.getUser();
+    if (data?.user) return data.user.id;
+    const { data: anon, error: e } = await supabase.auth.signInAnonymously();
+    if (e) throw e;
+    return anon.user.id;
+  }, [supabase]);
+
+  // ---- résolution des noms/avatars pour les lignes joueurs -----------
+  const hydratePlayers = useCallback(async (rows) => {
+    const ids = [...new Set(rows.map((r) => r.profile_id).filter(Boolean))];
+    let byId = {};
+    if (ids.length) {
+      const { data } = await supabase.from('profiles').select('id,name,avatar_url').in('id', ids);
+      (data || []).forEach((p) => { byId[p.id] = p; });
+    }
+    return rows.map((r) => ({
+      ...r,
+      name: r.profile_id ? (byId[r.profile_id]?.name || 'Membre') : (r.guest_name || 'Invité'),
+      avatar_url: r.profile_id ? byId[r.profile_id]?.avatar_url : null,
+    }));
+  }, [supabase]);
+
+  const refetchPlayers = useCallback(async (sessionId) => {
+    const { data } = await supabase
+      .from('play_session_players')
+      .select('id,profile_id,guest_name,auth_user_id')
+      .eq('session_id', sessionId)
+      .order('joined_at', { ascending: true });
+    setPlayers(await hydratePlayers(data || []));
+  }, [supabase, hydratePlayers]);
+
+  const refetchTotals = useCallback(async (sessionId) => {
+    const { data } = await supabase
+      .from('v_session_player_stats')
+      .select('player_id,total_seconds,max_turn_seconds')
+      .eq('session_id', sessionId);
+    const map = {};
+    (data || []).forEach((r) => { map[r.player_id] = { total: r.total_seconds, max: r.max_turn_seconds }; });
+    setTotals(map);
+  }, [supabase]);
+
+  const refetchSession = useCallback(async (sessionId) => {
+    const { data } = await supabase.from('play_sessions').select('*').eq('id', sessionId).single();
+    if (data) setSession(data);
+    return data;
+  }, [supabase]);
+
+  // ---- abonnement Realtime ------------------------------------------
+  const subscribe = useCallback((sessionId) => {
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    const ch = supabase
+      .channel(`play_session_${sessionId}`)
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'play_sessions', filter: `id=eq.${sessionId}` },
+        (payload) => { setSession(payload.new); refetchTotals(sessionId); })
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'play_session_players', filter: `session_id=eq.${sessionId}` },
+        () => refetchPlayers(sessionId))
+      .subscribe();
+    channelRef.current = ch;
+  }, [supabase, refetchTotals, refetchPlayers]);
+
+  useEffect(() => () => { if (channelRef.current) supabase.removeChannel(channelRef.current); }, [supabase]);
+
+  // ---- horloge live (uniquement en partie) ---------------------------
+  useEffect(() => {
+    if (phase !== 'running' && phase !== 'lobby') return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  // ---- bascule de phase pilotée par le statut de session -------------
+  useEffect(() => {
+    if (!session) return;
+    if (session.status === 'running' || session.status === 'paused') setPhase('running');
+    else if (session.status === 'done') {
+      setPhase('done');
+      supabase.from('v_session_summary').select('*').eq('id', session.id).single()
+        .then(({ data }) => { if (data) setSummary(data); })
+        .catch(() => {});
+    } else if (session.status === 'lobby') setPhase('lobby');
+  }, [session?.status, supabase]); // eslint-disable-line
+
+  // ---- initialisation ------------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const uid = await ensureAuth();
+        if (cancelled) return;
+        setMyUid(uid);
+
+        if (joinCode) {
+          // flux JOINEUR
+          const { data: pid, error: e } = await supabase.rpc('join_session', {
+            p_join_code: joinCode,
+            p_guest_name: currentUser ? null : 'Invité',
+          });
+          if (e) throw e;
+          const { data: sess } = await supabase.from('play_sessions')
+            .select('*').eq('join_code', joinCode.toUpperCase()).single();
+          if (!sess) throw new Error('Partie introuvable');
+          if (cancelled) return;
+          setSession(sess);
+          await refetchPlayers(sess.id);
+          await refetchTotals(sess.id);
+          subscribe(sess.id);
+          return; // la phase suivra session.status
+        }
+
+        // flux HÔTE -> setup
+        if (eventId) {
+          const { data: eg } = await supabase.from('event_games').select('game_id').eq('event_id', eventId);
+          const gIds = [...new Set((eg || []).map((r) => r.game_id))];
+          let gamesData = [];
+          if (gIds.length) {
+            const { data } = await supabase.from('games')
+              .select('id,name,play_time,image_url').in('id', gIds);
+            gamesData = data || [];
+          }
+          setEventGames(gamesData);
+          const first = gamesData[0] || null;
+          setGame(first);
+          setBoxMin(first?.play_time ? String(first.play_time) : '');
+
+          const { data: eguests } = await supabase.from('event_guests')
+            .select('member_id,guest_name').eq('event_id', eventId);
+          const memberIds = [...new Set((eguests || []).map((r) => r.member_id).filter(Boolean))];
+          let pById = {};
+          if (memberIds.length) {
+            const { data } = await supabase.from('profiles').select('id,name,avatar_url').in('id', memberIds);
+            (data || []).forEach((p) => { pById[p.id] = p; });
+          }
+          const pre = (eguests || []).map((g, i) => g.member_id
+            ? { key: `m${i}`, profileId: g.member_id, guestName: null,
+                name: pById[g.member_id]?.name || 'Membre', avatar_url: pById[g.member_id]?.avatar_url }
+            : { key: `g${i}`, profileId: null, guestName: g.guest_name,
+                name: g.guest_name || 'Invité', avatar_url: null });
+          setDraft(pre);
+        } else if (gameId) {
+          const { data: g } = await supabase.from('games')
+            .select('id,name,play_time,image_url').eq('id', gameId).single();
+          setGame(g);
+          setBoxMin(g?.play_time ? String(g.play_time) : '');
+          setDraft([]);
+        }
+        if (!cancelled) setPhase('setup');
+      } catch (err) {
+        if (!cancelled) { setError(err.message || String(err)); setPhase('error'); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line
+
+  // ---- recherche de membres (flux fiche de jeu) ----------------------
+  useEffect(() => {
+    if (!memberQuery.trim()) { setMemberHits([]); return; }
+    let go = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from('profiles')
+        .select('id,name,avatar_url').ilike('name', `%${memberQuery.trim()}%`).limit(8);
+      if (go) setMemberHits(data || []);
+    }, 250);
+    return () => { go = false; clearTimeout(t); };
+  }, [memberQuery, supabase]);
+
+  // ---- actions -------------------------------------------------------
+  const addGuestDraft = () => {
+    const n = guestInput.trim();
+    if (!n) return;
+    setDraft((d) => [...d, { key: `g${Date.now()}`, profileId: null, guestName: n, name: n, avatar_url: null }]);
+    setGuestInput('');
+  };
+  const addMemberDraft = (m) => {
+    if (draft.some((d) => d.profileId === m.id) || m.id === currentUser?.id) return;
+    setDraft((d) => [...d, { key: `m${m.id}`, profileId: m.id, guestName: null, name: m.name, avatar_url: m.avatar_url }]);
+    setMemberQuery(''); setMemberHits([]);
+  };
+  const removeDraft = (key) => setDraft((d) => d.filter((x) => x.key !== key));
+
+  const createSession = async () => {
+    try {
+      setError(null);
+      if (!game) throw new Error('Choisis un jeu');
+      const { data, error: e } = await supabase.rpc('create_session', {
+        p_game_id: game.id,
+        p_event_id: eventId || null,
+        p_box_duration_min: boxMin ? parseInt(boxMin, 10) : null,
+      });
+      if (e) throw e;
+      const row = Array.isArray(data) ? data[0] : data;
+      const sessionId = row.session_id;
+      for (const d of draft) {
+        if (d.profileId && d.profileId === currentUser?.id) continue; // hôte déjà ajouté
+        await supabase.rpc('add_player', {
+          p_session_id: sessionId,
+          p_profile_id: d.profileId,
+          p_guest_name: d.guestName,
+        });
+      }
+      const sess = await refetchSession(sessionId);
+      await refetchPlayers(sessionId);
+      await refetchTotals(sessionId);
+      subscribe(sessionId);
+      if (sess?.status === 'lobby') setPhase('lobby');
+    } catch (err) { setError(err.message || String(err)); }
+  };
+
+  const rpc = async (fn, args) => {
+    try { setError(null); const { error: e } = await supabase.rpc(fn, args); if (e) throw e; }
+    catch (err) { setError(err.message || String(err)); }
+  };
+  const start = () => rpc('start_session', { p_session_id: sid });
+  const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
+  const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
+  const nextRound = () => rpc('next_round', { p_session_id: sid });
+  const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
+
+  const addPlayerLive = async (profileId, guestName) => {
+    await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
+  };
+
+  // ---- temps affichés ------------------------------------------------
+  const liveExtra = useCallback((pid) => {
+    if (!session || session.status !== 'running' || session.neutral_active) return 0;
+    if (session.current_player_id !== pid || !session.current_turn_started_at) return 0;
+    return (now - new Date(session.current_turn_started_at).getTime()) / 1000;
+  }, [session, now]);
+  const shown = (pid) => (totals[pid]?.total || 0) + liveExtra(pid);
+
+  const joinLink = useMemo(() => {
+    if (!session?.join_code || typeof window === 'undefined') return '';
+    return `${window.location.origin}${window.location.pathname}?chrono=${session.join_code}`;
+  }, [session?.join_code]);
+
+  // =====================================================================
+  //  RENDU
+  // =====================================================================
+  const shell = (children) => (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1000, background: C.cream, color: C.navy,
+      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+    }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '18px 16px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.navy }}>
+            Chrono <span style={{ color: C.teal }}>ALADJ</span>
+          </div>
+          <button onClick={onExit} style={btnGhost}>Fermer</button>
+        </div>
+        {error && (
+          <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`,
+            borderRadius: 12, padding: '10px 12px', marginBottom: 12, fontWeight: 600 }}>
+            {error}
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+
+  if (phase === 'loading') return shell(<Centered>Connexion…</Centered>);
+  if (phase === 'error') return shell(<Centered><button style={btnPrimary} onClick={onExit}>Retour</button></Centered>);
+
+  // ---------- SETUP ----------
+  if (phase === 'setup') {
+    return shell(
+      <div>
+        <Card>
+          <Label>Jeu</Label>
+          {eventGames.length > 1 ? (
+            <select value={game?.id || ''} style={input}
+              onChange={(e) => { const g = eventGames.find((x) => x.id === e.target.value); setGame(g); setBoxMin(g?.play_time ? String(g.play_time) : ''); }}>
+              {eventGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {game?.image_url && <img src={game.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover' }} />}
+              <div style={{ fontFamily: TITLE, fontSize: 19, fontWeight: 600 }}>{game?.name || '—'}</div>
+            </div>
+          )}
+          <div style={{ marginTop: 14 }}>
+            <Label>Durée indiquée sur la boîte (min)</Label>
+            <input type="number" inputMode="numeric" value={boxMin} placeholder="ex. 90"
+              onChange={(e) => setBoxMin(e.target.value)} style={input} />
+          </div>
+        </Card>
+
+        <Card>
+          <Label>Joueurs ({draft.length + 1})</Label>
+          <PlayerRow color={ACCENTS[0]} name={`${currentUser?.name || 'Moi'} (hôte)`} avatar={currentUser?.avatar_url} />
+          {draft.map((d, i) => (
+            <PlayerRow key={d.key} color={ACCENTS[(i + 1) % ACCENTS.length]} name={d.name} avatar={d.avatar_url}
+              onRemove={() => removeDraft(d.key)} />
+          ))}
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <input value={guestInput} placeholder="Nom d'un invité" style={{ ...input, flex: 1 }}
+              onChange={(e) => setGuestInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addGuestDraft()} />
+            <button style={btnSecondary} onClick={addGuestDraft}>+ Invité</button>
+          </div>
+          <div style={{ marginTop: 8, position: 'relative' }}>
+            <input value={memberQuery} placeholder="Chercher un membre…" style={input}
+              onChange={(e) => setMemberQuery(e.target.value)} />
+            {memberHits.length > 0 && (
+              <div style={{ background: C.white, border: `1px solid ${C.navy}22`, borderRadius: 10, marginTop: 4, overflow: 'hidden' }}>
+                {memberHits.map((m) => (
+                  <div key={m.id} onClick={() => addMemberDraft(m)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', cursor: 'pointer' }}>
+                    <Avatar name={m.name} url={m.avatar_url} color={C.teal} size={30} />
+                    <span style={{ fontWeight: 600 }}>{m.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <button style={{ ...btnPrimary, width: '100%', marginTop: 6 }} onClick={createSession}>
+          Créer la partie
+        </button>
+        <p style={{ fontSize: 13, color: `${C.navy}99`, textAlign: 'center', marginTop: 10 }}>
+          Les autres joueurs pourront rejoindre depuis leur téléphone avec le code affiché ensuite.
+        </p>
+      </div>
+    );
+  }
+
+  // ---------- LOBBY ----------
+  if (phase === 'lobby') {
+    return shell(
+      <div>
+        <Card>
+          <Label>Code de la partie</Label>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 46, letterSpacing: 6, color: C.teal, textAlign: 'center' }}>
+            {session?.join_code}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => navigator.clipboard?.writeText(session.join_code)}>Copier le code</button>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => navigator.clipboard?.writeText(joinLink)}>Copier le lien</button>
+          </div>
+          <p style={{ fontSize: 13, color: `${C.navy}99`, marginTop: 8 }}>
+            Chacun ouvre le lien (ou saisit le code) sur son téléphone pour suivre son propre temps.
+          </p>
+        </Card>
+
+        <Card>
+          <Label>Joueurs connectés ({players.length})</Label>
+          {players.map((p, i) => (
+            <PlayerRow key={p.id} color={ACCENTS[i % ACCENTS.length]} name={p.name} avatar={p.avatar_url}
+              tag={p.auth_user_id ? null : 'sans tel'} />
+          ))}
+          {isHost && <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />}
+        </Card>
+
+        {isHost ? (
+          <button style={{ ...btnPrimary, width: '100%' }} onClick={start}>Démarrer la partie</button>
+        ) : (
+          <Centered>En attente du démarrage par l'hôte…</Centered>
+        )}
+      </div>
+    );
+  }
+
+  // ---------- RUNNING ----------
+  if (phase === 'running') {
+    const activeId = session?.current_player_id;
+    const neutral = session?.neutral_active;
+    const showHost = isHost && hostView;
+
+    return shell(
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
+          {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
+          {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
+        </div>
+
+        {/* Bouton "C'est mon tour" si j'ai un siège sur ce device */}
+        {myPlayer && !showHost && (
+          <button
+            onClick={() => claim(myPlayer.id)}
+            disabled={activeId === myPlayer.id && !neutral}
+            style={{
+              width: '100%', border: 'none', borderRadius: 20, padding: '26px 16px', marginBottom: 16,
+              fontFamily: TITLE, fontWeight: 600, fontSize: 24, color: C.white, cursor: 'pointer',
+              background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy,
+              boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
+            }}>
+            {(activeId === myPlayer.id && !neutral) ? "À toi de jouer !" : "C'est mon tour"}
+            <div style={{ fontFamily: BODY, fontSize: 34, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
+          </button>
+        )}
+
+        {/* Tableau de bord des joueurs */}
+        <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
+          {players.map((p, i) => {
+            const active = activeId === p.id && !neutral;
+            const clickable = isHost; // l'hôte peut piloter / corriger
+            return (
+              <div key={p.id}
+                onClick={clickable ? () => claim(p.id) : undefined}
+                style={{
+                  background: C.white, borderRadius: 16, padding: '12px 14px',
+                  border: `2px solid ${active ? ACCENTS[i % ACCENTS.length] : 'transparent'}`,
+                  boxShadow: active ? `0 0 0 3px ${ACCENTS[i % ACCENTS.length]}22` : '0 1px 4px rgba(0,0,0,0.06)',
+                  cursor: clickable ? 'pointer' : 'default', transition: 'border-color .15s',
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Avatar name={p.name} url={p.avatar_url} color={ACCENTS[i % ACCENTS.length]} size={38} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                    {!p.auth_user_id && <div style={{ fontSize: 11, color: `${C.navy}88` }}>sans tel</div>}
+                  </div>
+                </div>
+                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? ACCENTS[i % ACCENTS.length] : C.navy }}>
+                  {fmt(shown(p.id))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Contrôles hôte */}
+        {isHost && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>
+            <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ---------- DONE ----------
+  if (phase === 'done') {
+    const ranked = [...players].sort((a, b) => (totals[b.id]?.total || 0) - (totals[a.id]?.total || 0));
+    const playerTotal = ranked.reduce((s, p) => s + (totals[p.id]?.total || 0), 0) || 1;
+    const real = summary?.real_duration_seconds;
+    return shell(
+      <div>
+        <Card>
+          <Label>Récap de la partie</Label>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
+            <Stat label="Durée réelle" value={real ? fmt(real) : '—'} />
+            <Stat label="Sur la boîte" value={summary?.box_duration_min ? `${summary.box_duration_min} min` : '—'} />
+            <Stat label="Ratio" value={summary?.ratio_vs_box ? `×${summary.ratio_vs_box}` : '—'} color={summary?.ratio_vs_box >= 1.5 ? C.red : C.teal} />
+          </div>
+        </Card>
+        <Card>
+          <Label>Temps par joueur</Label>
+          {ranked.map((p, i) => {
+            const tot = totals[p.id]?.total || 0;
+            const pct = Math.round((tot / playerTotal) * 100);
+            return (
+              <div key={p.id} style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700 }}>{p.name}</span>
+                  <span style={{ color: `${C.navy}aa` }}>{fmt(tot)} · {pct}%
+                    {totals[p.id]?.max ? <span style={{ color: C.red }}> · pic {fmt(totals[p.id].max)}</span> : null}
+                  </span>
+                </div>
+                <div style={{ height: 10, background: `${C.navy}14`, borderRadius: 8 }}>
+                  <div style={{ width: `${pct}%`, height: '100%', borderRadius: 8, background: ACCENTS[i % ACCENTS.length] }} />
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+        <button style={{ ...btnPrimary, width: '100%' }} onClick={onExit}>Fermer</button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ---- petits composants & styles -------------------------------------
+function Centered({ children }) {
+  return <div style={{ textAlign: 'center', padding: '40px 0', fontWeight: 600, color: '#1A3A5C' }}>{children}</div>;
+}
+function Card({ children }) {
+  return <div style={{ background: '#FFFFFF', borderRadius: 18, padding: 16, marginBottom: 14, boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>{children}</div>;
+}
+function Label({ children }) {
+  return <div style={{ fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, color: '#1A3A5C99', marginBottom: 8 }}>{children}</div>;
+}
+function Stat({ label, value, color = '#1A3A5C' }) {
+  return (
+    <div>
+      <div style={{ fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 24, color }}>{value}</div>
+      <div style={{ fontSize: 12, color: '#1A3A5C99' }}>{label}</div>
+    </div>
+  );
+}
+function PlayerRow({ color, name, avatar, onRemove, tag }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+      <Avatar name={name} url={avatar} color={color} size={36} />
+      <span style={{ fontWeight: 700, flex: 1 }}>{name}</span>
+      {tag && <span style={{ fontSize: 11, color: '#1A3A5C88' }}>{tag}</span>}
+      {onRemove && <button onClick={onRemove} style={{ ...btnGhost, color: '#B5283A' }}>×</button>}
+    </div>
+  );
+}
+function LiveAdd({ onAddGuest, onAddMember, supabase, currentUser }) {
+  const [n, setN] = useState('');
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  useEffect(() => {
+    if (!q.trim()) { setHits([]); return; }
+    let go = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from('profiles').select('id,name,avatar_url').ilike('name', `%${q.trim()}%`).limit(6);
+      if (go) setHits(data || []);
+    }, 250);
+    return () => { go = false; clearTimeout(t); };
+  }, [q, supabase]);
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px dashed #1A3A5C22', paddingTop: 10 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={n} placeholder="Ajouter un invité sans tel" style={{ ...input, flex: 1 }}
+          onChange={(e) => setN(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && n.trim()) { onAddGuest(n.trim()); setN(''); } }} />
+        <button style={btnSecondary} onClick={() => { if (n.trim()) { onAddGuest(n.trim()); setN(''); } }}>+</button>
+      </div>
+      <input value={q} placeholder="Ajouter un membre…" style={{ ...input, marginTop: 8 }} onChange={(e) => setQ(e.target.value)} />
+      {hits.map((m) => (
+        <div key={m.id} onClick={() => { onAddMember(m); setQ(''); setHits([]); }}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px', cursor: 'pointer' }}>
+          <Avatar name={m.name} url={m.avatar_url} color="#1E8A8A" size={28} />
+          <span style={{ fontWeight: 600 }}>{m.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const input = {
+  width: '100%', boxSizing: 'border-box', border: '1px solid #1A3A5C33', borderRadius: 12,
+  padding: '11px 12px', fontSize: 16, fontFamily: "'Nunito', sans-serif", color: '#1A3A5C', background: '#fff',
+};
+const btnBase = {
+  border: 'none', borderRadius: 12, padding: '12px 16px', fontFamily: "'Fredoka', sans-serif",
+  fontWeight: 600, fontSize: 16, cursor: 'pointer',
+};
+const btnPrimary = { ...btnBase, background: '#1E8A8A', color: '#fff' };
+const btnSecondary = { ...btnBase, background: '#1A3A5C12', color: '#1A3A5C' };
+const btnDanger = { ...btnBase, background: '#B5283A', color: '#fff' };
+const btnGhost = { background: 'transparent', border: 'none', color: '#1A3A5C99', fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: "'Nunito', sans-serif" };
