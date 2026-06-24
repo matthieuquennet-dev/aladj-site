@@ -5840,6 +5840,10 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           </div>
         </Field>
 
+        <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
+          <TextInput value={preview.ludumUrl || ""} onChange={(e) => updatePreview({ ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
+        </Field>
+
         {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
         {!forUpcoming && (
           <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Ma ludothèque.">
