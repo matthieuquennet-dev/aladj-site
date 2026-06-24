@@ -363,6 +363,15 @@ function AppProvider({ children }) {
   const currentUserIdRef = useRef(null);
   useEffect(() => { currentUserIdRef.current = currentUser?.id || null; }, [currentUser]);
 
+  // ⏱ Chronomètre de partie (multi-device) : état + détection d'un lien de jonction ?chrono=CODE
+  const [chrono, setChrono] = useState(null); // null | { gameId } | { eventId } | { joinCode }
+  const openChrono = useCallback((opts) => setChrono(opts), []);
+  const closeChrono = useCallback(() => setChrono(null), []);
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("chrono");
+    if (code) setChrono({ joinCode: code });
+  }, []);
+
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
     try {
@@ -579,7 +588,10 @@ function AppProvider({ children }) {
   useEffect(() => {
     if (!isConfigured) return;
     const channel = supabase.channel("aladj-changes")
-      .on("postgres_changes", { event: "*", schema: "public" }, () => { loadData(); })
+      .on("postgres_changes", { event: "*", schema: "public" }, (payload) => {
+        if (payload.table && payload.table.startsWith("play_")) return; // géré par le chrono
+        loadData();
+      })
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [loadData]);
@@ -978,8 +990,11 @@ function AppProvider({ children }) {
     if (patch.desc !== undefined) fields.description = patch.desc || "";
     if (patch.img !== undefined) fields.image_url = await uploadImageToStorage(patch.img || "", "upcoming");
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice != null && patch.newPrice !== "" ? Number(patch.newPrice) : null;
-    const { error } = await supabase.from("upcoming_games").update(fields).eq("id", id);
+    // .select() pour confirmer l'écriture : un update bloqué par RLS ne renvoie pas d'erreur
+    // mais ne touche aucune ligne — on le détecte ici pour éviter un faux « succès ».
+    const { data, error } = await supabase.from("upcoming_games").update(fields).eq("id", id).select("id");
     if (error) return { error: error.message };
+    if (!data || data.length === 0) return { error: "Modification impossible : vous n'avez pas les droits sur cette fiche (ou elle n'existe plus)." };
     await loadData();
     return {};
   }, [loadData]);
@@ -1240,6 +1255,7 @@ function AppProvider({ children }) {
     addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
     addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
     reload: loadData,
+    chrono, openChrono, closeChrono,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -3102,7 +3118,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent } = useApp();
+  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent, openChrono } = useApp();
   const linkedPlace = e.placeId ? places.find((p) => p.id === e.placeId) : null;
   const [showPlace, setShowPlace] = useState(false);
   const totalCount = e.players.length + (e.guests?.length || 0);
@@ -3223,6 +3239,12 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             </div>
           ) : (
             <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }} style={{ marginBottom: 22 }}><LogIn size={18} /> Se connecter pour participer</Btn>
+          )}
+
+          {currentUser && (
+            <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
+              <Clock size={17} /> Lancer le chrono de la partie
+            </Btn>
           )}
 
           {/* JEUX JOUÉS */}
@@ -3752,7 +3774,7 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, toggleDiscover } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, toggleDiscover, openChrono } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
@@ -3796,6 +3818,12 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         {g.source && g.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {g.source}</Badge>}
         {(g.playCount || 0) > 0 && <Badge color="#6e6256">🎲 joué {g.playCount} fois</Badge>}
       </div>
+
+      {currentUser && (
+        <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ gameId: g.id }); }}>
+          <Clock size={17} /> Chronométrer une partie
+        </Btn>
+      )}
 
       {/* note moyenne */}
       <div style={{ display: "flex", gap: 20, alignItems: "center", background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18, flexWrap: "wrap" }}>
@@ -6527,7 +6555,7 @@ function ConfigScreen() {
    ROOT
    ============================================================================= */
 function Shell() {
-  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice } = useApp();
+  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono } = useApp();
   const [page, setPage] = useState("accueil");
   const [auth, setAuth] = useState(null);
   const [toast, setToast] = useState("");
@@ -6578,6 +6606,16 @@ function Shell() {
             <Btn variant="soft" onClick={() => setBannedNotice(false)}>Fermer</Btn>
           </div>
         </Modal>
+      )}
+      {chrono && (
+        <PlayTimer
+          supabase={supabase}
+          currentUser={currentUser ? { id: currentUser.id, name: currentUser.name, avatar_url: currentUser.avatar } : null}
+          gameId={chrono.gameId}
+          eventId={chrono.eventId}
+          joinCode={chrono.joinCode}
+          onExit={closeChrono}
+        />
       )}
       <Toast msg={toast} onDone={() => setToast("")} />
     </div>
