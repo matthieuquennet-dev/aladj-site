@@ -112,6 +112,18 @@ const MECHANIC_SUGGESTIONS = [
 // - Si base64 OU URL externe (BGG, ancien Supabase) → uploadée vers R2
 // folder : "games" | "extensions" | "upcoming" | "avatars" | "places"
 const R2_PUBLIC_PREFIX = "https://pub-a3613b9531e948d684f5307f0105183b.r2.dev";
+
+// Lien d'achat affilié Ludum (partenariat ALADJ, code aff=146).
+// Si une URL de fiche précise est fournie on l'utilise, sinon on génère une recherche par nom.
+// Le code d'affiliation est ajouté avec "?" ou "&" selon que l'URL a déjà des paramètres.
+const LUDUM_AFF = "146";
+const LUDUM_SEARCH_BASE = "https://www.ludum.fr/recherche?controller=search&s=";
+function ludumLink(name, storedUrl) {
+  const base = (storedUrl && storedUrl.trim())
+    ? storedUrl.trim()
+    : LUDUM_SEARCH_BASE + encodeURIComponent((name || "").trim());
+  return base + (base.includes("?") ? "&" : "?") + "aff=" + LUDUM_AFF;
+}
 async function uploadImageToStorage(image, folder = "games") {
   if (!image) return "";
   // Déjà sur notre R2 → rien à faire
@@ -312,7 +324,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
 
   return {
     id: row.id, name: row.name, year: row.year || "", min: row.min_players || "", max: row.max_players || "",
-    time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "",
+    time: row.play_time || "", mechanics: row.mechanics || [], desc: row.description || "", img: row.image_url || "", ludumUrl: row.ludum_url || "",
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     owners, ownerIds,
     confirmedOwners, pendingOwners,           // nouvelles structures
@@ -384,7 +396,7 @@ function AppProvider({ children }) {
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
-        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at"),
+        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url"),
         supabase.from("ratings").select("*"),
         supabase.from("events").select("*"),
         supabase.from("event_players").select("*"),
@@ -398,7 +410,7 @@ function AppProvider({ children }) {
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
         supabase.from("game_weights").select("*"),
         supabase.from("event_games").select("*"),
-        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id").order("name"),
+        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url").order("name"),
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
         supabase.from("upcoming_comments").select("*").order("created_at"),
@@ -494,7 +506,7 @@ function AppProvider({ children }) {
         const ludoVotes = ludoGame ? (ratingsCountByGame[ludoGame.id] || 0) : 0;
         return {
           id: u.id, name: u.name, year: u.year || "", min: u.min_players || "", max: u.max_players || "",
-          time: u.play_time || "", mechanics: u.mechanics || [], desc: u.description || "", img: u.image_url || "",
+          time: u.play_time || "", mechanics: u.mechanics || [], desc: u.description || "", img: u.image_url || "", ludumUrl: u.ludum_url || "",
           newPrice: u.new_price != null ? Number(u.new_price) : null,
           source: u.source || "manuel", createdBy: u.created_by, createdByName: nameById[u.created_by] || "Membre",
           ludoGameId: ludoGame ? ludoGame.id : null, ludoVotes,
@@ -664,6 +676,7 @@ function AppProvider({ children }) {
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
       play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: imgUrl,
       source: d.source || "manuel", owner_id: currentUser.id,
+      ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
     }).select().single();
     if (error) return { error: error.message };
 
@@ -814,6 +827,7 @@ function AppProvider({ children }) {
       play_time: patch.time || null, mechanics: patch.mechanics || [], description: patch.desc || "", image_url: imgUrl,
     };
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
+    if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
     await supabase.from("games").update(fields).eq("id", id);
     await loadData();
   }, [loadData]);
@@ -972,6 +986,7 @@ function AppProvider({ children }) {
       play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: imgUrl,
       new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
       source: d.source || "manuel", created_by: currentUser.id,
+      ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
     }).select().single();
     if (error) return { error: error.message };
     await loadData();
@@ -990,6 +1005,7 @@ function AppProvider({ children }) {
     if (patch.desc !== undefined) fields.description = patch.desc || "";
     if (patch.img !== undefined) fields.image_url = await uploadImageToStorage(patch.img || "", "upcoming");
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice != null && patch.newPrice !== "" ? Number(patch.newPrice) : null;
+    if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
     // .select() pour confirmer l'écriture : un update bloqué par RLS ne renvoie pas d'erreur
     // mais ne touche aucune ligne — on le détecte ici pour éviter un faux « succès ».
     const { data, error } = await supabase.from("upcoming_games").update(fields).eq("id", id).select("id");
@@ -3849,6 +3865,10 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         {(g.playCount || 0) > 0 && <Badge color="#6e6256">🎲 joué {g.playCount} fois</Badge>}
       </div>
 
+      <a href={ludumLink(g.name, g.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "13px 20px", borderRadius: 13, textDecoration: "none", marginBottom: 12 }}>
+        <ShoppingBag size={17} /> Acheter chez Ludum
+      </a>
       {currentUser && (
         <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ gameId: g.id }); }}>
           <Clock size={17} /> Chronométrer une partie
@@ -4625,7 +4645,7 @@ function AddUpcomingFlow({ onClose, setToast }) {
 /* ---- Formulaire manuel pour une fiche À venir ---- */
 function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
   const { upcoming, games, currentUser } = useApp();
-  const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "" });
+  const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "", ludumUrl: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
@@ -4688,6 +4708,9 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
         </div>
       </Field>
       <Field label="Description"><textarea value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} placeholder="Présentation du jeu..." /></Field>
+      <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
+        <TextInput value={f.ludumUrl} onChange={(e) => setF({ ...f, ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
+      </Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter en veille</Btn>
@@ -4758,6 +4781,11 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
       </div>
 
       {u.desc && <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 18, whiteSpace: "pre-line" }}>{u.desc}</p>}
+
+      <a href={ludumLink(u.name, u.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "13px 20px", borderRadius: 13, textDecoration: "none", marginBottom: 18 }}>
+        <ShoppingBag size={17} /> Acheter chez Ludum
+      </a>
 
       {/* Prix neuf annoncé (s'il a été renseigné) */}
       {u.newPrice != null && (
@@ -4893,7 +4921,7 @@ function EditUpcomingModal({ u, onClose, setToast }) {
   const { updateUpcoming } = useApp();
   const [f, setF] = useState({
     name: u.name || "", year: u.year || "", min: u.min || "", max: u.max || "", time: u.time || "",
-    mechanics: u.mechanics || [], desc: u.desc || "", img: u.img || "",
+    mechanics: u.mechanics || [], desc: u.desc || "", img: u.img || "", ludumUrl: u.ludumUrl || "",
     newPrice: u.newPrice != null ? String(u.newPrice) : "",
   });
   const [busy, setBusy] = useState(false);
@@ -4905,7 +4933,7 @@ function EditUpcomingModal({ u, onClose, setToast }) {
     setBusy(true);
     const res = await updateUpcoming(u.id, {
       name: f.name, year: Number(f.year) || null, min: Number(f.min) || null, max: Number(f.max) || null,
-      time: Number(f.time) || null, mechanics: f.mechanics, desc: f.desc, img: f.img,
+      time: Number(f.time) || null, mechanics: f.mechanics, desc: f.desc, img: f.img, ludumUrl: f.ludumUrl,
       newPrice: f.newPrice === "" ? null : Number(f.newPrice),
     });
     setBusy(false);
@@ -4936,6 +4964,9 @@ function EditUpcomingModal({ u, onClose, setToast }) {
         </div>
       </Field>
       <Field label="Description"><textarea value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
+        <TextInput value={f.ludumUrl} onChange={(e) => setF({ ...f, ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
+      </Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer les modifications</>}</Btn>
@@ -5045,7 +5076,7 @@ function LocationsPage({ setToast }) {
 
 function EditGameModal({ g, onClose, onSave }) {
   const { currentUser, toggleGameShared } = useApp();
-  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "" });
+  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "" });
   const [shared, setShared] = useState(g.shared !== false);
   const isOwner = currentUser && currentUser.id === g.ownerId;
   const previewRental = rentalPrice(Number(f.newPrice));
@@ -5064,6 +5095,9 @@ function EditGameModal({ g, onClose, onSave }) {
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
       <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
+        <TextInput value={f.ludumUrl} onChange={(e) => setF({ ...f, ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
+      </Field>
       {isOwner && (
         <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 12, background: shared ? "rgba(30,138,138,.08)" : "rgba(120,110,95,.08)", marginBottom: 16, cursor: "pointer" }}>
           <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.teal }} />
@@ -5936,7 +5970,7 @@ const backLinkStyle = { background: "none", border: "none", color: C.teal, fontF
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
   const { games, upcoming, users, currentUser, addOwner } = useApp();
-  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [] });
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   // Procuration : "self" = je le possède / "other" = quelqu'un d'autre le possède.
@@ -6050,6 +6084,9 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
       </Field>
       <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation & mécaniques"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} placeholder="Décrivez le jeu, son thème, ses mécaniques..." style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
+        <TextInput value={f.ludumUrl} onChange={(e) => setF({ ...f, ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
+      </Field>
 
       {/* Bloc : qui possède ce jeu ? (procuration possible) */}
       <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Ma ludothèque.">
