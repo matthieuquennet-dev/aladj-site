@@ -4,7 +4,7 @@ import {
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
-  Euro, Lock, ArrowRightLeft, Package
+  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer from "./PlayTimer";
@@ -2274,6 +2274,10 @@ function HomePage({ setPage, onAuth }) {
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Check size={15} color={C.amber} /></span>
                 <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Dispense de caution</b> sur la location des jeux entre membres.</span>
               </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Ticket size={15} color={C.amber} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Pass Ludovore annuel</b> grâce à notre partenariat avec Ludum.</span>
+              </div>
             </div>
             {!currentUser && <Btn full variant="amber" size="md" style={{ marginTop: 18 }} onClick={() => onAuth("register")}><UserPlus size={15} /> Adhérer</Btn>}
           </div>
@@ -2301,6 +2305,32 @@ function HomePage({ setPage, onAuth }) {
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 720, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. L'association est ouverte aux adultes de 18 ans et plus ; les jeunes de 14 ans et plus sont les bienvenus s'ils sont joueurs et accompagnés d'un adulte. Une pièce d'identité peut être demandée à l'entrée des moments jeux.
         </p>
+      </section>
+
+      {/* SOUTENIR L'ASSO — PARTENAIRE LUDUM */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 40px" }}>
+        <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navyDeep} 100%)`, borderRadius: 24, padding: "clamp(28px,4vw,44px)", boxShadow: "0 10px 30px rgba(18,41,63,.14)" }}>
+          <Dice color={C.amber} n={6} style={{ position: "absolute", width: 96, top: -16, right: 28, opacity: .22, transform: "rotate(12deg)" }} />
+          <Dice color={C.teal} n={4} style={{ position: "absolute", width: 64, bottom: -10, right: 132, opacity: .18, transform: "rotate(-10deg)" }} />
+          <div style={{ position: "relative", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 28 }}>
+            <div style={{ flex: "1 1 340px" }}>
+              <Badge color={C.amber} soft={false}><Heart size={13} /> Notre partenaire</Badge>
+              <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: "#fff", fontSize: "clamp(24px,3.6vw,32px)", margin: "16px 0 10px", lineHeight: 1.1 }}>
+                Achetez chez Ludum, soutenez l'asso
+              </h2>
+              <p style={{ color: "rgba(255,255,255,.82)", fontSize: 15.5, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 540 }}>
+                Pour soutenir l'association, pensez à acheter vos jeux chez <b style={{ color: "#fff" }}>Ludum</b> via notre lien partenaire. Une partie de votre achat revient à l'ALADJ, sans aucun surcoût pour vous.
+              </p>
+              <p style={{ color: "rgba(255,255,255,.6)", fontSize: 13.5, lineHeight: 1.55, margin: 0 }}>
+                <Ticket size={13} style={{ verticalAlign: "-2px" }} /> Les membres cotisants profitent en plus du <b style={{ color: C.amber }}>pass Ludovore annuel</b>.
+              </p>
+            </div>
+            <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
+              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, padding: "15px 28px", borderRadius: 14, textDecoration: "none", boxShadow: "0 8px 22px rgba(232,163,23,.45)", whiteSpace: "nowrap", flexShrink: 0 }}>
+              <ShoppingBag size={19} /> Acheter chez Ludum
+            </a>
+          </div>
+        </div>
       </section>
 
       {/* ---- Location de jeux : règles ---- */}
