@@ -76,6 +76,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // ui running
   const [hostView, setHostView] = useState(false);
+  const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
 
@@ -150,6 +151,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     channelRef.current = ch;
   }, [supabase, refetchTotals, refetchPlayers]);
 
+  // ---- rejoindre une partie (membre, ou invité avec son prénom) ------
+  const joinNow = useCallback(async (guestName) => {
+    const { error: e } = await supabase.rpc('join_session', {
+      p_join_code: joinCode,
+      p_guest_name: currentUser ? null : ((guestName && guestName.trim()) || 'Invité'),
+    });
+    if (e) throw e;
+    const { data: sess } = await supabase.from('play_sessions')
+      .select('*').eq('join_code', joinCode.toUpperCase()).single();
+    if (!sess) throw new Error('Partie introuvable');
+    setSession(sess);
+    await refetchPlayers(sess.id);
+    await refetchTotals(sess.id);
+    subscribe(sess.id);
+  }, [supabase, joinCode, currentUser, refetchPlayers, refetchTotals, subscribe]);
+
   useEffect(() => () => { if (channelRef.current) supabase.removeChannel(channelRef.current); }, [supabase]);
 
   // ---- horloge live (uniquement en partie) ---------------------------
@@ -182,19 +199,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
         if (joinCode) {
           // flux JOINEUR
-          const { data: pid, error: e } = await supabase.rpc('join_session', {
-            p_join_code: joinCode,
-            p_guest_name: currentUser ? null : 'Invité',
-          });
-          if (e) throw e;
-          const { data: sess } = await supabase.from('play_sessions')
-            .select('*').eq('join_code', joinCode.toUpperCase()).single();
-          if (!sess) throw new Error('Partie introuvable');
-          if (cancelled) return;
-          setSession(sess);
-          await refetchPlayers(sess.id);
-          await refetchTotals(sess.id);
-          subscribe(sess.id);
+          if (!currentUser) { if (!cancelled) setPhase('ask-name'); return; } // invité : on demande son prénom d'abord
+          await joinNow(null); // membre connecté : rejoint directement
           return; // la phase suivra session.status
         }
 
@@ -352,6 +358,26 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   if (phase === 'loading') return shell(<Centered>Connexion…</Centered>);
   if (phase === 'error') return shell(<Centered><button style={btnPrimary} onClick={onExit}>Retour</button></Centered>);
 
+  if (phase === 'ask-name') {
+    const go = () => {
+      if (!pendingName.trim()) return;
+      setPhase('loading');
+      joinNow(pendingName).catch((err) => { setError(err.message || String(err)); setPhase('error'); });
+    };
+    return shell(
+      <div>
+        <Label>Ton prénom</Label>
+        <p style={{ fontSize: 13, color: '#1A3A5C99', margin: '2px 0 12px' }}>Pour te différencier des autres joueurs à table.</p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input autoFocus value={pendingName} placeholder="Ex. Camille" style={{ ...input, flex: 1 }}
+            onChange={(e) => setPendingName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
+          <button style={btnPrimary} onClick={go}>Rejoindre</button>
+        </div>
+      </div>
+    );
+  }
+
   // ---------- SETUP ----------
   if (phase === 'setup') {
     return shell(
@@ -441,7 +467,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <PlayerRow key={p.id} color={ACCENTS[i % ACCENTS.length]} name={p.name} avatar={p.avatar_url}
               tag={p.auth_user_id ? null : 'sans tel'} />
           ))}
-          {isHost && <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />}
+          <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />
         </Card>
 
         {isHost ? (
@@ -479,15 +505,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Bouton "C'est mon tour" si j'ai un siège sur ce device */}
         {myPlayer && !showHost && (
           <button
-            onClick={() => claim(myPlayer.id)}
-            disabled={activeId === myPlayer.id && !neutral}
+            onClick={() => (activeId === myPlayer.id && !neutral ? toggleNeutral() : claim(myPlayer.id))}
             style={{
               width: '100%', border: 'none', borderRadius: 20, padding: '26px 16px', marginBottom: 16,
               fontFamily: TITLE, fontWeight: 600, fontSize: 24, color: C.white, cursor: 'pointer',
               background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy,
               boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
             }}>
-            {(activeId === myPlayer.id && !neutral) ? "À toi de jouer !" : "C'est mon tour"}
+            {(activeId === myPlayer.id && !neutral) ? "À toi de jouer ! (appuie pour pause)" : "C'est mon tour"}
             <div style={{ fontFamily: BODY, fontSize: 34, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
           </button>
         )}
