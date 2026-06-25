@@ -490,7 +490,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             const clickable = isHost; // l'hôte peut piloter / corriger
             return (
               <div key={p.id}
-                onClick={clickable ? () => claim(p.id) : undefined}
+                onClick={clickable ? () => (active ? toggleNeutral() : claim(p.id)) : undefined}
                 style={{
                   background: C.white, borderRadius: 16, padding: '12px 14px',
                   border: `2px solid ${active ? ACCENTS[i % ACCENTS.length] : 'transparent'}`,
