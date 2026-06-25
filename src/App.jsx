@@ -2150,9 +2150,14 @@ function Dice({ color, n, style }) {
 }
 
 function HomePage({ setPage, onAuth }) {
-  const { events, games, users, currentUser } = useApp();
+  const { events, games, users, currentUser, openChrono } = useApp();
   const [showMembers, setShowMembers] = useState(false);
   const [viewMemberId, setViewMemberId] = useState(null); // pour consulter la ludothèque d'un membre
+  const [chronoCode, setChronoCode] = useState("");
+  const joinChrono = () => {
+    const code = chronoCode.trim().toUpperCase();
+    if (code.length >= 4) openChrono({ joinCode: code });
+  };
   const upcoming = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
@@ -2412,6 +2417,30 @@ function HomePage({ setPage, onAuth }) {
               </a>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* ---- Chrono : rejoindre une partie en cours ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "10px 24px" }}>
+        <div style={{ background: C.cream, border: `2px solid ${C.teal}33`, borderRadius: 22, padding: "26px 24px", textAlign: "center" }}>
+          <Clock size={28} style={{ color: C.teal, marginBottom: 10 }} />
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 22, margin: "0 0 6px", color: C.navy }}>Rejoindre une partie chronométrée</h2>
+          <p style={{ fontSize: 14.5, color: C.navy, opacity: .75, margin: "0 0 18px", lineHeight: 1.5, maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
+            Saisissez le code donné par l'organisateur pour suivre votre temps de jeu sur votre téléphone.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", maxWidth: 440, margin: "0 auto" }}>
+            <input
+              value={chronoCode}
+              onChange={(e) => setChronoCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter") joinChrono(); }}
+              placeholder="Ex. VPDMS3"
+              maxLength={8}
+              style={{ flex: 1, minWidth: 170, padding: "13px 16px", borderRadius: 13, border: `1.5px solid ${C.teal}66`, fontSize: 18, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, letterSpacing: 4, textAlign: "center", textTransform: "uppercase", color: C.navy, background: "#fff", outline: "none" }}
+            />
+            <Btn variant="teal" onClick={joinChrono} disabled={chronoCode.trim().length < 4}>
+              <Clock size={17} /> Rejoindre
+            </Btn>
+          </div>
         </div>
       </section>
 
