@@ -2894,6 +2894,7 @@ function EventsPage({ onAuth, setToast }) {
   const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
   const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
   const [selected, setSelected] = useState(null);
+  const [dayPicker, setDayPicker] = useState(null); // plusieurs moments le même jour → fenêtre de choix
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
   const sorted = useMemo(() => {
@@ -2949,7 +2950,11 @@ function EventsPage({ onAuth, setToast }) {
             const hasEv = cell.events.length > 0;
             // clic : sur un événement → ouvre sa fiche ; sur case vide future → crée à cette date
             const handleClick = () => {
-              if (hasEv) { setSelected(cell.events[0].id); return; }
+              if (hasEv) {
+                if (cell.events.length === 1) setSelected(cell.events[0].id);
+                else setDayPicker(cell.events);
+                return;
+              }
               if (!isPast && currentUser) { setPresetDate(cell.iso); setShowCreate(true); }
             };
             const clickable = hasEv || (!isPast && currentUser);
@@ -2982,6 +2987,16 @@ function EventsPage({ onAuth, setToast }) {
 
       {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); setJustCreated(d); return {}; }} />}
       {justCreated && <ShareEventModal event={justCreated} onClose={() => setJustCreated(null)} />}
+      {dayPicker && (
+        <Modal open onClose={() => setDayPicker(null)} title="Plusieurs moments jeux ce jour">
+          <p style={{ margin: "0 0 16px", color: C.navy, opacity: .75, fontSize: 14.5 }}>Choisissez celui que vous voulez ouvrir :</p>
+          <div style={{ display: "grid", gap: 14 }}>
+            {dayPicker.map((ev) => (
+              <EventCardMini key={ev.id} e={ev} onOpen={() => { setSelected(ev.id); setDayPicker(null); }} />
+            ))}
+          </div>
+        </Modal>
+      )}
       {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Moment jeux supprimé."); }} onAuth={onAuth} />}
     </div>
   );
