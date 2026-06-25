@@ -458,9 +458,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const activeId = session?.current_player_id;
     const neutral = session?.neutral_active;
     const showHost = isHost && hostView;
+    const totalElapsed = session?.started_at
+      ? ((session.ended_at ? new Date(session.ended_at).getTime() : now) - new Date(session.started_at).getTime()) / 1000
+      : 0;
 
     return shell(
       <div>
+        {/* Chrono total de la partie : démarre au lancement, ne s'arrête qu'à « Terminer » */}
+        <div style={{ textAlign: 'center', background: C.navy, color: C.white, borderRadius: 16, padding: '12px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, letterSpacing: 1, opacity: .75, fontWeight: 700, textTransform: 'uppercase' }}>Durée de la partie</div>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 34, lineHeight: 1.1 }}>{fmt(totalElapsed)}</div>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
           {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
@@ -487,7 +496,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
           {players.map((p, i) => {
             const active = activeId === p.id && !neutral;
-            const clickable = isHost; // l'hôte peut piloter / corriger
+            const clickable = true; // tout participant peut lancer / mettre en pause
             return (
               <div key={p.id}
                 onClick={clickable ? () => (active ? toggleNeutral() : claim(p.id)) : undefined}
