@@ -2226,6 +2226,25 @@ function HomePage({ setPage, onAuth }) {
         <svg viewBox="0 0 1440 60" style={{ display: "block", width: "100%", height: 50 }} preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 24 T1440 20 L1440 60 Z" fill={C.cream} /></svg>
       </section>
 
+      {/* ---- Nouveauté : soirées jeux en ligne (BGA) ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "28px 24px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", background: `linear-gradient(135deg, ${C.purple}, #4a2856)`, borderRadius: 22, padding: "24px 26px", color: "#fff", boxShadow: "0 14px 36px rgba(107,58,122,.28)" }}>
+          <div style={{ display: "grid", placeItems: "center", width: 56, height: 56, borderRadius: 16, background: "rgba(255,255,255,.16)", flexShrink: 0 }}>
+            <Globe size={30} />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(20px,3vw,26px)", fontWeight: 700, lineHeight: 1.1, marginBottom: 6 }}>Nouveau : nos soirées jeux en ligne&nbsp;!</div>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, opacity: .92 }}>
+              En plus de nos rendez-vous au local, l'association organise désormais des parties <b>en ligne sur Board&nbsp;Game&nbsp;Arena</b>. Repérez les moments « en ligne » (en violet) dans le calendrier, et rejoignez la conversation Signal dédiée pour nous retrouver à l'heure du rendez-vous.
+            </p>
+          </div>
+          <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: C.purple, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "12px 18px", borderRadius: 13, textDecoration: "none", whiteSpace: "nowrap" }}>
+            <Globe size={17} /> Conversation « Jeux en ligne »
+          </a>
+        </div>
+      </section>
+
       {/* POINTS FORTS */}
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "64px 24px 20px" }}>
         <SectionTitle kicker="Pourquoi nous rejoindre" title="Nos points forts" />
