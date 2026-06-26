@@ -30,6 +30,9 @@ const SIGNAL_GROUPS = [
   { name: "Achat", color: "#E8A317", icon: Library,
     desc: "Pour organiser nos achats groupés de jeux.",
     url: "https://signal.group/#CjQKIOtkwx38mqzrzsVU6YdZoezItFjjVZtgVFAD-w2ZMe7iEhAHRKOSRBFHEKXBTkZNmVED" },
+  { name: "Jeux en ligne", color: "#6B3A7A", icon: Globe,
+    desc: "Pour nos soirées jeux en ligne sur Board Game Arena.",
+    url: "https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" },
 ];
 
 /* ---------- Utilitaires ---------- */
@@ -340,7 +343,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
 function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
-    notes: row.notes || "", hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
+    notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
     deadline: row.deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     guests: (guestsByEvent[row.id] || []).map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
@@ -928,7 +931,7 @@ function AppProvider({ children }) {
   const addEvent = useCallback(async (d) => {
     const { data, error } = await supabase.from("events").insert({
       event_date: d.date, event_time: d.time, place: d.place, place_id: d.placeId || null, min_players: d.min, max_players: d.max,
-      notes: d.notes || "", host_id: currentUser.id, deadline: d.deadline || null,
+      notes: d.notes || "", online: d.online || false, host_id: currentUser.id, deadline: d.deadline || null,
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
@@ -945,7 +948,7 @@ function AppProvider({ children }) {
   const updateEvent = useCallback(async (id, patch) => {
     const { error } = await supabase.from("events").update({
       event_date: patch.date, event_time: patch.time, place: patch.place, place_id: patch.placeId || null,
-      min_players: patch.min, max_players: patch.max, notes: patch.notes || "", deadline: patch.deadline || null,
+      min_players: patch.min, max_players: patch.max, notes: patch.notes || "", online: patch.online || false, deadline: patch.deadline || null,
     }).eq("id", id);
     if (error) return { error: error.message };
     await loadData();
@@ -2966,7 +2969,8 @@ function EventsPage({ onAuth, setToast }) {
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: isToday ? C.amber : C.navy }}>{cell.d}</span>
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
-                  return <span key={e.id} style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: reached ? C.teal : C.red, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.time}</span>;
+                  const pillBg = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
+                  return <span key={e.id} style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: pillBg, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.time}</span>;
                 })}
                 {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
               </button>
@@ -2974,7 +2978,7 @@ function EventsPage({ onAuth, setToast }) {
           })}
         </div>
         <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Legend color={C.teal} label="Quorum atteint" /><Legend color={C.red} label="En attente de joueurs" /><Legend color={C.amber} label="Aujourd'hui" outline />
+          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.amber} label="Aujourd'hui" outline />
         </div>
       </div>
 
@@ -3095,7 +3099,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -3110,7 +3114,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
   const submit = async () => {
     setErr("");
-    if (!f.date || !f.time || !f.place.trim()) { setErr("Renseignez la date, l'heure et le lieu."); return; }
+    if (!f.date || !f.time || (!f.online && !f.place.trim())) { setErr("Renseignez la date, l'heure et le lieu."); return; }
     const minN = Number(f.min) || 1;
     const maxN = f.max === "" || f.max == null ? null : Number(f.max); // null = pas de limite
     if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
@@ -3120,7 +3124,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     }
     setBusy(true);
     const res = await onCreate({
-      date: f.date, time: f.time, place: f.place.trim(), placeId: f.placeId,
+      date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online,
       min: minN, max: maxN, notes: f.notes.trim(),
       joinSelf: f.joinSelf, deadline, invites,
     });
@@ -3133,7 +3137,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
       {/* bandeau d'état dynamique */}
       <div style={{
         borderRadius: 16, padding: "18px 20px", marginBottom: 22, color: "#fff", transition: "background .4s",
-        background: reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`,
+        background: reached ? (f.online ? `linear-gradient(135deg,${C.purple},#4a2856)` : `linear-gradient(135deg,${C.teal},#13615f)`) : (f.online ? `linear-gradient(135deg,${C.amber},#b07d10)` : `linear-gradient(135deg,${C.red},#8a1f2d)`),
         display: "flex", alignItems: "center", gap: 14,
       }}>
         <div style={{ width: 46, height: 46, borderRadius: 13, background: "rgba(255,255,255,.2)", display: "grid", placeItems: "center" }}>
@@ -3153,7 +3157,23 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
         <Field label="Jour"><TextInput type="date" min={today} value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       </div>
-      <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button type="button" onClick={() => setF({ ...f, online: false, place: f.place === "Board Game Arena" ? "Local ALADJ — Gouville-sur-Mer" : f.place })}
+          style={{ flex: 1, padding: "11px", borderRadius: 12, border: `2px solid ${!f.online ? C.teal : "#e6dcc9"}`, background: !f.online ? "rgba(30,138,138,.08)" : "#fff", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <MapPin size={16} /> En présentiel
+        </button>
+        <button type="button" onClick={() => setF({ ...f, online: true, place: "Board Game Arena", placeId: null })}
+          style={{ flex: 1, padding: "11px", borderRadius: 12, border: `2px solid ${f.online ? C.purple : "#e6dcc9"}`, background: f.online ? "rgba(107,58,122,.08)" : "#fff", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <Globe size={16} /> En ligne (BGA)
+        </button>
+      </div>
+      {f.online ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée.
+        </div>
+      ) : (
+        <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} max={30} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
         <Field label="Joueurs max." hint="Laisser vide = illimité"><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="illimité" /></Field>
@@ -3499,7 +3519,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
 /* ---- Modale : modifier un moment jeux (créateur/admin) ---- */
 function EditEventModal({ e, onClose, onSave }) {
   const [f, setF] = useState({
-    date: e.date, time: e.time, place: e.place, placeId: e.placeId || null, min: e.min, max: e.max || "",
+    date: e.date, time: e.time, place: e.place, placeId: e.placeId || null, online: !!e.online, min: e.min, max: e.max || "",
     notes: e.notes || "",
     useDeadline: !!e.deadline,
     deadlineDate: e.deadline ? new Date(e.deadline).toISOString().slice(0, 10) : e.date,
@@ -3510,14 +3530,14 @@ function EditEventModal({ e, onClose, onSave }) {
 
   const submit = async () => {
     setErr("");
-    if (!f.date || !f.time || !f.place.trim()) { setErr("Renseignez la date, l'heure et le lieu."); return; }
+    if (!f.date || !f.time || (!f.online && !f.place.trim())) { setErr("Renseignez la date, l'heure et le lieu."); return; }
     const minN = Number(f.min) || 1;
     const maxN = f.max === "" || f.max == null ? null : Number(f.max);
     if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
     setBusy(true);
-    const res = await onSave({ date: f.date, time: f.time, place: f.place.trim(), placeId: f.placeId, min: minN, max: maxN, notes: f.notes.trim(), deadline });
+    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), deadline });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
@@ -3529,7 +3549,23 @@ function EditEventModal({ e, onClose, onSave }) {
         <Field label="Jour"><TextInput type="date" value={f.date} onChange={(ev) => setF({ ...f, date: ev.target.value })} /></Field>
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(ev) => setF({ ...f, time: ev.target.value })} /></Field>
       </div>
-      <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button type="button" onClick={() => setF({ ...f, online: false, place: f.place === "Board Game Arena" ? "Local ALADJ — Gouville-sur-Mer" : f.place })}
+          style={{ flex: 1, padding: "11px", borderRadius: 12, border: `2px solid ${!f.online ? C.teal : "#e6dcc9"}`, background: !f.online ? "rgba(30,138,138,.08)" : "#fff", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <MapPin size={16} /> En présentiel
+        </button>
+        <button type="button" onClick={() => setF({ ...f, online: true, place: "Board Game Arena", placeId: null })}
+          style={{ flex: 1, padding: "11px", borderRadius: 12, border: `2px solid ${f.online ? C.purple : "#e6dcc9"}`, background: f.online ? "rgba(107,58,122,.08)" : "#fff", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <Globe size={16} /> En ligne (BGA)
+        </button>
+      </div>
+      {f.online ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée.
+        </div>
+      ) : (
+        <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} value={f.min} onChange={(ev) => setF({ ...f, min: ev.target.value })} /></Field>
         <Field label="Joueurs max." hint="Vide = illimité"><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="illimité" /></Field>
