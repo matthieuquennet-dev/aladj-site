@@ -116,6 +116,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       .from('play_session_players')
       .select('id,profile_id,guest_name,auth_user_id')
       .eq('session_id', sessionId)
+      .order('sort_order', { ascending: true, nullsFirst: false })
       .order('joined_at', { ascending: true });
     setPlayers(await hydratePlayers(data || []));
   }, [supabase, hydratePlayers]);
@@ -311,6 +312,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
+  const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
@@ -533,9 +535,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <Avatar name={p.name} url={p.avatar_url} color={ACCENTS[i % ACCENTS.length]} size={38} />
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
                     {!p.auth_user_id && <div style={{ fontSize: 11, color: `${C.navy}88` }}>sans tel</div>}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, true); }} disabled={i === 0}
+                      style={{ ...orderBtn, opacity: i === 0 ? 0.3 : 1 }} aria-label="Monter dans l'ordre">▲</button>
+                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, false); }} disabled={i === players.length - 1}
+                      style={{ ...orderBtn, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
                   </div>
                 </div>
                 <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? ACCENTS[i % ACCENTS.length] : C.navy }}>
@@ -674,3 +682,4 @@ const btnPrimary = { ...btnBase, background: '#1E8A8A', color: '#fff' };
 const btnSecondary = { ...btnBase, background: '#1A3A5C12', color: '#1A3A5C' };
 const btnDanger = { ...btnBase, background: '#B5283A', color: '#fff' };
 const btnGhost = { background: 'transparent', border: 'none', color: '#1A3A5C99', fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: "'Nunito', sans-serif" };
+const orderBtn = { width: 28, height: 22, border: '1px solid #1A3A5C22', background: '#fff', borderRadius: 7, color: '#1A3A5C', fontSize: 10, lineHeight: 1, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0 };
