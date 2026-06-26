@@ -3267,6 +3267,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
   const deadlineStr = e.deadline ? new Date(e.deadline) : null;
   const deadlinePassed = deadlineStr && Date.now() > deadlineStr.getTime();
+  const overlayBg = e.online ? (reached ? "rgba(74,40,86,.92)" : "rgba(176,125,16,.92)") : (reached ? "rgba(19,97,95,.92)" : "rgba(138,31,45,.92)");
+  const headerGrad = e.online ? (reached ? `linear-gradient(135deg,${C.purple},#4a2856)` : `linear-gradient(135deg,${C.amber},#b07d10)`) : (reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`);
 
   const submitComment = async () => {
     if (!commentText.trim()) return;
@@ -3279,15 +3281,17 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
-      background: reached ? "rgba(19,97,95,.92)" : "rgba(138,31,45,.92)", transition: "background .4s", backdropFilter: "blur(3px)" }}>
+      background: overlayBg, transition: "background .4s", backdropFilter: "blur(3px)" }}>
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
-        <div style={{ padding: "22px 26px", color: "#fff", background: reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`, position: "relative" }}>
+        <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}><X size={18} /></button>
           <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
-            {!currentUser ? (
+            {e.online ? (
+              <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Globe size={16} /> Board Game Arena</span>
+            ) : !currentUser ? (
               <span style={{ display: "flex", gap: 6, alignItems: "center", opacity: .8 }}><MapPin size={16} /> <i>Lieu réservé aux membres connectés</i></span>
             ) : linkedPlace ? (
               <button onClick={() => setShowPlace(true)} style={{ display: "flex", gap: 6, alignItems: "center", background: "rgba(255,255,255,.18)", border: "none", borderRadius: 8, padding: "3px 10px", cursor: "pointer", color: "#fff", fontSize: 14.5, fontFamily: "'Nunito',sans-serif", textDecoration: "underline", textUnderlineOffset: 3 }} title="Voir les infos d'accès">
@@ -3300,6 +3304,15 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
 
         <div style={{ padding: 26 }}>
+          {e.online && (
+            <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", gap: 11, textDecoration: "none", background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "13px 15px", marginBottom: 16 }}>
+              <Globe size={22} color={C.purple} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, lineHeight: 1.45, color: C.navy }}>
+                Partie <b>en ligne sur Board Game Arena</b>. Rendez-vous sur la conversation Signal <b>«&nbsp;Jeux en ligne&nbsp;»</b> à {e.time}.
+              </span>
+            </a>
+          )}
           {/* date limite */}
           {deadlineStr && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: reached ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: reached ? C.teal : "#9a7b2a", fontWeight: 600 }}>
@@ -3919,6 +3932,54 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth }) {
   );
 }
 
+function fmtDuration(s) {
+  if (s == null) return "—";
+  const m = Math.round(s / 60);
+  if (m < 1) return "< 1 min";
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return mm ? `${h} h ${String(mm).padStart(2, "0")}` : `${h} h`;
+}
+
+function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
+  const [busyId, setBusyId] = useState(null);
+  const del = async (id) => {
+    if (!window.confirm("Écarter cette partie des statistiques ? Action définitive.")) return;
+    setBusyId(id);
+    const { error } = await supabase.rpc("delete_session", { p_session_id: id });
+    setBusyId(null);
+    if (error) { alert(error.message); return; }
+    onDeleted && onDeleted();
+  };
+  return (
+    <Modal open onClose={onClose} title={`Parties — ${gameName}`}>
+      {!sessions || sessions.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 20, color: "#9c8d79" }}>Aucune partie chronométrée pour l'instant.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {sessions.map((r) => (
+            <div key={r.session_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: C.paper, border: "1px solid #ece2d0", borderRadius: 12, padding: "11px 14px" }}>
+              <div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{fmtDuration(r.real_duration_seconds)} <span style={{ fontWeight: 400, color: "#8a7c6a", fontSize: 13 }}>· {r.player_count} joueur{r.player_count > 1 ? "s" : ""}</span></div>
+                <div style={{ fontSize: 12.5, color: "#8a7c6a" }}>{formatDateFr(new Date(r.started_at).toISOString().slice(0, 10))}</div>
+              </div>
+              {canDelete && (
+                <button onClick={() => del(r.session_id)} disabled={busyId === r.session_id}
+                  style={{ background: "rgba(181,40,58,.1)", border: "none", borderRadius: 9, padding: "7px 9px", cursor: "pointer", color: C.red, display: "grid", placeItems: "center" }} title="Écarter cette partie">
+                  {busyId === r.session_id ? <Loader2 size={15} className="aladj-spin" /> : <Trash2 size={15} />}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {canDelete && sessions && sessions.length > 0 && (
+        <p style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 14, marginBottom: 0 }}>Écartez les parties non représentatives (chrono oublié, partie interrompue…) pour affiner les moyennes.</p>
+      )}
+    </Modal>
+  );
+}
+
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, toggleDiscover, openChrono } = useApp();
   const { avg, count } = gameStats(g);
@@ -3930,6 +3991,10 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const canManage = currentUser && (isOwner || currentUser.admin);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+  const [sessions, setSessions] = useState(null);
+  const [myAvg, setMyAvg] = useState(null);
+  const [allAvg, setAllAvg] = useState(null);
 
   // La description n'est pas chargée dans le listing (pour alléger l'Egress) :
   // on la récupère à la demande, uniquement quand la fiche est ouverte.
@@ -3943,6 +4008,31 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
     }
     return () => { cancelled = true; };
   }, [g.id, g.desc]);
+
+  // Statistiques de durée des parties chronométrées (chargées à l'ouverture de la fiche).
+  const loadStats = useCallback(async () => {
+    const { data: ss } = await supabase.from("v_game_sessions").select("session_id,started_at,real_duration_seconds,player_count").eq("game_id", g.id).order("started_at", { ascending: false });
+    setSessions(ss || []);
+    const { data: all } = await supabase.from("v_game_avg_player_time").select("avg_player_seconds").eq("game_id", g.id).maybeSingle();
+    setAllAvg(all?.avg_player_seconds ?? null);
+    if (currentUser) {
+      const { data: m } = await supabase.from("v_game_player_time").select("avg_player_seconds").eq("game_id", g.id).eq("profile_id", currentUser.id).maybeSingle();
+      setMyAvg(m?.avg_player_seconds ?? null);
+    }
+  }, [g.id, currentUser]);
+  useEffect(() => { loadStats(); }, [loadStats]);
+
+  // Durée moyenne ventilée par nombre de joueurs (calculée à partir des parties).
+  const byCount = useMemo(() => {
+    if (!sessions || !sessions.length) return [];
+    const map = {};
+    sessions.forEach((s) => {
+      const k = s.player_count || 0;
+      if (!map[k]) map[k] = { player_count: k, sum: 0, count: 0 };
+      map[k].sum += s.real_duration_seconds; map[k].count += 1;
+    });
+    return Object.values(map).map((m) => ({ player_count: m.player_count, avg: Math.round(m.sum / m.count), count: m.count })).sort((a, b) => a.player_count - b.player_count);
+  }, [sessions]);
 
   // Envies de découvrir : qui les a, est-ce que c'est moi ?
   const wantIds = g.wantIds || [];
@@ -3994,6 +4084,31 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
           ))}
         </div>
       </div>
+
+      {/* durée moyenne des parties chronométrées, par nombre de joueurs */}
+      {sessions && sessions.length > 0 && (
+        <div style={{ background: "rgba(30,138,138,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 12 }}>
+            <Clock size={24} color={C.teal} style={{ flexShrink: 0 }} />
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: C.navy }}>Durée moyenne d'une partie</div>
+          </div>
+          <div style={{ display: "grid", gap: 7 }}>
+            {byCount.map((b) => (
+              <div key={b.player_count} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 14.5 }}>
+                <span style={{ color: "#6b5d49" }}>{b.player_count} joueur{b.player_count > 1 ? "s" : ""}</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>{fmtDuration(b.avg)} <span style={{ fontWeight: 400, color: "#9c8d79", fontSize: 12 }}>· {b.count} partie{b.count > 1 ? "s" : ""}</span></span>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setShowSessions(true)} style={{ background: "none", border: "none", color: C.teal, fontSize: 12.5, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "10px 0 0", fontFamily: "'Nunito',sans-serif" }}>Voir le détail des {sessions.length} partie{sessions.length > 1 ? "s" : ""}</button>
+          {(allAvg != null || myAvg != null) && (
+            <div style={{ borderTop: "1px solid rgba(30,138,138,.18)", marginTop: 12, paddingTop: 11, display: "grid", gap: 5, fontSize: 13.5 }}>
+              {allAvg != null && <div style={{ color: "#6b5d49" }}>Temps de jeu moyen par joueur : <b style={{ color: C.navy }}>{fmtDuration(allAvg)}</b></div>}
+              {myAvg != null && <div style={{ color: "#6b5d49" }}>Ton temps de jeu moyen : <b style={{ color: C.teal }}>{fmtDuration(myAvg)}</b></div>}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ma note */}
       <div style={{ background: C.paper, border: "2px solid #ece2d0", borderRadius: 16, padding: "14px 18px", marginBottom: 18 }}>
@@ -4118,6 +4233,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {editing && <EditGameModal g={{ ...g, desc }} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
+      {showSessions && <SessionsModal sessions={sessions} gameName={g.name} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
 }
