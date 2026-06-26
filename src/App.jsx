@@ -1740,6 +1740,7 @@ function Modal({ open, onClose, children, title, width = 560 }) {
     <div
       onMouseDown={(e) => { downOnOverlay.current = e.target === e.currentTarget; }}
       onMouseUp={(e) => { if (downOnOverlay.current && e.target === e.currentTarget) onClose(); downOnOverlay.current = false; }}
+      onClick={(e) => e.stopPropagation()}
       style={{
         position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
         display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
