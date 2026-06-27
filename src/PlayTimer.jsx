@@ -313,9 +313,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
-  const beginSetup = () => rpc('begin_setup', { p_session_id: sid });
-  const beginPlay = () => rpc('begin_play', { p_session_id: sid });
-  const beginTeardown = () => rpc('begin_teardown', { p_session_id: sid });
+  const togglePhase = (ph) => rpc('toggle_phase', { p_session_id: sid, p_phase: ph });
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
@@ -490,33 +488,39 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const neutral = session?.neutral_active;
     const showHost = isHost && hostView;
 
-    // Phases : prep (avant lancement) → play (jeu) → wrap (rangement).
-    const playStarted = !!session?.play_started_at;
-    const playEnded = !!session?.play_ended_at;
-    const gamePhase = !playStarted ? 'prep' : (!playEnded ? 'play' : 'wrap');
+    // Phases cumulées : chaque phase additionne son temps et peut être mise en pause / reprise.
+    const activePhase = session?.active_phase || null;
+    const segMs = session?.seg_started_at ? new Date(session.seg_started_at).getTime() : null;
+    const liveSeg = (activePhase && segMs) ? Math.max(0, (now - segMs) / 1000) : 0;
+    const setupTotal = (session?.setup_seconds || 0) + (activePhase === 'setup' ? liveSeg : 0);
+    const playTotal = (session?.play_seconds || 0) + (activePhase === 'play' ? liveSeg : 0);
+    const teardownTotal = (session?.teardown_seconds || 0) + (activePhase === 'teardown' ? liveSeg : 0);
+    const hasPlayed = (session?.play_seconds || 0) > 0 || activePhase === 'play';
+    const hasWrapped = (session?.teardown_seconds || 0) > 0 || activePhase === 'teardown';
+    const gamePhase = hasWrapped ? 'wrap' : (hasPlayed ? 'play' : 'prep');
+    const totalElapsed = playTotal; // « Durée de la partie » = uniquement le jeu
 
-    // Chrono « Durée de la partie » : uniquement la phase de jeu (hors mise en place / rangement).
-    const playStartMs = session?.play_started_at ? new Date(session.play_started_at).getTime() : null;
-    const playEndMs = session?.play_ended_at ? new Date(session.play_ended_at).getTime()
-      : (session?.ended_at ? new Date(session.ended_at).getTime() : now);
-    const totalElapsed = playStartMs ? Math.max(0, (playEndMs - playStartMs) / 1000) : 0;
-
-    // Chrono du segment de phase en cours (mise en place ou rangement).
-    const segStartMs = session?.seg_started_at ? new Date(session.seg_started_at).getTime() : null;
-    const segElapsed = segStartMs ? Math.max(0, (now - segStartMs) / 1000) : 0;
-    const setupRunning = gamePhase === 'prep' && segStartMs != null;
-    const teardownRunning = gamePhase === 'wrap' && segStartMs != null;
-
-    const phaseBtn = (label, sub, onClick, bg, disabled) => (
-      <button onClick={disabled ? undefined : onClick} disabled={disabled} style={{
-        width: '100%', border: 'none', borderRadius: 16, padding: '16px 14px',
-        fontFamily: TITLE, fontWeight: 600, fontSize: 18, color: C.white, cursor: disabled ? 'default' : 'pointer',
-        background: bg, opacity: disabled ? 0.4 : 1, boxShadow: disabled ? 'none' : '0 4px 0 rgba(0,0,0,0.12)', textAlign: 'center',
-      }}>
-        {label}
-        {sub != null && <div style={{ fontFamily: BODY, fontSize: 26, fontWeight: 800, marginTop: 4 }}>{sub}</div>}
-      </button>
-    );
+    // Un bouton de phase : en cours (clic = pause), en pause (clic = reprendre) ou à démarrer.
+    const phaseBtn = (phase, labels, total, started, color, disabled) => {
+      const running = activePhase === phase;
+      const paused = !running && started;
+      const label = running ? labels.running : (paused ? labels.paused : labels.idle);
+      const bg = disabled ? '#9aa5b1' : (running ? color : (paused ? C.navyDeep : C.navy));
+      return (
+        <button onClick={disabled ? undefined : () => togglePhase(phase)} disabled={disabled} style={{
+          width: '100%', border: 'none', borderRadius: 16, padding: '16px 14px',
+          fontFamily: TITLE, fontWeight: 600, fontSize: 18, color: C.white, cursor: disabled ? 'default' : 'pointer',
+          background: bg, opacity: disabled ? 0.5 : 1, boxShadow: disabled ? 'none' : '0 4px 0 rgba(0,0,0,0.12)', textAlign: 'center',
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {running && <span style={{ fontSize: 14 }}>⏸</span>}
+            {paused && <span style={{ fontSize: 14 }}>▶</span>}
+            {label}
+          </span>
+          {(total > 0 || running) && <div style={{ fontFamily: BODY, fontSize: 26, fontWeight: 800, marginTop: 4 }}>{fmt(total)}</div>}
+        </button>
+      );
+    };
 
     return shell(
       <div>
@@ -527,22 +531,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           {gamePhase === 'prep' && <div style={{ fontSize: 12, opacity: .8, marginTop: 2 }}>La partie n'a pas encore démarré</div>}
         </div>
 
-        {/* Boutons de phase */}
+        {/* Boutons de phase (temps cumulé, pause / reprise) */}
         <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
-          {phaseBtn(
-            setupRunning ? 'Mise en place & explications…' : 'Mise en place & explications',
-            setupRunning ? fmt(segElapsed) : null,
-            beginSetup, setupRunning ? C.teal : C.navy, playStarted
-          )}
-          {phaseBtn(
-            gamePhase === 'play' ? 'Partie en cours' : 'Lancer la partie',
-            null, beginPlay, gamePhase === 'play' ? C.teal : C.amber, gamePhase === 'wrap'
-          )}
-          {phaseBtn(
-            teardownRunning ? 'Rangement…' : 'Rangement',
-            teardownRunning ? fmt(segElapsed) : null,
-            beginTeardown, teardownRunning ? C.purple : C.navy, !playStarted
-          )}
+          {phaseBtn('setup', { idle: 'Mise en place & explications', running: 'Mise en place en cours', paused: 'Reprendre la mise en place' }, setupTotal, setupTotal > 0, C.teal, hasPlayed)}
+          {phaseBtn('play', { idle: 'Lancer la partie', running: 'Partie en cours', paused: 'Reprendre la partie' }, playTotal, (session?.play_seconds || 0) > 0, C.amber, hasWrapped)}
+          {phaseBtn('teardown', { idle: 'Rangement', running: 'Rangement en cours', paused: 'Reprendre le rangement' }, teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
         </div>
 
         {/* En-tête de manche (pendant le jeu) */}
@@ -555,7 +548,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
 
         {/* Gros bouton « C'est mon tour » (jeu uniquement, si j'ai un siège sur ce device) */}
-        {gamePhase === 'play' && myPlayer && !showHost && (
+        {activePhase === 'play' && myPlayer && !showHost && (
           <button
             onClick={() => (activeId === myPlayer.id && !neutral ? toggleNeutral() : claim(myPlayer.id))}
             style={{
@@ -571,8 +564,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Tableau de bord des joueurs (cliquable uniquement pendant le jeu) */}
         <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
           {players.map((p, i) => {
-            const active = activeId === p.id && !neutral && gamePhase === 'play';
-            const clickable = gamePhase === 'play';
+            const active = activeId === p.id && !neutral && activePhase === 'play';
+            const clickable = activePhase === 'play';
             return (
               <div key={p.id}
                 onClick={clickable ? () => (active ? toggleNeutral() : claim(p.id)) : undefined}
@@ -606,8 +599,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-            {gamePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {gamePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
+            {activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
+            {activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
         )}
