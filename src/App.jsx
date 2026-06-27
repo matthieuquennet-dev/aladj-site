@@ -552,6 +552,9 @@ function AppProvider({ children }) {
   /* ---- Charger le profil du membre connecté ---- */
   const loadCurrentUser = useCallback(async () => {
     if (!authUser) { setCurrentUser(null); return; }
+    // Invité anonyme (rejoint une partie via le chronomètre, sans compte) :
+    // pas de profil, pas de membre dans la liste. On évite ainsi de créer de faux décisionnaires.
+    if (authUser.is_anonymous) { setCurrentUser(null); return; }
     let { data } = await supabase.from("profiles").select("*").eq("id", authUser.id).single();
     // Première connexion via Google : pas encore de profil → on en crée un.
     if (!data) {
@@ -656,6 +659,16 @@ function AppProvider({ children }) {
   const unbanUser = useCallback(async (userId) => {
     if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
     const { error } = await supabase.from("profiles").update({ banned: false }).eq("id", userId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Suppression définitive d'un membre (faux invités, comptes à retirer).
+  const deleteUser = useCallback(async (userId) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    if (userId === currentUser.id) return { error: "Vous ne pouvez pas vous supprimer vous-même." };
+    const { error } = await supabase.rpc("delete_member", { p_user_id: userId });
     if (error) return { error: error.message };
     await loadData();
     return {};
@@ -1268,7 +1281,7 @@ function AppProvider({ children }) {
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
-    banUser, unbanUser, memberEmails, bannedNotice, setBannedNotice,
+    banUser, unbanUser, deleteUser, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     dismissedIds, dismissReco,
     addExtension, addExtensionOwner, removeExtensionOwner,
@@ -2498,10 +2511,11 @@ function HomePage({ setPage, onAuth }) {
 
 /* ---- Pop-up : liste des membres, couleur selon statut ---- */
 function MembersModal({ onClose, onPickMember }) {
-  const { users, currentUser, memberEmails, banUser, unbanUser } = useApp();
+  const { users, currentUser, memberEmails, banUser, unbanUser, deleteUser } = useApp();
   const isAdmin = currentUser && currentUser.admin;
   const [busyId, setBusyId] = useState(null);
   const [confirmBan, setConfirmBan] = useState(null); // id du membre en attente de confirmation de bannissement
+  const [confirmDelete, setConfirmDelete] = useState(null); // id du membre en attente de confirmation de suppression
   // Tri : les bannis en bas, puis alphabétique
   const sorted = [...users].sort((a, b) => {
     if (a.banned !== b.banned) return a.banned ? 1 : -1;
@@ -2517,6 +2531,12 @@ function MembersModal({ onClose, onPickMember }) {
     setBusyId(id);
     await unbanUser(id);
     setBusyId(null);
+  };
+  const doDelete = async (id) => {
+    setBusyId(id);
+    const res = await deleteUser(id);
+    setBusyId(null); setConfirmDelete(null);
+    if (res?.error) alert(res.error);
   };
 
   return (
@@ -2554,15 +2574,26 @@ function MembersModal({ onClose, onPickMember }) {
                 </span>
               </button>
               {isAdmin && !isMe && (
-                m.banned ? (
-                  <Btn size="sm" variant="teal" onClick={() => doUnban(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : <>Débannir</>}</Btn>
+                confirmDelete === m.id ? (
+                  <span style={{ display: "flex", gap: 5 }}>
+                    <Btn size="sm" variant="danger" onClick={() => doDelete(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : "Supprimer définitivement"}</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setConfirmDelete(null)}>Non</Btn>
+                  </span>
+                ) : m.banned ? (
+                  <span style={{ display: "flex", gap: 5 }}>
+                    <Btn size="sm" variant="teal" onClick={() => doUnban(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : <>Débannir</>}</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setConfirmDelete(m.id)} title="Supprimer définitivement"><Trash2 size={13} /></Btn>
+                  </span>
                 ) : confirmBan === m.id ? (
                   <span style={{ display: "flex", gap: 5 }}>
                     <Btn size="sm" variant="danger" onClick={() => doBan(m.id)} disabled={busyId === m.id}>{busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : "Confirmer"}</Btn>
                     <Btn size="sm" variant="soft" onClick={() => setConfirmBan(null)}>Non</Btn>
                   </span>
                 ) : (
-                  <Btn size="sm" variant="soft" onClick={() => setConfirmBan(m.id)} title="Bannir ce membre"><Lock size={13} /></Btn>
+                  <span style={{ display: "flex", gap: 5 }}>
+                    <Btn size="sm" variant="soft" onClick={() => setConfirmDelete(m.id)} title="Supprimer définitivement"><Trash2 size={13} /></Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setConfirmBan(m.id)} title="Bannir ce membre"><Lock size={13} /></Btn>
+                  </span>
                 )
               )}
               {!isAdmin && <ChevronRight size={18} color="#c9bba6" />}
@@ -4707,10 +4738,13 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
   // Détection de doublons : à la fois dans les fiches À venir ET dans la ludothèque
   const similarUpc = useMemo(() => dismissed ? [] : findSimilarGames(upcoming, f.name), [upcoming, f.name, dismissed]);
   const similarLudo = useMemo(() => dismissed ? [] : findSimilarGames(games, f.name), [games, f.name, dismissed]);
+  const [busy, setBusy] = useState(false); // anti double-clic
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return;
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
-    onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice });
+    setBusy(true);
+    await onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice });
   };
 
   return (
@@ -4767,7 +4801,7 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
       </Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
-      <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter en veille</Btn>
+      <Btn full size="lg" variant="amber" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Ajouter en veille</>}</Btn>
     </div>
   );
 }
@@ -6031,6 +6065,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
   const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
+  const [busy, setBusy] = useState(false); // anti double-clic : verrouille le bouton pendant la création
   // Procuration : "self" = je le possède / "other" = quelqu'un d'autre le possède.
   // forUserIds = les autres membres pour qui on déclare la possession.
   const [ownership, setOwnership] = useState("self");
@@ -6051,12 +6086,14 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
     return findSimilarGames(upcoming || [], f.name);
   }, [upcoming, f.name, dismissed]);
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return;
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
     if (ownership === "other" && forUserIds.length === 0) {
       setErr("Sélectionnez au moins un membre qui possède ce jeu, ou choisissez « Je le possède »."); return;
     }
-    onDone({
+    setBusy(true);
+    await onDone({
       ...f, name: f.name.trim(),
       year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "",
       selfOwns: ownership === "self" || ownership === "both",
@@ -6188,7 +6225,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
       </Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
-      <Btn full size="lg" variant="amber" onClick={submit}><Plus size={18} /> Ajouter le jeu</Btn>
+      <Btn full size="lg" variant="amber" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Ajouter le jeu</>}</Btn>
     </div>
   );
 }
