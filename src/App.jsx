@@ -1211,6 +1211,12 @@ function AppProvider({ children }) {
     await supabase.from("notifications").update({ read: true }).eq("id", notifId);
   }, []);
 
+  // Supprime une notification (croix dans « Ma ludothèque »).
+  const deleteNotification = useCallback(async (notifId) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    await supabase.from("notifications").delete().eq("id", notifId);
+  }, []);
+
   // Marque toutes mes notifications comme lues.
   const markAllNotificationsRead = useCallback(async () => {
     if (!currentUser) return;
@@ -1263,7 +1269,7 @@ function AppProvider({ children }) {
     toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, memberEmails, bannedNotice, setBannedNotice,
-    notifications, markNotificationRead, markAllNotificationsRead,
+    notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     dismissedIds, dismissReco,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
@@ -2490,173 +2496,6 @@ function HomePage({ setPage, onAuth }) {
   );
 }
 
-/* ---- Admin : migration des images vers Cloudflare R2 (one-shot, idempotent) ----
-   Rapatrie en lot les images encore hébergées ailleurs (ancien stockage Supabase,
-   BoardGameGeek) vers R2. Réutilise uploadImageToStorage(), donc cohérent avec le
-   code live. Relançable sans risque : les URL déjà sur R2 sont ignorées. */
-function R2MigrationSection() {
-  // Tables + colonne image. NB : la migration des avatars dépend des règles RLS de
-  // "profiles" ; si l'admin ne peut pas écrire le profil des autres, ces lignes
-  // ressortiront en échec (il faudra alors une policy admin ou une RPC dédiée).
-  const TARGETS = [
-    { table: "games", col: "image_url", folder: "games", label: "Jeux" },
-    { table: "extensions", col: "image_url", folder: "extensions", label: "Extensions" },
-    { table: "upcoming_games", col: "image_url", folder: "upcoming", label: "Sorties à venir" },
-    { table: "profiles", col: "avatar_url", folder: "avatars", label: "Avatars" },
-  ];
-
-  const [phase, setPhase] = useState("idle"); // idle | confirm | scanning | running | done
-  const [total, setTotal] = useState(0);
-  const [done, setDone] = useState(0);
-  const [errCount, setErrCount] = useState(0);
-  const [current, setCurrent] = useState("");
-  const [summary, setSummary] = useState(null); // { byTable: { label: { ok, err, total } } }
-
-  const run = async () => {
-    setPhase("scanning");
-    setDone(0); setErrCount(0); setSummary(null); setCurrent("");
-
-    // 1) Recensement — on ne lit que id + colonne image (requête économe en egress).
-    const work = [];
-    const byTable = {};
-    for (const t of TARGETS) {
-      byTable[t.label] = { ok: 0, err: 0, total: 0 };
-      const { data, error } = await supabase.from(t.table).select(`id, ${t.col}`);
-      if (error) continue;
-      for (const row of data || []) {
-        const url = row[t.col];
-        if (url && !url.startsWith(R2_PUBLIC_PREFIX)) {
-          work.push({ ...t, id: row.id, url });
-          byTable[t.label].total++;
-        }
-      }
-    }
-    setTotal(work.length);
-    if (work.length === 0) { setSummary({ byTable }); setPhase("done"); return; }
-
-    // 2) Traitement avec une petite concurrence (4 en parallèle).
-    setPhase("running");
-    let okN = 0, errN = 0, idx = 0;
-    const CONCURRENCY = 4;
-
-    const worker = async () => {
-      while (idx < work.length) {
-        const item = work[idx++];
-        setCurrent(`${item.label} · ${String(item.id).slice(0, 8)}`);
-        try {
-          const newUrl = await uploadImageToStorage(item.url, item.folder);
-          if (newUrl && newUrl.startsWith(R2_PUBLIC_PREFIX)) {
-            // .select() pour confirmer l'écriture (détecte un blocage RLS silencieux)
-            const { data: upd, error } = await supabase
-              .from(item.table).update({ [item.col]: newUrl }).eq("id", item.id).select(item.col);
-            if (!error && Array.isArray(upd) && upd.length > 0) {
-              okN++; byTable[item.label].ok++;
-            } else {
-              errN++; byTable[item.label].err++;
-            }
-          } else {
-            errN++; byTable[item.label].err++; // uploadImageToStorage a renvoyé l'URL d'origine = échec
-          }
-        } catch {
-          errN++; byTable[item.label].err++;
-        }
-        setDone(okN); setErrCount(errN);
-      }
-    };
-
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-    setSummary({ byTable });
-    setCurrent("");
-    setPhase("done");
-  };
-
-  const processed = done + errCount;
-  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
-
-  return (
-    <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px dashed #e2d8c8" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.purple, fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>
-        <Package size={15} /> Maintenance — migration des images vers R2
-      </div>
-      <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "0 0 12px", lineHeight: 1.5 }}>
-        Rapatrie les images encore hébergées ailleurs (ancien stockage Supabase, BoardGameGeek) vers Cloudflare R2.
-        Opération relançable sans risque : ce qui est déjà sur R2 est ignoré.
-      </p>
-
-      {phase === "idle" && (
-        <Btn size="sm" variant="purple" onClick={() => setPhase("confirm")}>
-          <Package size={14} /> Préparer la migration
-        </Btn>
-      )}
-
-      {phase === "confirm" && (
-        <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 12, padding: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: C.navyDeep, marginBottom: 10, lineHeight: 1.5 }}>
-            <AlertTriangle size={15} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>Chaque image encore sur Supabase sera téléchargée une dernière fois (un peu d'egress) puis repoussée sur R2. Les images BGG, elles, ne touchent pas l'egress Supabase. À lancer de préférence sur un cycle de quota frais. Garde l'onglet ouvert le temps du traitement.</span>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" variant="purple" onClick={run}><Package size={14} /> Lancer maintenant</Btn>
-            <Btn size="sm" variant="soft" onClick={() => setPhase("idle")}>Annuler</Btn>
-          </div>
-        </div>
-      )}
-
-      {(phase === "scanning" || phase === "running") && (
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.teal, fontWeight: 600, marginBottom: 8 }}>
-            <Loader2 size={15} className="aladj-spin" />
-            {phase === "scanning" ? "Recensement des images…" : `Migration : ${processed}/${total}`}
-          </div>
-          {phase === "running" && (
-            <>
-              <div style={{ height: 8, background: "rgba(26,58,92,.1)", borderRadius: 6, overflow: "hidden" }}>
-                <div style={{ width: `${pct}%`, height: "100%", background: C.teal, transition: "width .2s" }} />
-              </div>
-              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "#8a7c6a", marginTop: 6 }}>
-                <span style={{ color: C.teal }}>✓ {done}</span>
-                {errCount > 0 && <span style={{ color: C.red }}>✗ {errCount}</span>}
-                {current && <span style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: 11, opacity: 0.7 }}>{current}</span>}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {phase === "done" && summary && (
-        <div>
-          {total === 0 ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.teal, fontWeight: 600 }}>
-              <Check size={15} /> Tout est déjà sur R2, rien à migrer.
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: errCount > 0 ? C.amber : C.teal, fontWeight: 600, marginBottom: 8 }}>
-              {errCount > 0 ? <AlertTriangle size={15} /> : <Check size={15} />}
-              Migration terminée : {done} réussie{done > 1 ? "s" : ""}{errCount > 0 ? `, ${errCount} en échec` : ""}.
-            </div>
-          )}
-          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#6e6253" }}>
-            {Object.entries(summary.byTable).filter(([, s]) => s.total > 0).map(([label, s]) => (
-              <div key={label} style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>{label}</span>
-                <span><span style={{ color: C.teal }}>{s.ok} ✓</span>{s.err > 0 && <span style={{ color: C.red, marginLeft: 8 }}>{s.err} ✗</span>}</span>
-              </div>
-            ))}
-          </div>
-          {errCount > 0 && (
-            <p style={{ fontSize: 11.5, color: "#a89a86", marginTop: 8, lineHeight: 1.5 }}>
-              Les échecs sur les avatars viennent souvent des règles RLS de la table profiles. Pour le reste, il suffit en général de relancer : les images déjà migrées sont ignorées.
-            </p>
-          )}
-          <div style={{ marginTop: 10 }}>
-            <Btn size="sm" variant="soft" onClick={run}>Relancer le balayage</Btn>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ---- Pop-up : liste des membres, couleur selon statut ---- */
 function MembersModal({ onClose, onPickMember }) {
   const { users, currentUser, memberEmails, banUser, unbanUser } = useApp();
@@ -2734,7 +2573,6 @@ function MembersModal({ onClose, onPickMember }) {
       <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>
         {isAdmin ? "Cliquez sur un membre pour voir sa ludothèque. Le bannissement bloque l'accès au site sans supprimer ses jeux." : "Cliquez sur un membre pour voir sa ludothèque."}
       </p>
-      {isAdmin && <R2MigrationSection />}
     </Modal>
   );
 }
@@ -6359,7 +6197,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead } = useApp();
+  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -6549,7 +6387,7 @@ function MyLudoPage({ setToast, setPage }) {
               {shown.map((n) => {
                 const Icon = iconFor(n.type);
                 return (
-                  <button key={n.id} onClick={() => {
+                  <div key={n.id} role="button" tabIndex={0} onClick={() => {
                     markNotificationRead(n.id);
                     if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
                     else if (n.linkKind === "event") setPage("soirees");
@@ -6564,8 +6402,14 @@ function MyLudoPage({ setToast, setPage }) {
                       <span style={{ display: "block", fontSize: 13.5, color: "#5e5346", lineHeight: 1.4 }}>{n.message}</span>
                       <span style={{ display: "block", fontSize: 11, color: "#a89a86", marginTop: 1 }}>{timeAgoFr(n.createdAt)}</span>
                     </span>
-                    {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, flexShrink: 0 }} />}
-                  </button>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                      {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />}
+                      <button title="Supprimer cette notification" onClick={(e) => { e.stopPropagation(); deleteNotification(n.id); }}
+                        style={{ background: "none", border: "none", padding: 4, cursor: "pointer", color: "#a89a86", display: "grid", placeItems: "center", borderRadius: 6 }}>
+                        <X size={15} />
+                      </button>
+                    </span>
+                  </div>
                 );
               })}
             </div>
