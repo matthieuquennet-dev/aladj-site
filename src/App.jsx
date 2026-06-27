@@ -1759,6 +1759,7 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   // intempestives quand on sélectionne du texte dans un champ et que le geste
   // déborde hors de la fenêtre (cas classique du "mousedown dedans, mouseup dehors").
   const downOnOverlay = useRef(false);
+  const overlayRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -1766,9 +1767,26 @@ function Modal({ open, onClose, children, title, width = 560 }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
+
+  // À l'ouverture, on rend la fenêtre visible : on remonte en haut l'overlay courant
+  // ET les overlays parents qui seraient défilés. Sans ça, une fenêtre ouverte depuis
+  // une fiche déjà scrollée apparaît hors écran sur mobile (le flou des overlays parents
+  // crée un « containing block » qui décale les fenêtres imbriquées).
+  useEffect(() => {
+    if (!open) return;
+    const el = overlayRef.current;
+    if (el) el.scrollTop = 0;
+    let p = el ? el.parentElement : null;
+    while (p && p !== document.body) {
+      if (p.scrollHeight > p.clientHeight + 1) p.scrollTop = 0;
+      p = p.parentElement;
+    }
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
+      ref={overlayRef}
       onMouseDown={(e) => { downOnOverlay.current = e.target === e.currentTarget; }}
       onMouseUp={(e) => { if (downOnOverlay.current && e.target === e.currentTarget) onClose(); downOnOverlay.current = false; }}
       onClick={(e) => e.stopPropagation()}
@@ -3876,6 +3894,8 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [sessions, setSessions] = useState(null);
   const [myAvg, setMyAvg] = useState(null);
   const [allAvg, setAllAvg] = useState(null);
+  const [setupAvg, setSetupAvg] = useState(null);
+  const [teardownAvg, setTeardownAvg] = useState(null);
   const [declaring, setDeclaring] = useState(false);
   const [selDeclare, setSelDeclare] = useState([]);
   const [declBusy, setDeclBusy] = useState(false);
@@ -3901,6 +3921,9 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
     setSessions(ss || []);
     const { data: all } = await supabase.from("v_game_avg_player_time").select("avg_player_seconds").eq("game_id", g.id).maybeSingle();
     setAllAvg(all?.avg_player_seconds ?? null);
+    const { data: ph } = await supabase.from("v_game_phase_time").select("avg_setup_seconds,avg_teardown_seconds").eq("game_id", g.id).maybeSingle();
+    setSetupAvg(ph?.avg_setup_seconds ?? null);
+    setTeardownAvg(ph?.avg_teardown_seconds ?? null);
     if (currentUser) {
       const { data: m } = await supabase.from("v_game_player_time").select("avg_player_seconds").eq("game_id", g.id).eq("profile_id", currentUser.id).maybeSingle();
       setMyAvg(m?.avg_player_seconds ?? null);
@@ -3987,10 +4010,12 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             ))}
           </div>
           <button onClick={() => setShowSessions(true)} style={{ background: "none", border: "none", color: C.teal, fontSize: 12.5, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "10px 0 0", fontFamily: "'Nunito',sans-serif" }}>Voir le détail des {sessions.length} partie{sessions.length > 1 ? "s" : ""}</button>
-          {(allAvg != null || myAvg != null) && (
+          {(allAvg != null || myAvg != null || setupAvg != null || teardownAvg != null) && (
             <div style={{ borderTop: "1px solid rgba(30,138,138,.18)", marginTop: 12, paddingTop: 11, display: "grid", gap: 5, fontSize: 13.5 }}>
               {allAvg != null && <div style={{ color: "#6b5d49" }}>Temps de jeu moyen par joueur : <b style={{ color: C.navy }}>{fmtDuration(allAvg)}</b></div>}
               {myAvg != null && <div style={{ color: "#6b5d49" }}>Ton temps de jeu moyen : <b style={{ color: C.teal }}>{fmtDuration(myAvg)}</b></div>}
+              {setupAvg != null && <div style={{ color: "#6b5d49" }}>Temps de mise en place moyen : <b style={{ color: C.amber }}>{fmtDuration(setupAvg)}</b></div>}
+              {teardownAvg != null && <div style={{ color: "#6b5d49" }}>Temps de rangement moyen : <b style={{ color: C.purple }}>{fmtDuration(teardownAvg)}</b></div>}
             </div>
           )}
         </div>
