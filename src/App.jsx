@@ -731,6 +731,18 @@ function AppProvider({ children }) {
     return {};
   }, [currentUser, loadData]);
 
+  // Déclarer qu'un ou plusieurs AUTRES membres possèdent aussi ce jeu (en attente de leur confirmation).
+  const declareOwners = useCallback(async (gameId, userIds) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const ids = (userIds || []).filter((id) => id && id !== currentUser.id);
+    if (ids.length === 0) return { error: "Sélectionnez au moins un membre." };
+    const rows = ids.map((uid) => ({ game_id: gameId, owner_id: uid, confirmed: false, declared_by: currentUser.id }));
+    const { error } = await supabase.from("game_owners").insert(rows);
+    if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
   // Se retirer d'un jeu ("je ne l'ai plus"). Si plus aucun propriétaire, la fiche est supprimée.
   const removeOwner = useCallback(async (gameId) => {
     if (!currentUser) return;
@@ -1279,7 +1291,7 @@ function AppProvider({ children }) {
     ready, fatalError, users, games, events, places, loans, myWeights, upcoming, currentUser,
     register, login, logout, addGame, updateGame, removeGame, rateGame, clearRating,
     loginWithGoogle,
-    toggleGameShared, setShareLibrary, addOwner, removeOwner, updateProfile,
+    toggleGameShared, setShareLibrary, addOwner, removeOwner, declareOwners, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, deleteUser, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
@@ -3850,7 +3862,7 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, toggleDiscover, openChrono } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
@@ -3864,6 +3876,11 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [sessions, setSessions] = useState(null);
   const [myAvg, setMyAvg] = useState(null);
   const [allAvg, setAllAvg] = useState(null);
+  const [declaring, setDeclaring] = useState(false);
+  const [selDeclare, setSelDeclare] = useState([]);
+  const [declBusy, setDeclBusy] = useState(false);
+  const ownerIdSet = new Set([...confirmedOwners.map((o) => o.id), ...pendingOwners.map((o) => o.id)]);
+  const declarableUsers = (users || []).filter((u) => !u.banned && u.id !== currentUser?.id && !ownerIdSet.has(u.id));
 
   // La description n'est pas chargée dans le listing (pour alléger l'Egress) :
   // on la récupère à la demande, uniquement quand la fiche est ouverte.
@@ -4044,6 +4061,44 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             )}
             {currentUser.admin && owners.length > 0 && (
               <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
+            )}
+          </div>
+        )}
+
+        {/* Déclarer qu'un autre membre possède aussi ce jeu (validation de sa part) */}
+        {canManage && (
+          <div style={{ marginTop: 14 }}>
+            {!declaring ? (
+              <Btn size="sm" variant="soft" onClick={() => setDeclaring(true)}><UserPlus size={14} /> Déclarer un autre propriétaire</Btn>
+            ) : (
+              <div style={{ padding: "12px 14px", background: "rgba(232,163,23,.08)", borderRadius: 11 }}>
+                <span style={{ display: "block", fontSize: 12.5, color: "#6e6256", marginBottom: 8 }}>Quels membres possèdent aussi ce jeu ? Ils recevront une demande de confirmation.</span>
+                {declarableUsers.length === 0 ? (
+                  <span style={{ fontSize: 12.5, color: "#9c8d79" }}>Tous les membres sont déjà rattachés à ce jeu.</span>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                    {declarableUsers.map((u) => {
+                      const on = selDeclare.includes(u.id);
+                      return (
+                        <button key={u.id} type="button" onClick={() => setSelDeclare((arr) => on ? arr.filter((x) => x !== u.id) : [...arr, u.id])}
+                          style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${on ? C.amber : "#e6dcc9"}`, background: on ? C.amber : "#fff", color: on ? "#fff" : "#8a7c6a" }}>
+                          {on && <Check size={12} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn size="sm" variant="teal" disabled={selDeclare.length === 0 || declBusy} onClick={async () => {
+                    setDeclBusy(true);
+                    const res = await declareOwners(g.id, selDeclare);
+                    setDeclBusy(false);
+                    if (res?.error) { setToast(res.error); }
+                    else { setToast("Demande de confirmation envoyée."); setDeclaring(false); setSelDeclare([]); }
+                  }}>{declBusy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Envoyer la demande</>}</Btn>
+                  <Btn size="sm" variant="soft" onClick={() => { setDeclaring(false); setSelDeclare([]); }}>Annuler</Btn>
+                </div>
+              </div>
             )}
           </div>
         )}
