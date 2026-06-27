@@ -313,6 +313,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
+  const beginSetup = () => rpc('begin_setup', { p_session_id: sid });
+  const beginPlay = () => rpc('begin_play', { p_session_id: sid });
+  const beginTeardown = () => rpc('begin_teardown', { p_session_id: sid });
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
@@ -486,44 +489,90 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const activeId = session?.current_player_id;
     const neutral = session?.neutral_active;
     const showHost = isHost && hostView;
-    const totalElapsed = session?.started_at
-      ? ((session.ended_at ? new Date(session.ended_at).getTime() : now) - new Date(session.started_at).getTime()) / 1000
-      : 0;
+
+    // Phases : prep (avant lancement) → play (jeu) → wrap (rangement).
+    const playStarted = !!session?.play_started_at;
+    const playEnded = !!session?.play_ended_at;
+    const gamePhase = !playStarted ? 'prep' : (!playEnded ? 'play' : 'wrap');
+
+    // Chrono « Durée de la partie » : uniquement la phase de jeu (hors mise en place / rangement).
+    const playStartMs = session?.play_started_at ? new Date(session.play_started_at).getTime() : null;
+    const playEndMs = session?.play_ended_at ? new Date(session.play_ended_at).getTime()
+      : (session?.ended_at ? new Date(session.ended_at).getTime() : now);
+    const totalElapsed = playStartMs ? Math.max(0, (playEndMs - playStartMs) / 1000) : 0;
+
+    // Chrono du segment de phase en cours (mise en place ou rangement).
+    const segStartMs = session?.seg_started_at ? new Date(session.seg_started_at).getTime() : null;
+    const segElapsed = segStartMs ? Math.max(0, (now - segStartMs) / 1000) : 0;
+    const setupRunning = gamePhase === 'prep' && segStartMs != null;
+    const teardownRunning = gamePhase === 'wrap' && segStartMs != null;
+
+    const phaseBtn = (label, sub, onClick, bg, disabled) => (
+      <button onClick={disabled ? undefined : onClick} disabled={disabled} style={{
+        width: '100%', border: 'none', borderRadius: 16, padding: '16px 14px',
+        fontFamily: TITLE, fontWeight: 600, fontSize: 18, color: C.white, cursor: disabled ? 'default' : 'pointer',
+        background: bg, opacity: disabled ? 0.4 : 1, boxShadow: disabled ? 'none' : '0 4px 0 rgba(0,0,0,0.12)', textAlign: 'center',
+      }}>
+        {label}
+        {sub != null && <div style={{ fontFamily: BODY, fontSize: 26, fontWeight: 800, marginTop: 4 }}>{sub}</div>}
+      </button>
+    );
 
     return shell(
       <div>
-        {/* Chrono total de la partie : démarre au lancement, ne s'arrête qu'à « Terminer » */}
+        {/* Chrono de la partie : ne compte que le jeu */}
         <div style={{ textAlign: 'center', background: C.navy, color: C.white, borderRadius: 16, padding: '12px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, letterSpacing: 1, opacity: .75, fontWeight: 700, textTransform: 'uppercase' }}>Durée de la partie</div>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 34, lineHeight: 1.1 }}>{fmt(totalElapsed)}</div>
+          {gamePhase === 'prep' && <div style={{ fontSize: 12, opacity: .8, marginTop: 2 }}>La partie n'a pas encore démarré</div>}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
-          {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
-          {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
+        {/* Boutons de phase */}
+        <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+          {phaseBtn(
+            setupRunning ? 'Mise en place & explications…' : 'Mise en place & explications',
+            setupRunning ? fmt(segElapsed) : null,
+            beginSetup, setupRunning ? C.teal : C.navy, playStarted
+          )}
+          {phaseBtn(
+            gamePhase === 'play' ? 'Partie en cours' : 'Lancer la partie',
+            null, beginPlay, gamePhase === 'play' ? C.teal : C.amber, gamePhase === 'wrap'
+          )}
+          {phaseBtn(
+            teardownRunning ? 'Rangement…' : 'Rangement',
+            teardownRunning ? fmt(segElapsed) : null,
+            beginTeardown, teardownRunning ? C.purple : C.navy, !playStarted
+          )}
         </div>
 
-        {/* Bouton "C'est mon tour" si j'ai un siège sur ce device */}
-        {myPlayer && !showHost && (
+        {/* En-tête de manche (pendant le jeu) */}
+        {gamePhase === 'play' && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
+            {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
+            {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
+          </div>
+        )}
+
+        {/* Gros bouton « C'est mon tour » (jeu uniquement, si j'ai un siège sur ce device) */}
+        {gamePhase === 'play' && myPlayer && !showHost && (
           <button
             onClick={() => (activeId === myPlayer.id && !neutral ? toggleNeutral() : claim(myPlayer.id))}
             style={{
-              width: '100%', border: 'none', borderRadius: 20, padding: '26px 16px', marginBottom: 16,
-              fontFamily: TITLE, fontWeight: 600, fontSize: 24, color: C.white, cursor: 'pointer',
-              background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy,
-              boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
+              width: '100%', border: 'none', borderRadius: 20, padding: '22px 16px', marginBottom: 16,
+              fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.white, cursor: 'pointer',
+              background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
             }}>
             {(activeId === myPlayer.id && !neutral) ? "À toi de jouer ! (appuie pour pause)" : "C'est mon tour"}
-            <div style={{ fontFamily: BODY, fontSize: 34, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
+            <div style={{ fontFamily: BODY, fontSize: 32, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
           </button>
         )}
 
-        {/* Tableau de bord des joueurs */}
+        {/* Tableau de bord des joueurs (cliquable uniquement pendant le jeu) */}
         <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
           {players.map((p, i) => {
-            const active = activeId === p.id && !neutral;
-            const clickable = true; // tout participant peut lancer / mettre en pause
+            const active = activeId === p.id && !neutral && gamePhase === 'play';
+            const clickable = gamePhase === 'play';
             return (
               <div key={p.id}
                 onClick={clickable ? () => (active ? toggleNeutral() : claim(p.id)) : undefined}
@@ -557,8 +606,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-            <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>
-            <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>
+            {gamePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
+            {gamePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
         )}
