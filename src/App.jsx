@@ -278,6 +278,27 @@ async function translateText(text) {
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
+// Récupère TOUTES les lignes d'une table en contournant la limite de 1000 lignes
+// imposée par Supabase : on pagine par paquets de 1000. orderCols garantit un ordre
+// stable entre les pages (on passe les colonnes de clé primaire). Renvoie { data }
+// pour rester interchangeable avec une requête Supabase classique dans loadData.
+async function fetchAllRows(table, columns, orderCols) {
+  const size = 1000;
+  let from = 0;
+  const all = [];
+  for (let guard = 0; guard < 100; guard++) {
+    let q = supabase.from(table).select(columns);
+    (orderCols || []).forEach((c) => { q = q.order(c, { ascending: true }); });
+    const { data, error } = await q.range(from, from + size - 1);
+    if (error) { console.error("fetchAllRows", table, error.message); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < size) break;
+    from += size;
+  }
+  return { data: all };
+}
+
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
 function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}, discoveriesByGame = {}) {
   const ratings = {};
@@ -399,25 +420,25 @@ function AppProvider({ children }) {
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
-        supabase.from("games").select("id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url"),
-        supabase.from("ratings").select("*"),
+        fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
+        fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
-        supabase.from("event_players").select("*"),
+        fetchAllRows("event_players", "*", ["event_id", "user_id"]),
         supabase.from("event_guests").select("*"),
-        supabase.from("event_comments").select("*").order("created_at"),
-        supabase.from("game_comments").select("*").order("created_at"),
+        fetchAllRows("event_comments", "*", ["created_at", "id"]),
+        fetchAllRows("game_comments", "*", ["created_at", "id"]),
         supabase.from("places").select("*").order("name"),
-        supabase.from("game_owners").select("*"),
-        supabase.from("extensions").select("id,game_id,name,image_url,created_by").order("name"),
-        supabase.from("extension_owners").select("*"),
+        fetchAllRows("game_owners", "*", ["game_id", "owner_id"]),
+        fetchAllRows("extensions", "id,game_id,name,image_url,created_by", ["name", "id"]),
+        fetchAllRows("extension_owners", "*", ["id"]),
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
-        supabase.from("game_weights").select("*"),
-        supabase.from("event_games").select("*"),
+        fetchAllRows("game_weights", "*", ["game_id", "owner_id"]),
+        fetchAllRows("event_games", "*", ["id"]),
         supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url").order("name"),
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
-        supabase.from("upcoming_comments").select("*").order("created_at"),
-        supabase.from("game_discoveries").select("*"),
+        fetchAllRows("upcoming_comments", "*", ["created_at", "id"]),
+        fetchAllRows("game_discoveries", "*", ["game_id", "user_id"]),
         currentUserIdRef.current ? supabase.from("notifications").select("*").eq("recipient_id", currentUserIdRef.current).order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
       ]);
