@@ -394,6 +394,7 @@ function AppProvider({ children }) {
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
   const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
+  const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial
   const [fatalError, setFatalError] = useState(null);
   // Ref vers l'id du membre connecté, lisible dans loadData sans le mettre en dépendance.
   const currentUserIdRef = useRef(null);
@@ -418,7 +419,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -441,6 +442,8 @@ function AppProvider({ children }) {
         fetchAllRows("game_discoveries", "*", ["game_id", "user_id"]),
         currentUserIdRef.current ? supabase.from("notifications").select("*").eq("recipient_id", currentUserIdRef.current).order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("household_members").select("*") : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("household_invites").select("*").eq("status", "pending") : Promise.resolve({ data: [] }),
       ]);
 
       // table de correspondance id -> nom
@@ -550,6 +553,15 @@ function AppProvider({ children }) {
         createdAt: n.created_at,
       })));
       setDismissedIds((dismissedRows || []).map((d) => d.game_id));
+      // Foyer (regroupement familial) : la RLS ne remonte que mon propre foyer
+      {
+        const myId = currentUserIdRef.current;
+        setHousehold({
+          memberIds: (hhMembers || []).map((m) => m.user_id),
+          invitesReceived: (hhInvites || []).filter((i) => i.invitee_id === myId),
+          invitesSent: (hhInvites || []).filter((i) => i.inviter_id === myId),
+        });
+      }
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
@@ -1277,6 +1289,59 @@ function AppProvider({ children }) {
     await supabase.from("reco_dismissed").insert({ user_id: currentUser.id, game_id: gameId });
   }, [currentUser]);
 
+  // ---- Regroupement familial (foyers) ----
+  const inviteToHousehold = useCallback(async (memberId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.rpc("household_invite", { p_invitee_id: memberId });
+    if (error) return { error: error.message };
+    await notifyUsers([memberId], {
+      type: "household_invite",
+      message: `${currentUser.name} vous invite à rejoindre sa famille`,
+      linkKind: "household", linkId: null,
+    });
+    await loadData();
+    return {};
+  }, [currentUser, notifyUsers, loadData]);
+
+  const acceptHouseholdInvite = useCallback(async (inviteId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data: inviterId, error } = await supabase.rpc("household_accept", { p_invite_id: inviteId });
+    if (error) return { error: error.message };
+    if (inviterId) await notifyUsers([inviterId], {
+      type: "household_accepted",
+      message: `${currentUser.name} a rejoint votre famille`,
+      linkKind: "household", linkId: null,
+    });
+    await loadData();
+    return {};
+  }, [currentUser, notifyUsers, loadData]);
+
+  const declineHouseholdInvite = useCallback(async (inviteId) => {
+    const { data: inviterId, error } = await supabase.rpc("household_decline", { p_invite_id: inviteId });
+    if (error) return { error: error.message };
+    if (inviterId && currentUser) await notifyUsers([inviterId], {
+      type: "household_declined",
+      message: `${currentUser.name} a décliné votre invitation à la famille`,
+      linkKind: "household", linkId: null,
+    });
+    await loadData();
+    return {};
+  }, [currentUser, notifyUsers, loadData]);
+
+  const cancelHouseholdInvite = useCallback(async (inviteId) => {
+    const { error } = await supabase.rpc("household_cancel_invite", { p_invite_id: inviteId });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  const leaveHousehold = useCallback(async () => {
+    const { error } = await supabase.rpc("household_leave");
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
   // ---- Lieux réutilisables (partagés entre tous) ----
   const addPlace = useCallback(async (data) => {
     if (!currentUser) return { error: "Connectez-vous." };
@@ -1317,6 +1382,7 @@ function AppProvider({ children }) {
     banUser, unbanUser, deleteUser, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     dismissedIds, dismissReco,
+    household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
@@ -3753,7 +3819,7 @@ function GameCover({ g, size = "md" }) {
   );
 }
 
-function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth }) {
+function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, ownerBadge = null }) {
   const { currentUser } = useApp();
   const { avg, count } = gameStats(g);
   const isShared = g.shared !== false;
@@ -3788,6 +3854,12 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth }) {
             <div title={`${g.wantIds.length} membre${g.wantIds.length > 1 ? "s veulent" : " veut"} découvrir ce jeu`}
               style={{ position: "absolute", top: 10, left: 10, background: C.red, color: "#fff", borderRadius: 999, padding: "4px 9px 4px 7px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.18)" }}>
               <Heart size={13} fill="#fff" color="#fff" /> {g.wantIds.length}
+            </div>
+          )}
+          {ownerBadge && (
+            <div title={`Appartient à ${ownerBadge}`}
+              style={{ position: "absolute", bottom: 10, left: 10, background: "rgba(107,58,122,.92)", color: "#fff", borderRadius: 999, padding: "3px 10px 3px 8px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }}>
+              <Users size={12} color="#fff" /> {ownerBadge}
             </div>
           )}
           {bothNotes ? (
@@ -6334,8 +6406,114 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
 /* =============================================================================
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
+// Section "Ma famille" : foyer partageant une ludothèque commune
+function FamilySection({ setToast }) {
+  const { household, users, currentUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold } = useApp();
+  const [showPicker, setShowPicker] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+
+  const nameById = useMemo(() => Object.fromEntries((users || []).map((u) => [u.id, u.name])), [users]);
+  const memberIds = household?.memberIds || [];
+  const otherMembers = memberIds.filter((id) => id !== currentUser?.id);
+  const received = household?.invitesReceived || [];
+  const sent = household?.invitesSent || [];
+  const sentIds = sent.map((i) => i.invitee_id);
+  const inFamily = otherMembers.length > 0;
+
+  const invitable = useMemo(() => (users || [])
+    .filter((u) => u.id !== currentUser?.id && !memberIds.includes(u.id) && !sentIds.includes(u.id) && !u.banned)
+    .sort((a, b) => a.name.localeCompare(b.name, "fr")), [users, memberIds, sentIds, currentUser]);
+
+  const run = async (fn, ok) => {
+    setBusy(true);
+    const r = await fn();
+    setBusy(false);
+    if (r?.error) setToast(r.error);
+    else if (ok) setToast(ok);
+    return r;
+  };
+
+  // On masque entièrement la section s'il n'y a rien à montrer (pas de foyer, aucune invitation)
+  if (!currentUser) return null;
+  const hasContent = inFamily || received.length > 0 || sent.length > 0;
+
+  return (
+    <div style={{ background: "rgba(107,58,122,.06)", border: `2px solid ${C.purple}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: hasContent ? 12 : 6, flexWrap: "wrap" }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          <Users size={18} color={C.purple} /> Ma famille
+        </h3>
+        <Btn size="sm" variant="soft" onClick={() => setShowPicker(true)}><UserPlus size={15} /> Inviter un membre</Btn>
+      </div>
+
+      <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 12px", lineHeight: 1.5 }}>
+        Les membres d'une même famille partagent une ludothèque commune : tous les jeux du foyer apparaissent ici et évoluent ensemble. Chacun garde ses propres notes et avis.
+      </p>
+
+      {received.map((i) => (
+        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, background: "#fff", border: `1px solid ${C.purple}`, marginBottom: 8, flexWrap: "wrap" }}>
+          <Mail size={16} color={C.purple} />
+          <span style={{ flex: 1, minWidth: 140, fontSize: 13.5, color: "#5e5346" }}>
+            <strong>{nameById[i.inviter_id] || "Un membre"}</strong> vous invite à rejoindre sa famille
+          </span>
+          <Btn size="sm" variant="teal" disabled={busy} onClick={() => run(() => acceptHouseholdInvite(i.id), "Vous avez rejoint la famille.")}><Check size={15} /> Accepter</Btn>
+          <Btn size="sm" variant="soft" disabled={busy} onClick={() => run(() => declineHouseholdInvite(i.id))}><X size={15} /> Refuser</Btn>
+        </div>
+      ))}
+
+      {memberIds.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: (sent.length || inFamily) ? 12 : 0 }}>
+          {memberIds.map((id) => (
+            <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #e6dcc9", borderRadius: 999, padding: "5px 12px", fontSize: 13, fontWeight: 600, color: C.navy, fontFamily: "'Fredoka',sans-serif" }}>
+              <Users size={13} color={C.purple} /> {id === currentUser?.id ? "Vous" : (nameById[id] || "Membre")}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {sent.map((i) => (
+        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 11, background: "rgba(255,255,255,.6)", border: "1px dashed #cdbfa8", marginBottom: 8 }}>
+          <Clock size={15} color="#a89a86" />
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: "#6e6256" }}>
+            Invitation envoyée à <strong>{nameById[i.invitee_id] || "un membre"}</strong> — en attente
+          </span>
+          <Btn size="sm" variant="ghost" disabled={busy} onClick={() => run(() => cancelHouseholdInvite(i.id))}><X size={14} /> Annuler</Btn>
+        </div>
+      ))}
+
+      {inFamily && (confirmLeave ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+          <span style={{ fontSize: 13, color: C.red, fontWeight: 600 }}>Quitter la famille ? Vos jeux redeviendront les vôtres uniquement.</span>
+          <Btn size="sm" variant="red" disabled={busy} onClick={async () => { await run(() => leaveHousehold(), "Vous avez quitté la famille."); setConfirmLeave(false); }}><LogOut size={14} /> Confirmer</Btn>
+          <Btn size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmLeave(false)}>Annuler</Btn>
+        </div>
+      ) : (
+        <Btn size="sm" variant="ghost" onClick={() => setConfirmLeave(true)}><LogOut size={14} /> Quitter la famille</Btn>
+      ))}
+
+      {showPicker && (
+        <Modal open onClose={() => setShowPicker(false)} title="Inviter un membre dans la famille" width={460}>
+          {invitable.length === 0 ? (
+            <p style={{ color: "#6e6256", fontSize: 14, margin: 0 }}>Aucun membre disponible à inviter pour le moment.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 6, maxHeight: 380, overflowY: "auto" }}>
+              {invitable.map((m) => (
+                <button key={m.id} disabled={busy} onClick={async () => { const r = await run(() => inviteToHousehold(m.id), "Invitation envoyée."); if (!r?.error) setShowPicker(false); }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, border: "1px solid #e6dcc9", background: "#fff", cursor: "pointer", textAlign: "left", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+                  <UserPlus size={16} color={C.purple} /> {m.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification } = useApp();
+  const { games, currentUser, users, household, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -6355,13 +6533,26 @@ function MyLudoPage({ setToast, setPage }) {
     [games, currentUser]
   );
 
-  const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).includes(currentUser?.id)), [games, currentUser]);
+  const householdIds = useMemo(() => {
+    const ids = household?.memberIds || [];
+    return ids.length ? ids : (currentUser ? [currentUser.id] : []);
+  }, [household, currentUser]);
+  const nameById = useMemo(() => Object.fromEntries((users || []).map((u) => [u.id, u.name])), [users]);
+  // Étiquette du propriétaire réel d'un jeu du foyer (null si le jeu est aussi à moi)
+  const familyOwnerLabel = useCallback((g) => {
+    if (!(household?.memberIds || []).length) return null;
+    if ((g.ownerIds || []).includes(currentUser?.id)) return null;
+    const other = (g.ownerIds || []).find((id) => householdIds.includes(id));
+    return other ? (nameById[other] || "un proche") : null;
+  }, [household, householdIds, nameById, currentUser]);
+  // Ma ludothèque = mes jeux + ceux des membres de mon foyer (union, calculée à l'affichage)
+  const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).some((id) => householdIds.includes(id))), [games, householdIds]);
   // Nombre d'extensions que le membre possède (à travers tous les jeux de l'association)
   const myExtCount = useMemo(() => {
     let n = 0;
-    games.forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).includes(currentUser?.id)) n++; }));
+    games.forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).some((id) => householdIds.includes(id))) n++; }));
     return n;
-  }, [games, currentUser]);
+  }, [games, householdIds]);
   const myMechanics = useMemo(() => {
     const s = new Set();
     allMine.forEach((g) => (g.mechanics || []).forEach((m) => s.add(m)));
@@ -6507,11 +6698,13 @@ function MyLudoPage({ setToast, setPage }) {
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
 
+      <FamilySection setToast={setToast} />
+
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : t === "event_comment" ? Calendar : t === "discovery" ? Heart : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : t === "event_comment" ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -6710,7 +6903,10 @@ function MyLudoPage({ setToast, setPage }) {
                 return (
                   <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
-                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {g.name}
+                      {familyOwnerLabel(g) && <span style={{ marginLeft: 8, fontSize: 11.5, fontWeight: 700, color: C.purple }}>· {familyOwnerLabel(g)}</span>}
+                    </span>
                     <span style={{ width: 60, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                       {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
                     </span>
@@ -6722,7 +6918,7 @@ function MyLudoPage({ setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} showBoth={showBoth} />)}
+              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} showBoth={showBoth} ownerBadge={familyOwnerLabel(g)} />)}
             </div>
           )}
         </>
