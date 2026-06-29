@@ -367,7 +367,11 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
     notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
     deadline: row.deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
-    guests: (guestsByEvent[row.id] || []).map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
+    // un membre invité (event_guests.member_id) qui s'est aussi inscrit comme participant
+    // n'est ni affiché ni compté deux fois : on le retire de la liste des invités
+    guests: (guestsByEvent[row.id] || [])
+      .filter((g) => !(g.member_id && (playersByEvent[row.id] || []).some((p) => p.user_id === g.member_id)))
+      .map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
     comments: (commentsByEvent[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     playedGames: (eventGamesByEvent[row.id] || []).map((eg) => ({
       id: eg.id, gameId: eg.game_id, addedBy: eg.added_by, addedByName: nameById[eg.added_by] || "Membre",
@@ -998,6 +1002,14 @@ function AppProvider({ children }) {
       await supabase.from("event_guests").insert(
         d.invites.map((inv) => ({ event_id: data.id, guest_name: inv.name, member_id: inv.memberId || null, added_by: currentUser.id }))
       );
+      const memberInvites = d.invites.filter((inv) => inv.memberId && inv.memberId !== currentUser.id);
+      if (memberInvites.length) {
+        await supabase.from("notifications").insert(memberInvites.map((inv) => ({
+          recipient_id: inv.memberId, actor_id: currentUser.id, type: "event_invite",
+          message: `${currentUser.name} vous a ajouté au moment jeux du ${formatDateFr(d.date)}`,
+          link_kind: "event", link_id: data.id,
+        })));
+      }
     }
     await loadData();
     return { event: data };
@@ -1174,9 +1186,31 @@ function AppProvider({ children }) {
       event_id: eventId, guest_name: guestName.trim(), member_id: memberId, added_by: currentUser.id,
     });
     if (error) return { error: error.message };
+    // Inviter un membre => on le prévient ; il confirmera depuis Ma ludothèque (en attente = ambre)
+    if (memberId && memberId !== currentUser.id) {
+      const ev = events.find((e) => e.id === eventId);
+      await supabase.from("notifications").insert({
+        recipient_id: memberId, actor_id: currentUser.id, type: "event_invite",
+        message: `${currentUser.name} vous a ajouté au moment jeux du ${formatDateFr(ev?.date)}`,
+        link_kind: "event", link_id: eventId,
+      });
+    }
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, events, loadData]);
+
+  const confirmEventInvite = useCallback(async (guestId) => {
+    const { error } = await supabase.rpc("respond_event_invite", { p_guest_id: guestId, p_accept: true });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+  const declineEventInvite = useCallback(async (guestId) => {
+    const { error } = await supabase.rpc("respond_event_invite", { p_guest_id: guestId, p_accept: false });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
 
   const removeGuest = useCallback(async (guestId) => {
     await supabase.from("event_guests").delete().eq("id", guestId);
@@ -1386,7 +1420,7 @@ function AppProvider({ children }) {
     addExtension, addExtensionOwner, removeExtensionOwner,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
-    addGuest, removeGuest, addComment, updateComment, removeComment,
+    addGuest, removeGuest, confirmEventInvite, declineEventInvite, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
     addPlace, updatePlace,
     addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
@@ -2865,12 +2899,17 @@ function EventCardMini({ e, onOpen }) {
   const { currentUser } = useApp();
   const filled = e.players.length + (e.guests?.length || 0);
   const reached = filled >= e.min;
+  // Couleurs cohérentes avec le calendrier : en ligne (BGA) => violet/ambre, présentiel => teal/rouge
+  const accent = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
+  const headerGrad = e.online
+    ? (reached ? `linear-gradient(135deg,${C.purple},#4a2856)` : `linear-gradient(135deg,${C.amber},#b07d10)`)
+    : (reached ? `linear-gradient(135deg,${C.teal},#16706f)` : `linear-gradient(135deg,${C.red},#8e1f2e)`);
   return (
     <button onClick={onOpen} style={{
       textAlign: "left", cursor: "pointer", borderRadius: 20, overflow: "hidden", padding: 0,
       background: C.paper, boxShadow: "0 4px 18px rgba(18,41,63,.06)", border: "1px solid #ece2d0",
     }}>
-      <div style={{ background: reached ? `linear-gradient(135deg,${C.teal},#16706f)` : `linear-gradient(135deg,${C.red},#8e1f2e)`, padding: "16px 20px", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ background: headerGrad, padding: "16px 20px", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <div style={{ fontSize: 12.5, opacity: .85, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>{formatDateShort(e.date)} · {e.time}</div>
           <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18 }}>{FR_DAYS[new Date(e.date + "T00:00:00").getDay()]}</div>
@@ -2879,14 +2918,14 @@ function EventCardMini({ e, onOpen }) {
       </div>
       <div style={{ padding: 20 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: C.navy, fontWeight: 600, fontFamily: "'Fredoka',sans-serif", marginBottom: 10 }}>
-          <MapPin size={16} color={C.teal} /> {currentUser ? e.place : <i style={{ color: "#9c8d79", fontWeight: 500 }}>Lieu réservé aux membres connectés</i>}
+          {e.online ? <Globe size={16} color={accent} /> : <MapPin size={16} color={accent} />} {currentUser ? e.place : <i style={{ color: "#9c8d79", fontWeight: 500 }}>Lieu réservé aux membres connectés</i>}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#6e6256", fontSize: 14 }}>
-          <Users size={16} color={reached ? C.teal : C.red} />
-          <b style={{ color: reached ? C.teal : C.red }}>{filled}</b> joueur{filled > 1 ? "s" : ""} · min {e.min}{e.max ? ` / max ${e.max}` : " · sans limite"}
+          <Users size={16} color={accent} />
+          <b style={{ color: accent }}>{filled}</b> joueur{filled > 1 ? "s" : ""} · min {e.min}{e.max ? ` / max ${e.max}` : " · sans limite"}
         </div>
         <div style={{ marginTop: 12, height: 7, borderRadius: 99, background: "#eee4d2", overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${e.max ? Math.min(100, (filled / e.max) * 100) : (reached ? 100 : (filled / Math.max(e.min, 1)) * 100)}%`, background: reached ? C.teal : C.red, transition: "width .4s" }} />
+          <div style={{ height: "100%", width: `${e.max ? Math.min(100, (filled / e.max) * 100) : (reached ? 100 : (filled / Math.max(e.min, 1)) * 100)}%`, background: accent, transition: "width .4s" }} />
         </div>
         <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 8 }}>Proposée par {e.hostName}</div>
       </div>
@@ -3332,12 +3371,16 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             ))}
             {(e.guests || []).map((g) => {
               const canRemoveGuest = currentUser && (g.addedBy === currentUser.id || canManage);
+              const memberPending = !!g.memberId; // membre invité, en attente de sa confirmation
+              const chipBg = memberPending ? "rgba(232,163,23,.13)" : "rgba(107,58,122,.1)";
+              const sqBg = memberPending ? C.amber : C.purple;
+              const xColor = memberPending ? "#b88a2e" : "#a07ab0";
               return (
-                <span key={g.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(107,58,122,.1)", padding: "6px 12px", borderRadius: 999 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: 7, background: C.purple, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
+                <span key={g.id} style={{ display: "flex", alignItems: "center", gap: 7, background: chipBg, padding: "6px 12px", borderRadius: 999 }}>
+                  <span style={{ width: 24, height: 24, borderRadius: 7, background: sqBg, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
                   <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
-                  {g.memberId && <span style={{ fontSize: 10.5, color: C.purple }}>(membre)</span>}
-                  {canRemoveGuest && <button onClick={() => removeGuest(g.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#a07ab0", display: "grid", placeItems: "center" }}><X size={14} /></button>}
+                  {memberPending && <span style={{ fontSize: 10.5, color: "#b88a2e", fontWeight: 700 }}>en attente</span>}
+                  {canRemoveGuest && <button onClick={() => removeGuest(g.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: xColor, display: "grid", placeItems: "center" }}><X size={14} /></button>}
                 </span>
               );
             })}
@@ -6513,7 +6556,7 @@ function FamilySection({ setToast }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification } = useApp();
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -6547,6 +6590,21 @@ function MyLudoPage({ setToast, setPage }) {
   }, [household, householdIds, nameById, currentUser]);
   // Ma ludothèque = mes jeux + ceux des membres de mon foyer (union, calculée à l'affichage)
   const allMine = useMemo(() => games.filter((g) => (g.ownerIds || []).some((id) => householdIds.includes(id))), [games, householdIds]);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  // Invitations à des moments jeux : lignes event_guests où je suis le membre concerné (en attente)
+  const myEventInvites = useMemo(() => {
+    if (!currentUser) return [];
+    const out = [];
+    (events || []).forEach((e) => (e.guests || []).forEach((g) => { if (g.memberId === currentUser.id) out.push({ ev: e, guest: g }); }));
+    return out.sort((a, b) => (a.ev.date || "").localeCompare(b.ev.date || ""));
+  }, [events, currentUser]);
+  const runInvite = async (fn, ok) => {
+    setInviteBusy(true);
+    const r = await fn();
+    setInviteBusy(false);
+    if (r?.error) setToast(r.error);
+    else if (ok) setToast(ok);
+  };
   // Nombre d'extensions que le membre possède (à travers tous les jeux de l'association)
   const myExtCount = useMemo(() => {
     let n = 0;
@@ -6698,13 +6756,36 @@ function MyLudoPage({ setToast, setPage }) {
         <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
       </div>
 
+      {myEventInvites.length > 0 && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 8 }}>
+            <Calendar size={18} color={C.amber} /> Mes invitations aux moments
+          </h3>
+          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 12px", lineHeight: 1.5 }}>
+            On vous a ajouté à ces moments jeux. Confirmez votre venue pour apparaître comme participant (sinon vous restez affiché « en attente »).
+          </p>
+          <div style={{ display: "grid", gap: 8 }}>
+            {myEventInvites.map(({ ev, guest }) => (
+              <div key={guest.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, background: "#fff", border: `1px solid ${C.amber}`, flexWrap: "wrap" }}>
+                <Calendar size={16} color={C.amber} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: "#5e5346" }}>
+                  Moment du <strong>{formatDateFr(ev.date)}</strong> à {ev.time}{ev.online ? " (en ligne)" : (ev.place ? ` — ${ev.place}` : "")}
+                </span>
+                <Btn size="sm" variant="teal" disabled={inviteBusy} onClick={() => runInvite(() => confirmEventInvite(guest.id), "Participation confirmée !")}><Check size={15} /> Je viens</Btn>
+                <Btn size="sm" variant="soft" disabled={inviteBusy} onClick={() => runInvite(() => declineEventInvite(guest.id))}><X size={15} /> Décliner</Btn>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <FamilySection setToast={setToast} />
 
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : t === "event_comment" ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
