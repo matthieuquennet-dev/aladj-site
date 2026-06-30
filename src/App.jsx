@@ -294,6 +294,17 @@ async function translateText(text) {
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
+// Petite couronne ambre signalant un membre décisionnaire (réutilisable dans les listes)
+function DeciderCrownFor({ id, size = 13 }) {
+  const { deciderIds } = useApp();
+  if (!id || !deciderIds || !deciderIds.has(id)) return null;
+  return (
+    <span title="Membre décisionnaire" style={{ display: "inline-flex", flexShrink: 0 }}>
+      <Crown size={size} color={C.amber} />
+    </span>
+  );
+}
+
 // Récupère TOUTES les lignes d'une table en contournant la limite de 1000 lignes
 // imposée par Supabase : on pagine par paquets de 1000. orderCols garantit un ordre
 // stable entre les pages (on passe les colonnes de clé primaire). Renvoie { data }
@@ -1436,6 +1447,11 @@ function AppProvider({ children }) {
 
   // Nombre de "moments jeux" À VENIR créés depuis ma dernière visite de la page
   // Moments (et que je n'ai pas créés moi-même). Sert à la pastille rouge.
+  const deciderIds = useMemo(
+    () => new Set((users || []).filter((u) => u.role === "decideur").map((u) => u.id)),
+    [users]
+  );
+
   const momentsUnseen = useMemo(() => {
     if (!currentUser) return 0;
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1532,7 +1548,7 @@ function AppProvider({ children }) {
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, deleteUser, setMemberRole, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
-    momentsUnseen, markMomentsSeen,
+    momentsUnseen, markMomentsSeen, deciderIds,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
@@ -3509,7 +3525,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             {e.players.map((p) => (
               <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                 <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} />
               </span>
             ))}
             {(e.guests || []).map((g) => {
@@ -3576,7 +3592,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                 return (
                   <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /></span>
                       {mine && editingId !== c.id && (
                         <span style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
@@ -4338,7 +4354,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
               {owners.map((o) => (
                 <span key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: o.id === currentUser?.id ? "rgba(30,138,138,.12)" : "rgba(26,58,92,.05)", borderRadius: 999, padding: "4px 11px", fontSize: 13, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: o.id === currentUser?.id ? C.teal : C.navy }}>
                   <span style={{ width: 20, height: 20, borderRadius: 6, background: o.id === currentUser?.id ? C.teal : C.navy, color: "#fff", display: "grid", placeItems: "center", fontSize: 11 }}>{o.name[0].toUpperCase()}</span>
-                  {o.name}{o.id === currentUser?.id ? " (vous)" : ""}
+                  {o.name}{o.id === currentUser?.id ? " (vous)" : ""}<DeciderCrownFor id={o.id} size={12} />
                 </span>
               ))}
             </div>
@@ -4781,7 +4797,7 @@ function GameComments({ g, onAuth, onClose }) {
           return (
             <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /></span>
                 {mine && editingId !== c.id && (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
@@ -5325,7 +5341,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
             return (
               <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "10px 14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{c.authorName}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{c.authorName}</span><DeciderCrownFor id={c.authorId} size={12} /></span>
                   {mine && !isEdit && (
                     <span style={{ display: "flex", gap: 5 }}>
                       <button onClick={() => { setEditId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79" }}><Edit3 size={13} /></button>
