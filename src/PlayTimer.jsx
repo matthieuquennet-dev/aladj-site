@@ -63,6 +63,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [session, setSession] = useState(null);     // ligne play_sessions
   const [players, setPlayers] = useState([]);        // play_session_players + nom/avatar résolus
   const [totals, setTotals] = useState({});          // player_id -> { total, max }
+  const [openSegs, setOpenSegs] = useState({});      // player_id -> started_at (segments ouverts ; mode simultané)
   const [summary, setSummary] = useState(null);      // v_session_summary (fin)
 
   // setup (hôte)
@@ -129,6 +130,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const map = {};
     (data || []).forEach((r) => { map[r.player_id] = { total: r.total_seconds, max: r.max_turn_seconds }; });
     setTotals(map);
+    // segments encore ouverts (en mode simultané, plusieurs chronos tournent en parallèle)
+    const { data: segs } = await supabase
+      .from('play_turns').select('player_id,started_at')
+      .eq('session_id', sessionId).is('ended_at', null);
+    const om = {};
+    (segs || []).forEach((sg) => { if (sg.player_id) om[sg.player_id] = sg.started_at; });
+    setOpenSegs(om);
   }, [supabase]);
 
   const refetchSession = useCallback(async (sessionId) => {
@@ -314,6 +322,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
   const togglePhase = (ph) => rpc('toggle_phase', { p_session_id: sid, p_phase: ph });
+  const simulEnter = () => rpc('simul_enter', { p_session_id: sid });
+  const simulToggle = (playerId) => rpc('simul_toggle', { p_session_id: sid, p_player_id: playerId });
+  const simulResumeAll = () => rpc('simul_resume_all', { p_session_id: sid });
+  const simulExit = () => rpc('simul_exit', { p_session_id: sid });
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
@@ -321,10 +333,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // ---- temps affichés ------------------------------------------------
   const liveExtra = useCallback((pid) => {
-    if (!session || session.status !== 'running' || session.neutral_active) return 0;
+    if (!session || session.status !== 'running') return 0;
+    if (session.timer_mode === 'simul') {
+      const st = openSegs[pid];
+      return st ? Math.max(0, (now - new Date(st).getTime()) / 1000) : 0;
+    }
+    if (session.neutral_active) return 0;
     if (session.current_player_id !== pid || !session.current_turn_started_at) return 0;
     return (now - new Date(session.current_turn_started_at).getTime()) / 1000;
-  }, [session, now]);
+  }, [session, now, openSegs]);
   const shown = (pid) => (totals[pid]?.total || 0) + liveExtra(pid);
 
   const joinLink = useMemo(() => {
@@ -490,6 +507,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
     // Phases cumulées : chaque phase additionne son temps et peut être mise en pause / reprise.
     const activePhase = session?.active_phase || null;
+    const simul = session?.timer_mode === 'simul';
     const segMs = session?.seg_started_at ? new Date(session.seg_started_at).getTime() : null;
     const liveSeg = (activePhase && segMs) ? Math.max(0, (now - segMs) / 1000) : 0;
     const setupTotal = (session?.setup_seconds || 0) + (activePhase === 'setup' ? liveSeg : 0);
@@ -542,13 +560,25 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {gamePhase === 'play' && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
+            {simul && <span style={{ background: C.purple, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Simultané</span>}
             {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
             {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
           </div>
         )}
 
         {/* Gros bouton « C'est mon tour » (jeu uniquement, si j'ai un siège sur ce device) */}
-        {activePhase === 'play' && myPlayer && !showHost && (
+        {activePhase === 'play' && myPlayer && !showHost && (simul ? (
+          <button
+            onClick={() => simulToggle(myPlayer.id)}
+            style={{
+              width: '100%', border: 'none', borderRadius: 20, padding: '22px 16px', marginBottom: 16,
+              fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.white, cursor: 'pointer',
+              background: openSegs[myPlayer.id] ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
+            }}>
+            {openSegs[myPlayer.id] ? "Mon chrono tourne (appuie pour pause)" : "Mon chrono en pause (appuie pour repartir)"}
+            <div style={{ fontFamily: BODY, fontSize: 32, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
+          </button>
+        ) : (
           <button
             onClick={() => (activeId === myPlayer.id && !neutral ? toggleNeutral() : claim(myPlayer.id))}
             style={{
@@ -559,16 +589,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {(activeId === myPlayer.id && !neutral) ? "À toi de jouer ! (appuie pour pause)" : "C'est mon tour"}
             <div style={{ fontFamily: BODY, fontSize: 32, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
           </button>
-        )}
+        ))}
 
         {/* Tableau de bord des joueurs (cliquable uniquement pendant le jeu) */}
         <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
           {players.map((p, i) => {
-            const active = activeId === p.id && !neutral && activePhase === 'play';
+            const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
             const clickable = activePhase === 'play';
             return (
               <div key={p.id}
-                onClick={clickable ? () => (active ? toggleNeutral() : claim(p.id)) : undefined}
+                onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
                 style={{
                   background: C.white, borderRadius: 16, padding: '12px 14px',
                   border: `2px solid ${active ? ACCENTS[i % ACCENTS.length] : 'transparent'}`,
@@ -599,8 +629,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-            {activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
+            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
+            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
+            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
+            {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
+            {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
         )}
