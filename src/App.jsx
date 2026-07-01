@@ -527,13 +527,17 @@ function AppProvider({ children }) {
       (discRows || []).forEach((d) => { (discoveriesByGame[d.game_id] ||= []).push(d.user_id); });
       // extensions par jeu, avec leurs propriétaires
       const extOwnersByExt = {};
-      (extOwners || []).forEach((o) => { (extOwnersByExt[o.extension_id] ||= []).push(o.owner_id); });
+      (extOwners || []).forEach((o) => { (extOwnersByExt[o.extension_id] ||= []).push({ id: o.owner_id, confirmed: o.confirmed !== false }); });
       const extsByGame = {};
       (extsRows || []).forEach((x) => {
-        const ids = extOwnersByExt[x.id] || [];
+        const list = extOwnersByExt[x.id] || [];
+        const confirmed = list.filter((o) => o.confirmed);
+        const pending = list.filter((o) => !o.confirmed);
+        const cIds = confirmed.map((o) => o.id);
         (extsByGame[x.game_id] ||= []).push({
           id: x.id, name: x.name, img: x.image_url || "", createdBy: x.created_by,
-          ownerIds: ids, owners: ids.map((id) => ({ id, name: nameById[id] || "Membre" })),
+          ownerIds: cIds, owners: cIds.map((id) => ({ id, name: nameById[id] || "Membre" })),
+          pendingOwners: pending.map((o) => ({ id: o.id, name: nameById[o.id] || "Membre" })),
         });
       });
 
@@ -917,7 +921,7 @@ function AppProvider({ children }) {
       game_id: gameId, name: data.name.trim(), image_url: imgUrl, created_by: currentUser.id,
     }).select().single();
     if (error) return { error: error.message };
-    await supabase.from("extension_owners").insert({ extension_id: row.id, owner_id: currentUser.id });
+    await supabase.from("extension_owners").insert({ extension_id: row.id, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id });
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -925,10 +929,29 @@ function AppProvider({ children }) {
   // Se rattacher à une extension existante ("je l'ai aussi")
   const addExtensionOwner = useCallback(async (extId) => {
     if (!currentUser) return { error: "Connectez-vous." };
-    const { error } = await supabase.from("extension_owners").insert({ extension_id: extId, owner_id: currentUser.id });
+    const { error } = await supabase.from("extension_owners").insert({ extension_id: extId, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id });
     if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
     await loadData();
     return {};
+  }, [currentUser, loadData]);
+
+  // Déclarer qu'un ou plusieurs AUTRES membres possèdent aussi cette extension
+  // (en attente de leur confirmation depuis Ma ludothèque).
+  const declareExtensionOwners = useCallback(async (extId, userIds) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const ids = (userIds || []).filter((id) => id && id !== currentUser.id);
+    if (ids.length === 0) return { error: "Sélectionnez au moins un membre." };
+    const { error } = await supabase.rpc("declare_extension_owners", { p_ext_id: extId, p_user_ids: ids });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Confirmer une possession d'extension déclarée par un autre membre.
+  const confirmExtensionOwnership = useCallback(async (extId) => {
+    if (!currentUser) return;
+    await supabase.rpc("confirm_extension_ownership", { p_ext_id: extId });
+    await loadData();
   }, [currentUser, loadData]);
 
   // Se retirer d'une extension. Si plus aucun propriétaire, l'extension est supprimée.
@@ -1540,6 +1563,13 @@ function AppProvider({ children }) {
     return out.sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [events, plays, eventPlayDismissed, currentUser]);
 
+  // Se declarer (ou se retirer) vainqueur d'une partie deja enregistree.
+  const setMyPlayResult = useCallback(async (playId, isWinner) => {
+    if (!currentUser) return;
+    await supabase.rpc("set_my_play_result", { p_play_id: playId, p_is_winner: !!isWinner });
+    await loadData();
+  }, [currentUser, loadData]);
+
   const confirmEventPlay = useCallback(async (eventId, gameId, isWinner) => {
     const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_is_winner: !!isWinner });
     if (error) return { error: error.message };
@@ -1652,12 +1682,12 @@ function AppProvider({ children }) {
     banUser, unbanUser, deleteUser, setMemberRole, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds,
-    plays, beltByGame, recordManualPlay, deleteGamePlay,
+    plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
     eventPlaySuggestions, confirmEventPlay, dismissEventPlay,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
-    addExtension, addExtensionOwner, removeExtensionOwner,
+    addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
     addGuest, removeGuest, confirmEventInvite, declineEventInvite, addComment, updateComment, removeComment,
@@ -4825,6 +4855,87 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
   );
 }
 
+/* ---- Une ligne d'extension : possession + déclaration d'un autre propriétaire (avec confirmation) ---- */
+function ExtensionRow({ x, setToast }) {
+  const { currentUser, users, addExtensionOwner, removeExtensionOwner, declareExtensionOwners } = useApp();
+  const [declaring, setDeclaring] = useState(false);
+  const [sel, setSel] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const isOwner = currentUser && (x.ownerIds || []).includes(currentUser.id);
+  const canDeclare = currentUser && (isOwner || currentUser.admin);
+  const pending = x.pendingOwners || [];
+  const rattaches = new Set([...(x.ownerIds || []), ...pending.map((o) => o.id)]);
+  const declarableUsers = (users || []).filter((u) => !u.banned && u.id !== currentUser?.id && !rattaches.has(u.id));
+
+  return (
+    <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "10px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url("${x.img}")` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
+          {!x.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 13 }}>🧩</span>}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{x.name}</div>
+          <div style={{ fontSize: 12, color: "#9c8d79" }}>
+            {x.owners && x.owners.length ? `chez ${x.owners.map((o) => o.name).join(", ")}` : "personne ne la possède"}
+          </div>
+          {pending.length > 0 && (
+            <div style={{ fontSize: 11.5, color: "#b98a1e", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+              <Clock size={11} /> En attente : {pending.map((o) => o.name).join(", ")}
+            </div>
+          )}
+        </div>
+        {currentUser && (
+          isOwner ? (
+            <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
+          ) : (
+            <Btn size="sm" variant="teal" onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
+          )
+        )}
+      </div>
+
+      {canDeclare && (
+        <div style={{ marginTop: 8 }}>
+          {!declaring ? (
+            <button type="button" onClick={() => setDeclaring(true)}
+              style={{ border: "none", background: "transparent", color: C.purple, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <UserPlus size={13} /> Déclarer un autre propriétaire
+            </button>
+          ) : (
+            <div style={{ padding: "10px 12px", background: "rgba(232,163,23,.08)", borderRadius: 10, marginTop: 4 }}>
+              <span style={{ display: "block", fontSize: 12, color: "#6e6256", marginBottom: 8 }}>Quels membres possèdent aussi cette extension ? Ils recevront une demande de confirmation.</span>
+              {declarableUsers.length === 0 ? (
+                <span style={{ fontSize: 12, color: "#9c8d79" }}>Tous les membres sont déjà rattachés à cette extension.</span>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {declarableUsers.map((u) => {
+                    const on = sel.includes(u.id);
+                    return (
+                      <button key={u.id} type="button" onClick={() => setSel((arr) => on ? arr.filter((v) => v !== u.id) : [...arr, u.id])}
+                        style={{ padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, border: `2px solid ${on ? C.amber : "#e6dcc9"}`, background: on ? C.amber : "#fff", color: on ? "#fff" : "#8a7c6a" }}>
+                        {on && <Check size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn size="sm" variant="teal" disabled={sel.length === 0 || busy} onClick={async () => {
+                  setBusy(true);
+                  const res = await declareExtensionOwners(x.id, sel);
+                  setBusy(false);
+                  if (res?.error) { setToast(res.error); }
+                  else { setToast("Demande de confirmation envoyée."); setDeclaring(false); setSel([]); }
+                }}>{busy ? <Loader2 size={13} className="aladj-spin" /> : <><Check size={13} /> Envoyer</>}</Btn>
+                <Btn size="sm" variant="soft" onClick={() => { setDeclaring(false); setSel([]); }}>Annuler</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---- Section extensions d'une fiche de jeu ---- */
 function GameExtensions({ g, onAuth, onClose, setToast }) {
   const { currentUser, addExtension, addExtensionOwner, removeExtensionOwner } = useApp();
@@ -4886,29 +4997,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
       {exts.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucune extension référencée pour ce jeu.</span>}
 
       <div style={{ display: "grid", gap: 10, marginBottom: adding ? 14 : 0 }}>
-        {exts.map((x) => {
-          const isOwner = currentUser && (x.ownerIds || []).includes(currentUser.id);
-          return (
-            <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "10px 12px" }}>
-              <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url("${x.img}")` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
-                {!x.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 13 }}>🧩</span>}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{x.name}</div>
-                <div style={{ fontSize: 12, color: "#9c8d79" }}>
-                  {x.owners && x.owners.length ? `chez ${x.owners.map((o) => o.name).join(", ")}` : "personne ne la possède"}
-                </div>
-              </div>
-              {currentUser && (
-                isOwner ? (
-                  <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
-                ) : (
-                  <Btn size="sm" variant="teal" onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
-                )
-              )}
-            </div>
-          );
-        })}
+        {exts.map((x) => <ExtensionRow key={x.id} x={x} setToast={setToast} />)}
       </div>
 
       {adding && (
@@ -6950,7 +7039,7 @@ function EventPlaySuggestions() {
 }
 
 function MyPlaysSection() {
-  const { plays, currentUser, games, deleteGamePlay } = useApp();
+  const { plays, currentUser, games, deleteGamePlay, setMyPlayResult } = useApp();
   const [period, setPeriod] = useState("year");
   const [allOpen, setAllOpen] = useState(false);
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
@@ -7034,7 +7123,11 @@ function MyPlaysSection() {
                   <div style={{ fontWeight: 700, color: C.navy, fontSize: 14 }}>{g?.name || "Jeu supprimé"}</div>
                   <div style={{ fontSize: 12.5, color: "#9c8d79" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
                 </div>
-                {iWon && <span style={{ color: C.amber, fontWeight: 700, fontSize: 13 }}>🏆</span>}
+                <button onClick={async () => { await setMyPlayResult(pl.id, !iWon); }}
+                  title={iWon ? "Vous etes declare vainqueur - cliquer pour retirer" : "Me declarer vainqueur"}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
+                  🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
+                </button>
                 {canDel && <button onClick={async () => { if (window.confirm("Supprimer cette partie ?")) await deleteGamePlay(pl.id); }} title="Supprimer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>}
               </div>
             );
@@ -7143,7 +7236,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -7163,6 +7256,14 @@ function MyLudoPage({ setToast, setPage }) {
     () => games.filter((g) => (g.pendingOwners || []).some((o) => o.id === currentUser?.id)),
     [games, currentUser]
   );
+  // Extensions déclarées à mon nom par un autre membre, en attente de ma confirmation.
+  const myPendingExt = useMemo(() => {
+    const out = [];
+    (games || []).forEach((g) => (g.extensions || []).forEach((x) => {
+      if ((x.pendingOwners || []).some((o) => o.id === currentUser?.id)) out.push({ ext: x, gameName: g.name });
+    }));
+    return out;
+  }, [games, currentUser]);
 
   const householdIds = useMemo(() => {
     const ids = household?.memberIds || [];
@@ -7442,12 +7543,12 @@ function MyLudoPage({ setToast, setPage }) {
       })()}
 
       {/* Possessions à confirmer (déclarées par d'autres membres) */}
-      {myPending.length > 0 && (
+      {(myPending.length + myPendingExt.length) > 0 && (
         <div style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <Info size={18} color={C.amber} />
             <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: 0 }}>
-              {myPending.length === 1 ? "Une possession à confirmer" : `${myPending.length} possessions à confirmer`}
+              {(() => { const n = myPending.length + myPendingExt.length; return n === 1 ? "Une possession à confirmer" : `${n} possessions à confirmer`; })()}
             </h3>
           </div>
           <div style={{ display: "grid", gap: 10 }}>
@@ -7467,6 +7568,20 @@ function MyLudoPage({ setToast, setPage }) {
                 </div>
               );
             })}
+            {myPendingExt.map(({ ext, gameName }) => (
+              <div key={ext.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#fff", borderRadius: 11, flexWrap: "wrap" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 9, flexShrink: 0, background: ext.img ? `center/cover url("${ext.img}")` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
+                  {!ext.img && <span style={{ fontSize: 15 }}>🧩</span>}
+                </div>
+                <span style={{ flex: 1, minWidth: 200, fontSize: 13.5, color: "#5e5346" }}>
+                  Un membre a indiqué que vous possédiez l'extension <b style={{ color: C.navy }}>{ext.name}</b> <span style={{ color: "#9c8d79" }}>({gameName})</span>.
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn size="sm" variant="teal" onClick={async () => { await confirmExtensionOwnership(ext.id); setToast(`« ${ext.name} » confirmée dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
+                  <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(ext.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
