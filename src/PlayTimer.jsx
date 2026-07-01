@@ -62,6 +62,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // session live
   const [session, setSession] = useState(null);     // ligne play_sessions
   const [players, setPlayers] = useState([]);        // play_session_players + nom/avatar résolus
+  const [winnerIds, setWinnerIds] = useState([]);    // play_session_players.id des vainqueurs
+  const [savingResult, setSavingResult] = useState(false);
   const [totals, setTotals] = useState({});          // player_id -> { total, max }
   const [openSegs, setOpenSegs] = useState({});      // player_id -> started_at (segments ouverts ; mode simultané)
   const [summary, setSummary] = useState(null);      // v_session_summary (fin)
@@ -320,6 +322,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
+  const toggleWinner = (pid) => setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
+  const saveResultAndExit = async () => {
+    setSavingResult(true); setError(null);
+    const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
+    setSavingResult(false);
+    if (e) { setError(e.message || String(e)); return; }
+    onExit();
+  };
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
   const togglePhase = (ph) => rpc('toggle_phase', { p_session_id: sid, p_phase: ph });
   const simulEnter = () => rpc('simul_enter', { p_session_id: sid });
@@ -657,6 +667,24 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           </div>
         </Card>
         <Card>
+          <Label>Qui a remporté la partie ?</Label>
+          <div style={{ display: 'grid', gap: 8, marginTop: 6 }}>
+            {players.map((p, i) => {
+              const won = winnerIds.includes(p.id);
+              return (
+                <button key={p.id} onClick={() => toggleWinner(p.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
+                    border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
+                  <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
+                  <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                  <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 12, color: `${C.navy}99`, marginTop: 8 }}>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</div>
+        </Card>
+        <Card>
           <Label>Temps par joueur</Label>
           {ranked.map((p, i) => {
             const tot = totals[p.id]?.total || 0;
@@ -676,7 +704,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             );
           })}
         </Card>
-        <button style={{ ...btnPrimary, width: '100%' }} onClick={onExit}>Fermer</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button style={{ ...btnGhost, flex: 1 }} onClick={onExit}>Fermer sans enregistrer</button>
+          <button style={{ ...btnPrimary, flex: 1 }} onClick={saveResultAndExit} disabled={savingResult}>{savingResult ? 'Enregistrement…' : 'Enregistrer le résultat'}</button>
+        </div>
       </div>
     );
   }
