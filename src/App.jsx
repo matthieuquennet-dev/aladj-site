@@ -418,6 +418,7 @@ function AppProvider({ children }) {
   const [memberEmails, setMemberEmails] = useState({}); // { userId: email } — chargé uniquement si admin
   const [users, setUsers] = useState([]);
   const [plays, setPlays] = useState([]);  // parties jouées (résultats)
+  const [eventPlayDismissed, setEventPlayDismissed] = useState([]);  // suggestions de soirée refusées
   const [games, setGames] = useState([]);
   const [events, setEvents] = useState([]);
   const [places, setPlaces] = useState([]);
@@ -451,7 +452,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -478,6 +479,7 @@ function AppProvider({ children }) {
         currentUserIdRef.current ? supabase.from("household_invites").select("*").eq("status", "pending") : Promise.resolve({ data: [] }),
         fetchAllRows("game_plays", "*", ["played_at", "id"]),
         fetchAllRows("game_play_participants", "*", ["id"]),
+        currentUserIdRef.current ? fetchAllRows("event_play_dismissed", "*", ["id"]) : Promise.resolve({ data: [] }),
       ]);
 
       // table de correspondance id -> nom
@@ -497,6 +499,7 @@ function AppProvider({ children }) {
         })),
       }));
       setPlays(playsList);
+      setEventPlayDismissed(epdRows || []);
 
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
@@ -1512,6 +1515,46 @@ function AppProvider({ children }) {
     return {};
   }, [loadData]);
 
+  // Suggestions : jeux des soirées passées où je suis présent et que je n'ai pas encore enregistrés
+  const eventPlaySuggestions = useMemo(() => {
+    if (!currentUser) return [];
+    const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id));
+    const mine = new Set();
+    (plays || []).forEach((pl) => {
+      if (pl.eventId && pl.participants.some((pt) => pt.userId === currentUser.id)) mine.add(pl.eventId + "|" + pl.gameId);
+    });
+    const today = new Date(); today.setHours(23, 59, 59, 999);
+    const out = [];
+    (events || []).forEach((e) => {
+      if (!e.players.some((p) => p.id === currentUser.id)) return;
+      if (!e.date || new Date(e.date) > today) return;
+      const seen = new Set();
+      (e.playedGames || []).forEach((pg) => {
+        if (!pg.gameId || seen.has(pg.gameId)) return;
+        seen.add(pg.gameId);
+        const key = e.id + "|" + pg.gameId;
+        if (mine.has(key) || dismissedSet.has(key)) return;
+        out.push({ eventId: e.id, gameId: pg.gameId, gameName: pg.gameName, date: e.date, place: e.place });
+      });
+    });
+    return out.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [events, plays, eventPlayDismissed, currentUser]);
+
+  const confirmEventPlay = useCallback(async (eventId, gameId, isWinner) => {
+    const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_is_winner: !!isWinner });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  const dismissEventPlay = useCallback(async (eventId, gameId) => {
+    if (!currentUser) return { error: "Non connecté" };
+    const { error } = await supabase.from("event_play_dismissed").insert({ user_id: currentUser.id, event_id: eventId, game_id: gameId });
+    if (error) return { error: error.message };
+    setEventPlayDismissed((prev) => [...prev, { user_id: currentUser.id, event_id: eventId, game_id: gameId }]);
+    return {};
+  }, [currentUser]);
+
   const momentsUnseen = useMemo(() => {
     if (!currentUser) return 0;
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1610,6 +1653,7 @@ function AppProvider({ children }) {
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay,
+    eventPlaySuggestions, confirmEventPlay, dismissEventPlay,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
@@ -2165,11 +2209,12 @@ const NAV = [
 ];
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions } = useApp();
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => !n.auth || currentUser);
   const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
+  const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length;
 
   return (
     <>
@@ -2185,7 +2230,7 @@ function Navbar({ page, setPage, onAuth }) {
         <nav style={{ display: "flex", gap: 4, marginLeft: 12 }} className="aladj-desktop-nav">
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? unreadNotifs : (n.key === "soirees" ? momentsUnseen : 0);
+            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : 0);
             return (
               <button key={n.key} onClick={() => setPage(n.key)} style={{
                 position: "relative",
@@ -2224,7 +2269,7 @@ function Navbar({ page, setPage, onAuth }) {
           marginLeft: "auto", display: "none", position: "relative", background: C.navy, color: "#fff", border: "none", borderRadius: 10, width: 40, height: 40, cursor: "pointer", placeItems: "center",
         }}>
           {open ? <X size={20} /> : <Menu size={20} />}
-          {!open && (unreadNotifs + momentsUnseen) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{unreadNotifs + momentsUnseen}</span>}
+          {!open && (ludoBadge + momentsUnseen) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{ludoBadge + momentsUnseen}</span>}
         </button>
       </div>
 
@@ -2232,7 +2277,7 @@ function Navbar({ page, setPage, onAuth }) {
         <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gap: 6, borderTop: "1px solid #ece2d0" }}>
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? unreadNotifs : (n.key === "soirees" ? momentsUnseen : 0);
+            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : 0);
             return (
               <button key={n.key} onClick={() => { setPage(n.key); setOpen(false); }} style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer",
@@ -4091,8 +4136,8 @@ function ChampionBelt({ belt, size = 46 }) {
   const dateStr = new Date(belt.playedAt).toLocaleDateString("fr-FR");
   const title = `Tenant du titre : ${names} — ${dateStr}`;
   const r = size / 2;
-  const photoR = size * 0.30;
-  const rr = r - size * 0.085;
+  const photoR = size * 0.29;
+  const rr = r - size * 0.155;
   const uid = "blt" + Math.abs(((main.userId || main.name || "x") + size).split("").reduce((a, c) => a + c.charCodeAt(0), 0));
   const arc = `M ${r - rr} ${r} A ${rr} ${rr} 0 0 1 ${r + rr} ${r}`;
   return (
@@ -4106,12 +4151,12 @@ function ChampionBelt({ belt, size = 46 }) {
           <path id={uid + "p"} d={arc} fill="none" />
         </defs>
         <circle cx={r} cy={r} r={r - 0.8} fill={`url(#${uid}g)`} stroke="#8a5800" strokeWidth="1" />
-        <circle cx={r} cy={r} r={photoR + 1.6} fill="#fff" />
+        <circle cx={r} cy={r} r={photoR + 2} fill="#fff" />
         {main.avatar
           ? <image href={main.avatar} x={r - photoR} y={r - photoR} width={photoR * 2} height={photoR * 2} clipPath={`url(#${uid}c)`} preserveAspectRatio="xMidYMid slice" />
-          : <g><circle cx={r} cy={r} r={photoR} fill="#1E8A8A" /><text x={r} y={r + photoR * 0.36} textAnchor="middle" fill="#fff" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={photoR}>{(main.name || "?")[0].toUpperCase()}</text></g>}
-        <text fill="#6e4500" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={size * 0.135} letterSpacing="0.3">
-          <textPath href={`#${uid}p`} startOffset="50%" textAnchor="middle">★ CHAMPION ★</textPath>
+          : <g><circle cx={r} cy={r} r={photoR} fill="#1E8A8A" /><text x={r} y={r} textAnchor="middle" dominantBaseline="central" fill="#fff" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={photoR}>{(main.name || "?")[0].toUpperCase()}</text></g>}
+        <text fill="#6e4500" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={size * 0.12} letterSpacing="0.3">
+          <textPath href={`#${uid}p`} startOffset="50%" textAnchor="middle" dominantBaseline="central">★ CHAMPION ★</textPath>
         </text>
       </svg>
     </span>
@@ -4357,7 +4402,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
   return (
     <Modal open onClose={onClose} title={g.name} width={620}>
-      <div style={{ borderRadius: 16, overflow: "hidden", marginBottom: 18 }}><GameCover g={g} size="lg" /></div>
+      <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", marginBottom: 18 }}><GameCover g={g} size="lg" />{belt && <div style={{ position: "absolute", bottom: 10, left: 10 }}><ChampionBelt belt={belt} size={58} /></div>}</div>
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
         {g.year && <Badge color={C.navy}>{g.year}</Badge>}
@@ -6865,6 +6910,45 @@ function FamilySection({ setToast }) {
   );
 }
 
+function EventPlaySuggestions() {
+  const { eventPlaySuggestions, confirmEventPlay, dismissEventPlay } = useApp();
+  const [busy, setBusy] = useState(null);
+  const [wonSet, setWonSet] = useState({});
+  if (!eventPlaySuggestions.length) return null;
+  const keyOf = (s) => s.eventId + "|" + s.gameId;
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 20 }}>📋</span> Parties à confirmer
+        <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{eventPlaySuggestions.length}</span>
+      </h3>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6e6256" }}>Tu étais présent à ces soirées : confirme les jeux auxquels tu as joué pour les ajouter à tes parties.</p>
+      <div style={{ display: "grid", gap: 8 }}>
+        {eventPlaySuggestions.map((s) => {
+          const k = keyOf(s);
+          const won = !!wonSet[k];
+          const isBusy = busy === k;
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "10px 13px" }}>
+              <div style={{ flex: 1, minWidth: 150 }}>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{s.gameName}</div>
+                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Soirée du {new Date(s.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{s.place ? " · " + s.place : ""}</div>
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49", cursor: "pointer" }}>
+                <input type="checkbox" checked={won} onChange={() => setWonSet((p) => ({ ...p, [k]: !won }))} /> j'ai gagné
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Btn size="sm" variant="teal" disabled={isBusy} onClick={async () => { setBusy(k); await confirmEventPlay(s.eventId, s.gameId, won); setBusy(null); }}>J'y ai joué</Btn>
+                <Btn size="sm" variant="ghost" disabled={isBusy} onClick={async () => { setBusy(k); await dismissEventPlay(s.eventId, s.gameId); setBusy(null); }}>Non</Btn>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MyPlaysSection() {
   const { plays, currentUser, games, deleteGamePlay } = useApp();
   const [period, setPeriod] = useState("year");
@@ -7263,6 +7347,7 @@ function MyLudoPage({ setToast, setPage }) {
         <Btn variant="primary" onClick={() => setRecordOpen(true)}>🎲 Enregistrer une partie jouée</Btn>
       </div>
       <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
+      <EventPlaySuggestions />
       <MyPlaysSection />
 
       <FamilySection setToast={setToast} />
@@ -7288,7 +7373,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
