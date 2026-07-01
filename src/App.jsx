@@ -417,6 +417,7 @@ function AppProvider({ children }) {
   const [bannedNotice, setBannedNotice] = useState(false); // affiché si un membre banni tente de se connecter
   const [memberEmails, setMemberEmails] = useState({}); // { userId: email } — chargé uniquement si admin
   const [users, setUsers] = useState([]);
+  const [plays, setPlays] = useState([]);  // parties jouées (résultats)
   const [games, setGames] = useState([]);
   const [events, setEvents] = useState([]);
   const [places, setPlaces] = useState([]);
@@ -450,7 +451,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -475,12 +476,27 @@ function AppProvider({ children }) {
         currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("household_members").select("*") : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("household_invites").select("*").eq("status", "pending") : Promise.resolve({ data: [] }),
+        fetchAllRows("game_plays", "*", ["played_at", "id"]),
+        fetchAllRows("game_play_participants", "*", ["id"]),
       ]);
 
       // table de correspondance id -> nom
       const nameById = {};
       const roleById = {};
       (profiles || []).forEach((p) => { nameById[p.id] = p.name; roleById[p.id] = p.role; });
+
+      // Parties jouées (résultats) : on rattache leurs participants
+      const partsByPlay = {};
+      (gppRows || []).forEach((pp) => { (partsByPlay[pp.play_id] ||= []).push(pp); });
+      const playsList = (gamePlaysRows || []).map((gp) => ({
+        id: gp.id, gameId: gp.game_id, playedAt: gp.played_at,
+        sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
+        participants: (partsByPlay[gp.id] || []).map((pp) => ({
+          userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
+          name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
+        })),
+      }));
+      setPlays(playsList);
 
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
@@ -1452,6 +1468,50 @@ function AppProvider({ children }) {
     [users]
   );
 
+  const userById = useMemo(() => {
+    const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
+  }, [users]);
+
+  // "Ceinture" : dernier vainqueur connu de chaque jeu (gameId -> { playedAt, winners[] })
+  const beltByGame = useMemo(() => {
+    const latest = {};
+    (plays || []).forEach((pl) => {
+      const winners = pl.participants.filter((x) => x.isWinner);
+      if (!winners.length) return;
+      const prev = latest[pl.gameId];
+      if (!prev || new Date(pl.playedAt) > new Date(prev.playedAt)) {
+        latest[pl.gameId] = {
+          playedAt: pl.playedAt,
+          winners: winners.map((w) => ({
+            name: w.name, userId: w.userId,
+            avatar: w.userId ? (userById[w.userId]?.avatar || null) : null,
+          })),
+        };
+      }
+    });
+    return latest;
+  }, [plays, userById]);
+
+  // Enregistrer une partie SAISIE MANUELLEMENT (aucun temps pris en compte)
+  const recordManualPlay = useCallback(async (gameId, playedAt, participants) => {
+    const payload = (participants || []).map((pp) => ({
+      user_id: pp.userId || null, guest_name: pp.guestName || null, is_winner: !!pp.isWinner,
+    }));
+    const { error } = await supabase.rpc("record_manual_play", {
+      p_game_id: gameId, p_played_at: playedAt, p_participants: payload,
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
+  const deleteGamePlay = useCallback(async (playId) => {
+    const { error } = await supabase.rpc("delete_game_play", { p_play_id: playId });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [loadData]);
+
   const momentsUnseen = useMemo(() => {
     if (!currentUser) return 0;
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1549,6 +1609,7 @@ function AppProvider({ children }) {
     banUser, unbanUser, deleteUser, setMemberRole, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds,
+    plays, beltByGame, recordManualPlay, deleteGamePlay,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
@@ -4021,8 +4082,45 @@ function GameCover({ g, size = "md" }) {
   );
 }
 
+// Pastille "ceinture" du tenant du titre : anneau doré, photo au centre,
+// "CHAMPION" en arc ; le nom du vainqueur et la date apparaissent au survol.
+function ChampionBelt({ belt, size = 46 }) {
+  if (!belt || !(belt.winners || []).length) return null;
+  const main = belt.winners[0];
+  const names = belt.winners.map((w) => w.name).join(", ");
+  const dateStr = new Date(belt.playedAt).toLocaleDateString("fr-FR");
+  const title = `Tenant du titre : ${names} — ${dateStr}`;
+  const r = size / 2;
+  const photoR = size * 0.30;
+  const rr = r - size * 0.085;
+  const uid = "blt" + Math.abs(((main.userId || main.name || "x") + size).split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+  const arc = `M ${r - rr} ${r} A ${rr} ${rr} 0 0 1 ${r + rr} ${r}`;
+  return (
+    <span title={title} style={{ display: "inline-block", lineHeight: 0, filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id={uid + "g"} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#FBE38A" /><stop offset="45%" stopColor="#E8A317" /><stop offset="100%" stopColor="#A9700A" />
+          </linearGradient>
+          <clipPath id={uid + "c"}><circle cx={r} cy={r} r={photoR} /></clipPath>
+          <path id={uid + "p"} d={arc} fill="none" />
+        </defs>
+        <circle cx={r} cy={r} r={r - 0.8} fill={`url(#${uid}g)`} stroke="#8a5800" strokeWidth="1" />
+        <circle cx={r} cy={r} r={photoR + 1.6} fill="#fff" />
+        {main.avatar
+          ? <image href={main.avatar} x={r - photoR} y={r - photoR} width={photoR * 2} height={photoR * 2} clipPath={`url(#${uid}c)`} preserveAspectRatio="xMidYMid slice" />
+          : <g><circle cx={r} cy={r} r={photoR} fill="#1E8A8A" /><text x={r} y={r + photoR * 0.36} textAnchor="middle" fill="#fff" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={photoR}>{(main.name || "?")[0].toUpperCase()}</text></g>}
+        <text fill="#6e4500" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={size * 0.135} letterSpacing="0.3">
+          <textPath href={`#${uid}p`} startOffset="50%" textAnchor="middle">★ CHAMPION ★</textPath>
+        </text>
+      </svg>
+    </span>
+  );
+}
+
 function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, ownerBadge = null }) {
-  const { currentUser } = useApp();
+  const { currentUser, beltByGame } = useApp();
+  const belt = beltByGame?.[g.id];
   const { avg, count } = gameStats(g);
   const isShared = g.shared !== false;
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
@@ -4060,8 +4158,13 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, own
           )}
           {ownerBadge && (
             <div title={`Appartient à ${ownerBadge}`}
-              style={{ position: "absolute", bottom: 10, left: 10, background: "rgba(107,58,122,.92)", color: "#fff", borderRadius: 999, padding: "3px 10px 3px 8px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }}>
+              style={{ position: "absolute", bottom: belt ? 62 : 10, left: 10, background: "rgba(107,58,122,.92)", color: "#fff", borderRadius: 999, padding: "3px 10px 3px 8px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }}>
               <Users size={12} color="#fff" /> {ownerBadge}
+            </div>
+          )}
+          {belt && (
+            <div style={{ position: "absolute", bottom: 8, left: 8 }}>
+              <ChampionBelt belt={belt} size={46} />
             </div>
           )}
           {bothNotes ? (
@@ -4175,7 +4278,7 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono, plays, beltByGame } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
@@ -4186,6 +4289,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
   const [sessions, setSessions] = useState(null);
   const [myAvg, setMyAvg] = useState(null);
   const [allAvg, setAllAvg] = useState(null);
@@ -4195,6 +4299,10 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [selDeclare, setSelDeclare] = useState([]);
   const [declBusy, setDeclBusy] = useState(false);
   const ownerIdSet = new Set([...confirmedOwners.map((o) => o.id), ...pendingOwners.map((o) => o.id)]);
+  const myGamePlays = (currentUser ? (plays || []).filter((pl) => pl.gameId === g.id && pl.participants.some((pt) => pt.userId === currentUser.id)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
+  const myWinCount = currentUser ? myGamePlays.filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner)).length : 0;
+  const winPct = myGamePlays.length ? Math.round((myWinCount / myGamePlays.length) * 100) : 0;
+  const belt = beltByGame?.[g.id];
   const declarableUsers = (users || []).filter((u) => !u.banned && u.id !== currentUser?.id && !ownerIdSet.has(u.id));
 
   // La description n'est pas chargée dans le listing (pour alléger l'Egress) :
@@ -4311,6 +4419,49 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
               {myAvg != null && <div style={{ color: "#6b5d49" }}>Ton temps de jeu moyen : <b style={{ color: C.teal }}>{fmtDuration(myAvg)}</b></div>}
               {setupAvg != null && <div style={{ color: "#6b5d49" }}>Temps de mise en place moyen : <b style={{ color: C.amber }}>{fmtDuration(setupAvg)}</b></div>}
               {teardownAvg != null && <div style={{ color: "#6b5d49" }}>Temps de rangement moyen : <b style={{ color: C.purple }}>{fmtDuration(teardownAvg)}</b></div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentUser && (myGamePlays.length > 0 || belt) && (
+        <div style={{ background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
+            <span style={{ fontSize: 20 }}>🏆</span>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: C.navy }}>Mes parties</div>
+          </div>
+          {myGamePlays.length === 0 ? (
+            <div style={{ fontSize: 14, color: "#9c8d79", marginBottom: 4 }}>Tu n'as pas encore de partie enregistrée pour ce jeu.</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 26, flexWrap: "wrap", alignItems: "baseline" }}>
+                <button onClick={() => setHistOpen((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 24, color: C.navy }}>{myGamePlays.length}</div>
+                  <div style={{ fontSize: 12.5, color: C.teal, textDecoration: "underline", textUnderlineOffset: 2 }}>partie{myGamePlays.length > 1 ? "s" : ""} · voir les dates</div>
+                </button>
+                <div>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 24, color: C.amber }}>{winPct}%</div>
+                  <div style={{ fontSize: 12.5, color: "#9c8d79" }}>{myWinCount} victoire{myWinCount > 1 ? "s" : ""}</div>
+                </div>
+              </div>
+              {histOpen && (
+                <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", marginTop: 12, paddingTop: 10, display: "grid", gap: 5 }}>
+                  {myGamePlays.map((pl) => {
+                    const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+                    return (
+                      <div key={pl.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+                        <span style={{ color: "#6b5d49" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</span>
+                        {iWon && <span style={{ color: C.amber, fontWeight: 700 }}>gagne 🏆</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+          {belt && (
+            <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", marginTop: 12, paddingTop: 10, fontSize: 13.5, color: "#6b5d49" }}>
+              Tenant du titre : <b style={{ color: C.navy }}>{belt.winners.map((w) => w.name).join(", ")}</b> <span style={{ color: "#9c8d79" }}>({new Date(belt.playedAt).toLocaleDateString("fr-FR")})</span>
             </div>
           )}
         </div>
@@ -6714,8 +6865,178 @@ function FamilySection({ setToast }) {
   );
 }
 
+function MyPlaysSection() {
+  const { plays, currentUser, games, deleteGamePlay } = useApp();
+  const [period, setPeriod] = useState("year");
+  const [allOpen, setAllOpen] = useState(false);
+  const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
+  const myPlays = useMemo(
+    () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
+    [plays, currentUser]
+  );
+  const years = useMemo(() => [...new Set(myPlays.map((pl) => new Date(pl.playedAt).getFullYear()))].sort((a, b) => b - a), [myPlays]);
+  if (!currentUser) return null;
+  const now = new Date();
+  const inPeriod = (pl) => {
+    const d = new Date(pl.playedAt);
+    if (period === "all") return true;
+    if (period === "month") return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    if (period === "year") return d.getFullYear() === now.getFullYear();
+    return d.getFullYear() === Number(period);
+  };
+  const filtered = myPlays.filter(inPeriod);
+  const by = {};
+  filtered.forEach((pl) => {
+    const won = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+    const e = (by[pl.gameId] ||= { gameId: pl.gameId, count: 0, wins: 0 });
+    e.count++; if (won) e.wins++;
+  });
+  const ranking = Object.values(by).sort((a, b) => b.count - a.count);
+  const top = ranking.slice(0, 20);
+  const chip = (val, label) => (
+    <button key={val} onClick={() => setPeriod(val)}
+      style={{ border: "none", cursor: "pointer", borderRadius: 999, padding: "5px 13px", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13,
+        background: period === val ? C.amber : "rgba(232,163,23,.12)", color: period === val ? "#fff" : "#8a6a1f" }}>{label}</button>
+  );
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 20 }}>🎲</span> Mes parties
+      </h3>
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
+        {chip("month", "Ce mois-ci")}
+        {chip("year", "Cette année")}
+        {years.filter((y) => y !== now.getFullYear()).map((y) => chip(String(y), String(y)))}
+        {chip("all", "Depuis toujours")}
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 14, padding: "18px 20px", color: "#9c8d79", fontSize: 14 }}>
+          Aucune partie enregistrée sur cette période. Lance le chronomètre ou utilise « Enregistrer une partie jouée ».
+        </div>
+      ) : (
+        <div style={{ background: "#fff", border: "1px solid #ece2d0", borderRadius: 16, padding: "14px 18px" }}>
+          <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 10 }}>
+            <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif", fontSize: 16 }}>{filtered.length}</b> partie{filtered.length > 1 ? "s" : ""} · <b style={{ color: C.navy }}>{ranking.length}</b> jeu{ranking.length > 1 ? "x" : ""} différent{ranking.length > 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {top.map((r, i) => {
+              const g = gameById[r.gameId];
+              return (
+                <div key={r.gameId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
+                  <span style={{ width: 20, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
+                  <span style={{ flex: 1, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</span>
+                  {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {r.wins}</span>}
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal }}>{r.count}</span>
+                </div>
+              );
+            })}
+          </div>
+          {ranking.length > 20 && <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 8 }}>… et {ranking.length - 20} autre{ranking.length - 20 > 1 ? "s" : ""} jeu{ranking.length - 20 > 1 ? "x" : ""}</div>}
+          <button onClick={() => setAllOpen(true)} style={{ background: "none", border: "none", color: C.teal, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "12px 0 0", fontFamily: "'Nunito',sans-serif" }}>
+            Voir toutes mes parties ({myPlays.length})
+          </button>
+        </div>
+      )}
+      <Modal open={allOpen} onClose={() => setAllOpen(false)} title="Toutes mes parties" width={540}>
+        <div style={{ display: "grid", gap: 7 }}>
+          {myPlays.length === 0 && <div style={{ color: "#9c8d79" }}>Aucune partie pour le moment.</div>}
+          {myPlays.map((pl) => {
+            const g = gameById[pl.gameId];
+            const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+            const canDel = pl.recordedBy === currentUser.id || currentUser.admin;
+            return (
+              <div key={pl.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: C.navy, fontSize: 14 }}>{g?.name || "Jeu supprimé"}</div>
+                  <div style={{ fontSize: 12.5, color: "#9c8d79" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
+                </div>
+                {iWon && <span style={{ color: C.amber, fontWeight: 700, fontSize: 13 }}>🏆</span>}
+                {canDel && <button onClick={async () => { if (window.confirm("Supprimer cette partie ?")) await deleteGamePlay(pl.id); }} title="Supprimer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>}
+              </div>
+            );
+          })}
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
+  const { games, users, recordManualPlay } = useApp();
+  const [gameId, setGameId] = useState(defaultGameId || "");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [parts, setParts] = useState([]);
+  const [guestName, setGuestName] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) { setGameId(defaultGameId || ""); setParts([]); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); }
+  }, [open, defaultGameId]);
+
+  const fieldStyle = { width: "100%", padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy, boxSizing: "border-box" };
+  const sortedGames = useMemo(() => [...(games || [])].sort((a, b) => a.name.localeCompare(b.name)), [games]);
+  const available = (users || []).filter((u) => !u.banned && !parts.some((p) => p.userId === u.id));
+
+  const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false }]); };
+  const addGuest = () => { const n = guestName.trim(); if (!n) return; setParts((pr) => [...pr, { key: "g" + Date.now(), userId: null, guestName: n, name: n, isWinner: false }]); setGuestName(""); };
+  const toggleWin = (key) => setParts((pr) => pr.map((p) => (p.key === key ? { ...p, isWinner: !p.isWinner } : p)));
+  const removeP = (key) => setParts((pr) => pr.filter((p) => p.key !== key));
+
+  const save = async () => {
+    if (!gameId) return setToast("Choisissez un jeu.");
+    if (!parts.length) return setToast("Ajoutez au moins un joueur.");
+    setBusy(true);
+    const res = await recordManualPlay(gameId, new Date(date + "T12:00:00").toISOString(), parts);
+    setBusy(false);
+    if (res?.error) return setToast(res.error);
+    setToast("Partie enregistrée !"); onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Enregistrer une partie" width={540}>
+      <div style={{ display: "grid", gap: 15 }}>
+        <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seul le résultat compte.</p>
+        <label style={{ display: "grid", gap: 5 }}>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Jeu</span>
+          <select value={gameId} onChange={(e) => setGameId(e.target.value)} style={fieldStyle}>
+            <option value="">— Choisir un jeu —</option>
+            {sortedGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 5 }}>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Date de la partie</span>
+          <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
+        </label>
+        <div style={{ display: "grid", gap: 8 }}>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— appuie sur 🏆 pour le(s) vainqueur(s)</span></span>
+          {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
+          {parts.map((p) => (
+            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
+              <span style={{ flex: 1, fontWeight: 600, color: C.navy, fontSize: 14 }}>{p.name}{p.userId ? "" : " · invité"}</span>
+              <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
+              <button onClick={() => removeP(p.key)} title="Retirer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><X size={16} /></button>
+            </div>
+          ))}
+          <select value="" onChange={(e) => { if (e.target.value) addMember(e.target.value); }} style={fieldStyle}>
+            <option value="">+ Ajouter un membre…</option>
+            {available.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={guestName} onChange={(e) => setGuestName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGuest(); } }} placeholder="+ Ajouter un invité (nom)" style={{ ...fieldStyle, flex: 1 }} />
+            <Btn size="sm" variant="soft" onClick={addGuest}>Ajouter</Btn>
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <Btn variant="ghost" onClick={onClose}>Annuler</Btn>
+          <Btn variant="primary" onClick={save} disabled={busy}>{busy ? "Enregistrement…" : "Enregistrer"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function MyLudoPage({ setToast, setPage }) {
   const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush } = useApp();
+  const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -6937,6 +7258,12 @@ function MyLudoPage({ setToast, setPage }) {
           </div>
         </div>
       )}
+
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+        <Btn variant="primary" onClick={() => setRecordOpen(true)}>🎲 Enregistrer une partie jouée</Btn>
+      </div>
+      <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
+      <MyPlaysSection />
 
       <FamilySection setToast={setToast} />
 
