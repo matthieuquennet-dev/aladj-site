@@ -4136,8 +4136,8 @@ function ChampionBelt({ belt, size = 46 }) {
   const dateStr = new Date(belt.playedAt).toLocaleDateString("fr-FR");
   const title = `Tenant du titre : ${names} — ${dateStr}`;
   const r = size / 2;
-  const photoR = size * 0.29;
-  const rr = r - size * 0.155;
+  const photoR = size * 0.27;
+  const rr = r - size * 0.10;
   const uid = "blt" + Math.abs(((main.userId || main.name || "x") + size).split("").reduce((a, c) => a + c.charCodeAt(0), 0));
   const arc = `M ${r - rr} ${r} A ${rr} ${rr} 0 0 1 ${r + rr} ${r}`;
   return (
@@ -4155,7 +4155,7 @@ function ChampionBelt({ belt, size = 46 }) {
         {main.avatar
           ? <image href={main.avatar} x={r - photoR} y={r - photoR} width={photoR * 2} height={photoR * 2} clipPath={`url(#${uid}c)`} preserveAspectRatio="xMidYMid slice" />
           : <g><circle cx={r} cy={r} r={photoR} fill="#1E8A8A" /><text x={r} y={r} textAnchor="middle" dominantBaseline="central" fill="#fff" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={photoR}>{(main.name || "?")[0].toUpperCase()}</text></g>}
-        <text fill="#6e4500" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={size * 0.12} letterSpacing="0.3">
+        <text fill="#6e4500" fontFamily="Fredoka, sans-serif" fontWeight="700" fontSize={size * 0.135} letterSpacing="0.3">
           <textPath href={`#${uid}p`} startOffset="50%" textAnchor="middle" dominantBaseline="central">★ CHAMPION ★</textPath>
         </text>
       </svg>
@@ -7052,12 +7052,19 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [parts, setParts] = useState([]);
   const [guestName, setGuestName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [gameSearch, setGameSearch] = useState("");
+  const [gameListOpen, setGameListOpen] = useState(false);
   useEffect(() => {
-    if (open) { setGameId(defaultGameId || ""); setParts([]); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); }
+    if (open) { setGameId(defaultGameId || ""); setParts([]); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false); }
   }, [open, defaultGameId]);
 
   const fieldStyle = { width: "100%", padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy, boxSizing: "border-box" };
   const sortedGames = useMemo(() => [...(games || [])].sort((a, b) => a.name.localeCompare(b.name)), [games]);
+  const norm = (x) => (x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const filteredGames = useMemo(() => {
+    const q = norm(gameSearch);
+    return (q ? sortedGames.filter((g) => norm(g.name).includes(q)) : sortedGames).slice(0, 60);
+  }, [sortedGames, gameSearch]);
   const available = (users || []).filter((u) => !u.banned && !parts.some((p) => p.userId === u.id));
 
   const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false }]); };
@@ -7081,10 +7088,27 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
         <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seul le résultat compte.</p>
         <label style={{ display: "grid", gap: 5 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Jeu</span>
-          <select value={gameId} onChange={(e) => setGameId(e.target.value)} style={fieldStyle}>
-            <option value="">— Choisir un jeu —</option>
-            {sortedGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
+          <div style={{ position: "relative" }}>
+            <input
+              value={gameSearch}
+              onChange={(e) => { setGameSearch(e.target.value); setGameId(""); setGameListOpen(true); }}
+              onFocus={() => setGameListOpen(true)}
+              onBlur={() => setTimeout(() => setGameListOpen(false), 150)}
+              placeholder="Tape le nom d'un jeu ou parcours la liste…"
+              style={fieldStyle}
+            />
+            {gameListOpen && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, maxHeight: 230, overflowY: "auto", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 10, zIndex: 40, boxShadow: "0 8px 24px rgba(0,0,0,.14)" }}>
+                {filteredGames.length === 0 && <div style={{ padding: "10px 12px", color: "#9c8d79", fontSize: 13.5 }}>Aucun jeu trouvé.</div>}
+                {filteredGames.map((g) => (
+                  <button key={g.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setGameId(g.id); setGameSearch(g.name); setGameListOpen(false); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", borderBottom: "1px solid #f4ecda", background: gameId === g.id ? "rgba(30,138,138,.12)" : "#fff", cursor: "pointer", fontSize: 14, color: C.navy, fontFamily: "'Nunito',sans-serif" }}>
+                    {g.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </label>
         <label style={{ display: "grid", gap: 5 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Date de la partie</span>
