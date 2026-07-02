@@ -4,7 +4,7 @@ import {
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
-  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket
+  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer from "./PlayTimer";
@@ -413,6 +413,7 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
 function AppProvider({ children }) {
   const [ready, setReady] = useState(false);
   const [authUser, setAuthUser] = useState(null);     // utilisateur Supabase Auth
+  const [passwordRecovery, setPasswordRecovery] = useState(false); // lien "mot de passe oublie" suivi
   const [currentUser, setCurrentUser] = useState(null); // profil (avec name, role)
   const [bannedNotice, setBannedNotice] = useState(false); // affiché si un membre banni tente de se connecter
   const [memberEmails, setMemberEmails] = useState({}); // { userId: email } — chargé uniquement si admin
@@ -631,7 +632,7 @@ function AppProvider({ children }) {
       setAuthUser(session?.user || null);
       await loadData();
       setReady(true);
-      sub = supabase.auth.onAuthStateChange((_e, sess) => { setAuthUser(sess?.user || null); });
+      sub = supabase.auth.onAuthStateChange((_e, sess) => { setAuthUser(sess?.user || null); if (_e === 'PASSWORD_RECOVERY') setPasswordRecovery(true); });
     })();
     return () => sub?.data?.subscription?.unsubscribe();
   }, [loadData]);
@@ -727,6 +728,22 @@ function AppProvider({ children }) {
     });
     if (error) return { error: error.message };
     return {}; // la redirection prend le relais
+  }, []);
+
+  // Envoi d'un lien de reinitialisation du mot de passe.
+  const resetPassword = useCallback(async (email) => {
+    if (!email || !email.trim()) return { error: "Indiquez votre adresse e-mail." };
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+    if (error) return { error: error.message };
+    return {};
+  }, []);
+
+  // Definition d'un nouveau mot de passe (apres avoir suivi le lien recu par e-mail).
+  const updatePassword = useCallback(async (newPwd) => {
+    if (!newPwd || newPwd.length < 6) return { error: "Le mot de passe doit faire au moins 6 caracteres." };
+    const { error } = await supabase.auth.updateUser({ password: newPwd });
+    if (error) return { error: error.message };
+    return {};
   }, []);
 
   const logout = useCallback(async () => { await supabase.auth.signOut(); setCurrentUser(null); }, []);
@@ -1707,6 +1724,7 @@ function AppProvider({ children }) {
     addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
     addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
     reload: loadData,
+    resetPassword, updatePassword, passwordRecovery, setPasswordRecovery,
     chrono, openChrono, closeChrono,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
@@ -2250,7 +2268,9 @@ const NAV = [
 ];
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, reload } = useApp();
+  const [refreshing, setRefreshing] = useState(false);
+  const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => !n.auth || currentUser);
@@ -2306,8 +2326,13 @@ function Navbar({ page, setPage, onAuth }) {
           )}
         </div>
 
+        <button className="aladj-burger" onClick={doRefresh} disabled={refreshing} aria-label="Rafraichir" title="Rafraichir" style={{
+          marginLeft: "auto", display: "none", background: "#fff", color: C.navy, border: `1.5px solid ${C.navy}22`, borderRadius: 10, width: 40, height: 40, cursor: refreshing ? "default" : "pointer", placeItems: "center",
+        }}>
+          <RefreshCw size={19} className={refreshing ? "aladj-spin" : undefined} />
+        </button>
         <button className="aladj-burger" onClick={() => setOpen(!open)} style={{
-          marginLeft: "auto", display: "none", position: "relative", background: C.navy, color: "#fff", border: "none", borderRadius: 10, width: 40, height: 40, cursor: "pointer", placeItems: "center",
+          marginLeft: 8, display: "none", position: "relative", background: C.navy, color: "#fff", border: "none", borderRadius: 10, width: 40, height: 40, cursor: "pointer", placeItems: "center",
         }}>
           {open ? <X size={20} /> : <Menu size={20} />}
           {!open && (ludoBadge + momentsUnseen) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{ludoBadge + momentsUnseen}</span>}
@@ -2422,8 +2447,10 @@ function ProfileEditModal({ onClose }) {
    AUTHENTIFICATION (modale) — Supabase
    ============================================================================= */
 function AuthModal({ mode, onClose, setToast }) {
-  const { login, register, loginWithGoogle } = useApp();
+  const { login, register, loginWithGoogle, resetPassword } = useApp();
   const [tab, setTab] = useState(mode || "login");
+  const [forgot, setForgot] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", pwd: "", pwd2: "", role: "decideur" });
   const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState("");
@@ -2458,6 +2485,39 @@ function AuthModal({ mode, onClose, setToast }) {
     onClose();
     setToast(`Bienvenue ${res.user.name} !`);
   };
+
+  const sendReset = async () => {
+    setErr(""); setBusy(true);
+    const res = await resetPassword(form.email);
+    setBusy(false);
+    if (res.error) { setErr(res.error); return; }
+    setForgotSent(true);
+  };
+
+  // Écran « mot de passe oublié » : envoi d'un lien de réinitialisation.
+  if (forgot) {
+    return (
+      <Modal open onClose={onClose} title="Mot de passe oublié" width={460}>
+        {forgotSent ? (
+          <div style={{ textAlign: "center", padding: "6px 4px" }}>
+            <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}><Mail size={28} color={C.teal} /></div>
+            <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 20 }}>Si un compte existe pour <b>{form.email}</b>, un e-mail contenant un lien de réinitialisation vient d'être envoyé. Pense à vérifier tes spams.</p>
+            <Btn full variant="teal" size="lg" onClick={() => { setForgot(false); setForgotSent(false); setErr(""); }}>Retour à la connexion</Btn>
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 14px", lineHeight: 1.5 }}>Entre ton adresse e-mail : nous t'enverrons un lien pour choisir un nouveau mot de passe.</p>
+            <Field label="Adresse e-mail">
+              <TextInput type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="vous@exemple.fr" onKeyDown={(e) => e.key === "Enter" && sendReset()} />
+            </Field>
+            {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+            <Btn onClick={sendReset} disabled={busy} full size="lg" variant="primary">{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Mail size={17} /> Envoyer le lien</>}</Btn>
+            <button type="button" onClick={() => { setForgot(false); setErr(""); }} style={{ background: "none", border: "none", color: "#9c8d79", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13.5, padding: 10, display: "block", margin: "8px auto 0" }}>Retour à la connexion</button>
+          </>
+        )}
+      </Modal>
+    );
+  }
 
   // Écran de bienvenue après inscription : rappelle de se présenter à l'association.
   if (welcome) {
@@ -2539,6 +2599,13 @@ function AuthModal({ mode, onClose, setToast }) {
           </button>
         </div>
       </Field>
+
+      {tab === "login" && (
+        <button type="button" onClick={() => { setForgot(true); setForgotSent(false); setErr(""); }}
+          style={{ background: "none", border: "none", color: C.teal, cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, padding: 0, marginTop: -4, marginBottom: 14, marginLeft: "auto", display: "block" }}>
+          Mot de passe oublié ?
+        </button>
+      )}
 
       {tab === "register" && (
         <Field label="Confirmer le mot de passe">
@@ -4337,7 +4404,7 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
   const del = async (id) => {
     if (!window.confirm("Écarter cette partie des statistiques ? Action définitive.")) return;
     setBusyId(id);
-    const { error } = await supabase.rpc("delete_session", { p_session_id: id });
+    const { error } = await supabase.rpc("delete_game_play", { p_play_id: id });
     setBusyId(null);
     if (error) { alert(error.message); return; }
     onDeleted && onDeleted();
@@ -4349,13 +4416,13 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
           {sessions.map((r) => (
-            <div key={r.session_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: C.paper, border: "1px solid #ece2d0", borderRadius: 12, padding: "11px 14px" }}>
+            <div key={r.play_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: C.paper, border: "1px solid #ece2d0", borderRadius: 12, padding: "11px 14px" }}>
               <div>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{fmtDuration(r.real_duration_seconds)} <span style={{ fontWeight: 400, color: "#8a7c6a", fontSize: 13 }}>· {r.player_count} joueur{r.player_count > 1 ? "s" : ""}</span></div>
-                <div style={{ fontSize: 12.5, color: "#8a7c6a" }}>{formatDateFr(new Date(r.started_at).toISOString().slice(0, 10))}</div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{fmtDuration(r.duration_seconds)} <span style={{ fontWeight: 400, color: "#8a7c6a", fontSize: 13 }}>· {r.player_count} joueur{r.player_count > 1 ? "s" : ""}</span></div>
+                <div style={{ fontSize: 12.5, color: "#8a7c6a" }}>{formatDateFr(new Date(r.played_at).toISOString().slice(0, 10))}</div>
               </div>
               {canDelete && (
-                <button onClick={() => del(r.session_id)} disabled={busyId === r.session_id}
+                <button onClick={() => del(r.play_id)} disabled={busyId === r.play_id}
                   style={{ background: "rgba(181,40,58,.1)", border: "none", borderRadius: 9, padding: "7px 9px", cursor: "pointer", color: C.red, display: "grid", placeItems: "center" }} title="Écarter cette partie">
                   {busyId === r.session_id ? <Loader2 size={15} className="aladj-spin" /> : <Trash2 size={15} />}
                 </button>
@@ -4414,7 +4481,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
   // Statistiques de durée des parties chronométrées (chargées à l'ouverture de la fiche).
   const loadStats = useCallback(async () => {
-    const { data: ss } = await supabase.from("v_game_sessions").select("session_id,started_at,real_duration_seconds,player_count").eq("game_id", g.id).order("started_at", { ascending: false });
+    const { data: ss } = await supabase.from("v_game_play_durations").select("play_id,played_at,duration_seconds,player_count").eq("game_id", g.id).order("played_at", { ascending: false });
     setSessions(ss || []);
     const { data: all } = await supabase.from("v_game_avg_player_time").select("avg_player_seconds").eq("game_id", g.id).maybeSingle();
     setAllAvg(all?.avg_player_seconds ?? null);
@@ -4435,7 +4502,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
     sessions.forEach((s) => {
       const k = s.player_count || 0;
       if (!map[k]) map[k] = { player_count: k, sum: 0, count: 0 };
-      map[k].sum += s.real_duration_seconds; map[k].count += 1;
+      map[k].sum += s.duration_seconds; map[k].count += 1;
     });
     return Object.values(map).map((m) => ({ player_count: m.player_count, avg: Math.round(m.sum / m.count), count: m.count })).sort((a, b) => a.player_count - b.player_count);
   }, [sessions]);
@@ -7843,11 +7910,63 @@ function ConfigScreen() {
   );
 }
 
+/* -----------------------------------------------------------------------------
+   Nouveau mot de passe (apres avoir suivi le lien recu par e-mail)
+   ----------------------------------------------------------------------------- */
+function ResetPasswordModal() {
+  const { updatePassword, setPasswordRecovery } = useApp();
+  const [pwd, setPwd] = useState("");
+  const [pwd2, setPwd2] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const submit = async () => {
+    setErr("");
+    if (pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
+    if (pwd !== pwd2) { setErr("Les deux mots de passe ne correspondent pas."); return; }
+    setBusy(true);
+    const res = await updatePassword(pwd);
+    setBusy(false);
+    if (res.error) { setErr(res.error); return; }
+    setDone(true);
+  };
+  return (
+    <Modal open onClose={() => setPasswordRecovery(false)} title="Nouveau mot de passe" width={460}>
+      {done ? (
+        <div style={{ textAlign: "center", padding: "6px 4px" }}>
+          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}><Check size={28} color={C.teal} /></div>
+          <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 20 }}>Ton mot de passe a bien été mis à jour, et tu es maintenant connecté !</p>
+          <Btn full variant="teal" size="lg" onClick={() => setPasswordRecovery(false)}>Continuer</Btn>
+        </div>
+      ) : (
+        <>
+          <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 14px", lineHeight: 1.5 }}>Choisis un nouveau mot de passe pour ton compte.</p>
+          <Field label="Nouveau mot de passe" hint="Au moins 6 caractères.">
+            <div style={{ position: "relative" }}>
+              <TextInput type={show ? "text" : "password"} value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="••••••••" style={{ paddingRight: 44 }} />
+              <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Masquer" : "Afficher"}
+                style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+                {show ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </Field>
+          <Field label="Confirmer le mot de passe">
+            <TextInput type={show ? "text" : "password"} value={pwd2} onChange={(e) => setPwd2(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </Field>
+          {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+          <Btn onClick={submit} disabled={busy} full size="lg" variant="primary">{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Lock size={17} /> Enregistrer le mot de passe</>}</Btn>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 /* =============================================================================
    ROOT
    ============================================================================= */
 function Shell() {
-  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono, markMomentsSeen } = useApp();
+  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono, markMomentsSeen, passwordRecovery } = useApp();
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
@@ -7893,6 +8012,7 @@ function Shell() {
       </main>
       <Footer setPage={setPage} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} setToast={setToast} />}
+      {passwordRecovery && <ResetPasswordModal />}
       {bannedNotice && (
         <Modal open onClose={() => setBannedNotice(false)} title="Accès suspendu" width={440}>
           <div style={{ textAlign: "center", padding: "8px 4px" }}>
