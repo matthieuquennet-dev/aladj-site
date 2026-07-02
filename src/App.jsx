@@ -401,7 +401,7 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
       .map((g) => ({ id: g.id, name: g.guest_name, memberId: g.member_id, addedBy: g.added_by })),
     comments: (commentsByEvent[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     playedGames: (eventGamesByEvent[row.id] || []).map((eg) => ({
-      id: eg.id, gameId: eg.game_id, addedBy: eg.added_by, addedByName: nameById[eg.added_by] || "Membre",
+      id: eg.id, gameId: eg.game_id, addedBy: eg.added_by, addedByName: nameById[eg.added_by] || "Membre", playCount: eg.play_count || 1,
       gameName: gamesIndexById[eg.game_id]?.name || "(jeu supprimé)",
       gameImg: gamesIndexById[eg.game_id]?.img || "",
       createdAt: eg.created_at,
@@ -491,7 +491,7 @@ function AppProvider({ children }) {
       const partsByPlay = {};
       (gppRows || []).forEach((pp) => { (partsByPlay[pp.play_id] ||= []).push(pp); });
       const playsList = (gamePlaysRows || []).map((gp) => ({
-        id: gp.id, gameId: gp.game_id, playedAt: gp.played_at,
+        id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
         sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
         participants: (partsByPlay[gp.id] || []).map((pp) => ({
           userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
@@ -512,7 +512,7 @@ function AppProvider({ children }) {
       const playCountByGame = {};
       (eventGamesRows || []).forEach((eg) => {
         (eventGamesByEvent[eg.event_id] ||= []).push(eg);
-        playCountByGame[eg.game_id] = (playCountByGame[eg.game_id] || 0) + 1;
+        playCountByGame[eg.game_id] = (playCountByGame[eg.game_id] || 0) + (eg.play_count || 1);
       });
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
@@ -1541,10 +1541,10 @@ function AppProvider({ children }) {
   // Suggestions : jeux des soirées passées où je suis présent et que je n'ai pas encore enregistrés
   const eventPlaySuggestions = useMemo(() => {
     if (!currentUser) return [];
-    const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id));
+    const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id + "|" + (d.occurrence || 1)));
     const mine = new Set();
     (plays || []).forEach((pl) => {
-      if (pl.eventId && pl.participants.some((pt) => pt.userId === currentUser.id)) mine.add(pl.eventId + "|" + pl.gameId);
+      if (pl.eventId && pl.participants.some((pt) => pt.userId === currentUser.id)) mine.add(pl.eventId + "|" + pl.gameId + "|" + (pl.occurrence || 1));
     });
     const today = new Date(); today.setHours(23, 59, 59, 999);
     const out = [];
@@ -1555,12 +1555,15 @@ function AppProvider({ children }) {
       (e.playedGames || []).forEach((pg) => {
         if (!pg.gameId || seen.has(pg.gameId)) return;
         seen.add(pg.gameId);
-        const key = e.id + "|" + pg.gameId;
-        if (mine.has(key) || dismissedSet.has(key)) return;
-        out.push({ eventId: e.id, gameId: pg.gameId, gameName: pg.gameName, date: e.date, place: e.place });
+        const total = Math.max(1, pg.playCount || 1);
+        for (let occ = 1; occ <= total; occ++) {
+          const key = e.id + "|" + pg.gameId + "|" + occ;
+          if (mine.has(key) || dismissedSet.has(key)) continue;
+          out.push({ eventId: e.id, gameId: pg.gameId, gameName: pg.gameName, date: e.date, place: e.place, occurrence: occ, occurrenceTotal: total });
+        }
       });
     });
-    return out.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return out.sort((a, b) => (new Date(b.date) - new Date(a.date)) || (a.gameName || "").localeCompare(b.gameName || "") || a.occurrence - b.occurrence);
   }, [events, plays, eventPlayDismissed, currentUser]);
 
   // Se declarer (ou se retirer) vainqueur d'une partie deja enregistree.
@@ -1570,20 +1573,28 @@ function AppProvider({ children }) {
     await loadData();
   }, [currentUser, loadData]);
 
-  const confirmEventPlay = useCallback(async (eventId, gameId, isWinner) => {
-    const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_is_winner: !!isWinner });
+  const confirmEventPlay = useCallback(async (eventId, gameId, occurrence, isWinner) => {
+    const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_occurrence: occurrence || 1, p_is_winner: !!isWinner });
     if (error) return { error: error.message };
     await loadData();
     return {};
   }, [loadData]);
 
-  const dismissEventPlay = useCallback(async (eventId, gameId) => {
+  const dismissEventPlay = useCallback(async (eventId, gameId, occurrence) => {
     if (!currentUser) return { error: "Non connecté" };
-    const { error } = await supabase.from("event_play_dismissed").insert({ user_id: currentUser.id, event_id: eventId, game_id: gameId });
-    if (error) return { error: error.message };
-    setEventPlayDismissed((prev) => [...prev, { user_id: currentUser.id, event_id: eventId, game_id: gameId }]);
+    const occ = occurrence || 1;
+    const { error } = await supabase.from("event_play_dismissed").insert({ user_id: currentUser.id, event_id: eventId, game_id: gameId, occurrence: occ });
+    if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+    setEventPlayDismissed((prev) => [...prev, { user_id: currentUser.id, event_id: eventId, game_id: gameId, occurrence: occ }]);
     return {};
   }, [currentUser]);
+
+  // Regler le nombre de parties d'un jeu joue lors d'un moment.
+  const setEventPlayCount = useCallback(async (playedGameId, count) => {
+    if (!currentUser) return;
+    await supabase.rpc("set_event_play_count", { p_event_game_id: playedGameId, p_count: count });
+    await loadData();
+  }, [currentUser, loadData]);
 
   const momentsUnseen = useMemo(() => {
     if (!currentUser) return 0;
@@ -1683,7 +1694,7 @@ function AppProvider({ children }) {
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
-    eventPlaySuggestions, confirmEventPlay, dismissEventPlay,
+    eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
@@ -3770,7 +3781,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
 /* ---- Section : jeux joués lors d'un moment ---- */
 function EventPlayedGames({ e, isParticipant, canManage }) {
-  const { games, currentUser, addPlayedGame, removePlayedGame } = useApp();
+  const { games, currentUser, addPlayedGame, removePlayedGame, setEventPlayCount } = useApp();
+  const counterBtn = { width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center", padding: 0, flexShrink: 0 };
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -3825,9 +3837,16 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
                 </div>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{p.gameName}</span>
-                  <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>ajouté par {p.addedByName}{gameStillExists ? " · cliquez pour noter" : ""}</span>
+                  <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>ajouté par {p.addedByName}{(p.playCount || 1) > 1 ? ` · ${p.playCount} parties` : ""}{gameStillExists ? " · cliquez pour noter" : ""}</span>
                 </span>
-                {mineToRemove && <button onClick={(ev) => { ev.stopPropagation(); removePlayedGame(p.id); }} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4 }}><Trash2 size={14} /></button>}
+                {(isParticipant || canManage) && (
+                  <div onClick={(ev) => ev.stopPropagation()} title="Nombre de parties jouées" style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                    <button onClick={() => setEventPlayCount(p.id, Math.max(1, (p.playCount || 1) - 1))} disabled={(p.playCount || 1) <= 1} style={{ ...counterBtn, opacity: (p.playCount || 1) <= 1 ? 0.4 : 1, cursor: (p.playCount || 1) <= 1 ? "default" : "pointer" }} aria-label="Une partie de moins">−</button>
+                    <span style={{ minWidth: 20, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, color: C.navy }}>{p.playCount || 1}</span>
+                    <button onClick={() => setEventPlayCount(p.id, Math.min(50, (p.playCount || 1) + 1))} style={counterBtn} aria-label="Une partie de plus">+</button>
+                  </div>
+                )}
+                {mineToRemove && <button onClick={(ev) => { ev.stopPropagation(); removePlayedGame(p.id); }} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4, flexShrink: 0 }}><Trash2 size={14} /></button>}
               </div>
             );
           })}
@@ -7004,7 +7023,7 @@ function EventPlaySuggestions() {
   const [busy, setBusy] = useState(null);
   const [wonSet, setWonSet] = useState({});
   if (!eventPlaySuggestions.length) return null;
-  const keyOf = (s) => s.eventId + "|" + s.gameId;
+  const keyOf = (s) => s.eventId + "|" + s.gameId + "|" + s.occurrence;
   return (
     <div style={{ marginBottom: 22 }}>
       <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 8 }}>
@@ -7020,15 +7039,15 @@ function EventPlaySuggestions() {
           return (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "10px 13px" }}>
               <div style={{ flex: 1, minWidth: 150 }}>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{s.gameName}</div>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{s.gameName}{s.occurrenceTotal > 1 ? <span style={{ color: C.teal, fontSize: 13 }}> — partie {s.occurrence}/{s.occurrenceTotal}</span> : null}</div>
                 <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Soirée du {new Date(s.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{s.place ? " · " + s.place : ""}</div>
               </div>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49", cursor: "pointer" }}>
                 <input type="checkbox" checked={won} onChange={() => setWonSet((p) => ({ ...p, [k]: !won }))} /> j'ai gagné
               </label>
               <div style={{ display: "flex", gap: 6 }}>
-                <Btn size="sm" variant="teal" disabled={isBusy} onClick={async () => { setBusy(k); await confirmEventPlay(s.eventId, s.gameId, won); setBusy(null); }}>J'y ai joué</Btn>
-                <Btn size="sm" variant="ghost" disabled={isBusy} onClick={async () => { setBusy(k); await dismissEventPlay(s.eventId, s.gameId); setBusy(null); }}>Non</Btn>
+                <Btn size="sm" variant="teal" disabled={isBusy} onClick={async () => { setBusy(k); await confirmEventPlay(s.eventId, s.gameId, s.occurrence, won); setBusy(null); }}>J'y ai joué</Btn>
+                <Btn size="sm" variant="ghost" disabled={isBusy} onClick={async () => { setBusy(k); await dismissEventPlay(s.eventId, s.gameId, s.occurrence); setBusy(null); }}>Non</Btn>
               </div>
             </div>
           );
