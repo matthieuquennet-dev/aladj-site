@@ -65,6 +65,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [winnerIds, setWinnerIds] = useState([]);    // play_session_players.id des vainqueurs
   const [savingResult, setSavingResult] = useState(false);
   const [totals, setTotals] = useState({});          // player_id -> { total, max }
+  const [newGamePrompt, setNewGamePrompt] = useState(false);
+  const [newGameWinners, setNewGameWinners] = useState([]);
   const [openSegs, setOpenSegs] = useState({});      // player_id -> started_at (segments ouverts ; mode simultané)
   const [summary, setSummary] = useState(null);      // v_session_summary (fin)
 
@@ -124,18 +126,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setPlayers(await hydratePlayers(data || []));
   }, [supabase, hydratePlayers]);
 
-  const refetchTotals = useCallback(async (sessionId) => {
+  const refetchTotals = useCallback(async (sessionId, gameNo) => {
+    let g = gameNo;
+    if (g == null) {
+      const { data: s } = await supabase.from('play_sessions').select('current_game').eq('id', sessionId).maybeSingle();
+      g = s?.current_game || 1;
+    }
+    // Chronos par joueur de la partie EN COURS uniquement (repart a zero a chaque nouvelle partie).
     const { data } = await supabase
-      .from('v_session_player_stats')
-      .select('player_id,total_seconds,max_turn_seconds')
-      .eq('session_id', sessionId);
+      .from('play_turns').select('player_id,duration_seconds')
+      .eq('session_id', sessionId).eq('kind', 'player_turn').eq('game_no', g)
+      .not('ended_at', 'is', null);
     const map = {};
-    (data || []).forEach((r) => { map[r.player_id] = { total: r.total_seconds, max: r.max_turn_seconds }; });
+    (data || []).forEach((r) => {
+      if (!r.player_id) return;
+      const d = r.duration_seconds || 0;
+      if (!map[r.player_id]) map[r.player_id] = { total: 0, max: 0 };
+      map[r.player_id].total += d;
+      if (d > map[r.player_id].max) map[r.player_id].max = d;
+    });
     setTotals(map);
-    // segments encore ouverts (en mode simultané, plusieurs chronos tournent en parallèle)
+    // segments encore ouverts (mode simultane) de la partie en cours
     const { data: segs } = await supabase
       .from('play_turns').select('player_id,started_at')
-      .eq('session_id', sessionId).is('ended_at', null);
+      .eq('session_id', sessionId).eq('game_no', g).is('ended_at', null);
     const om = {};
     (segs || []).forEach((sg) => { if (sg.player_id) om[sg.player_id] = sg.started_at; });
     setOpenSegs(om);
@@ -154,7 +168,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       .channel(`play_session_${sessionId}`)
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'play_sessions', filter: `id=eq.${sessionId}` },
-        (payload) => { setSession(payload.new); refetchTotals(sessionId); })
+        (payload) => { setSession(payload.new); refetchTotals(sessionId, payload.new?.current_game); })
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'play_session_players', filter: `session_id=eq.${sessionId}` },
         () => refetchPlayers(sessionId))
@@ -321,6 +335,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
   const nextRound = () => rpc('next_round', { p_session_id: sid });
+  const openNewGame = () => { setNewGameWinners([]); setNewGamePrompt(true); };
+  const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
+  const confirmNewGame = async () => { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); setNewGamePrompt(false); setNewGameWinners([]); };
+  const quitNoSave = async () => {
+    if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
+    if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
+    onExit();
+  };
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
   const toggleWinner = (pid) => setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const saveResultAndExit = async () => {
@@ -372,7 +394,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.navy }}>
             Chrono <span style={{ color: C.teal }}>ALADJ</span>
           </div>
-          <button onClick={onExit} style={btnGhost}>Fermer</button>
+          <button onClick={quitNoSave} style={btnGhost}>Quitter</button>
         </div>
         {error && (
           <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`,
@@ -552,6 +574,32 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
     return shell(
       <div>
+        {newGamePrompt && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, marginBottom: 4 }}>Partie terminee</div>
+              <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)</div>
+              <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+                {players.map((p, i) => {
+                  const won = newGameWinners.includes(p.id);
+                  return (
+                    <button key={p.id} onClick={() => toggleNewGameWinner(p.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
+                        border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
+                      <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
+                      <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                      <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
+                <button style={{ ...btnPrimary, flex: 1 }} onClick={confirmNewGame}>Nouvelle partie &rarr;</button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Chrono de la partie : ne compte que le jeu */}
         <div style={{ textAlign: 'center', background: C.navy, color: C.white, borderRadius: 16, padding: '12px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, letterSpacing: 1, opacity: .75, fontWeight: 700, textTransform: 'uppercase' }}>Durée de la partie</div>
@@ -569,7 +617,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* En-tête de manche (pendant le jeu) */}
         {gamePhase === 'play' && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontWeight: 700 }}>Manche {session?.current_round}</span>
+            <span style={{ fontWeight: 700 }}>Partie {session?.current_game || 1}</span>
             {simul && <span style={{ background: C.purple, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Simultané</span>}
             {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
             {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
@@ -640,10 +688,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
             {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={nextRound}>Manche +1</button>}
+            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
             {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
             {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={quitNoSave}>Quitter sans enregistrer</button>
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
         )}
