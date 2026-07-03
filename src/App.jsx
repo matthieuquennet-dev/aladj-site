@@ -4,7 +4,7 @@ import {
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
-  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy
+  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer from "./PlayTimer";
@@ -2514,6 +2514,7 @@ const NAV = [
   { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
   { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
+  { key: "guide", label: "Guide", icon: HelpCircle },
 ];
 
 function Navbar({ page, setPage, onAuth }) {
@@ -2950,6 +2951,289 @@ function Dice({ color, n, style }) {
       <defs><linearGradient id="dg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff" stopOpacity=".25" /><stop offset="1" stopColor="#000" stopOpacity=".12" /></linearGradient></defs>
       {pips.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="7.5" fill="#fff" />)}
     </svg>
+  );
+}
+
+/* =============================================================================
+   GUIDE — mode d'emploi du site et du chronomètre, avec illustrations.
+   Les illustrations réutilisent les vrais composants du site : elles restent
+   automatiquement fidèles à l'interface.
+   ============================================================================= */
+// Encadré d'illustration d'une réponse du guide.
+function Illu({ children, caption }) {
+  return (
+    <div style={{ margin: "12px 0 4px" }}>
+      <div style={{ background: "#fff", border: "1.5px dashed #ddd2bd", borderRadius: 13, padding: "16px 14px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "center" }}>
+        {children}
+      </div>
+      {caption && <div style={{ fontSize: 11.5, color: "#9c8d79", textAlign: "center", marginTop: 5 }}>{caption}</div>}
+    </div>
+  );
+}
+
+// Question dépliable du guide.
+function FaqItem({ q, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 14, overflow: "hidden" }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "13px 16px", background: "none", border: "none", cursor: "pointer" }}>
+        <span style={{ flex: 1, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>{q}</span>
+        <ChevronDown size={17} color="#a89a86" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+      </button>
+      {open && <div style={{ padding: "0 16px 15px", fontSize: 14, color: "#5e5346", lineHeight: 1.65 }}>{children}</div>}
+    </div>
+  );
+}
+
+// Faux bouton d'illustration (non cliquable), pour montrer l'interface.
+function MockBtn({ color = C.teal, children, soft }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 11, background: soft ? `${color}18` : color, color: soft ? color : "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, border: soft ? `1.5px solid ${color}55` : "none", pointerEvents: "none" }}>
+      {children}
+    </span>
+  );
+}
+
+function GuidePage() {
+  const sections = [
+    {
+      icon: "🚀", title: "Premiers pas",
+      items: [
+        {
+          q: "Créer un compte et se connecter",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google). Pensez ensuite à vous présenter à l'association — conversation Signal « Organisation jeux » ou e-mail.</p>
+            <p style={{ margin: 0 }}>Mot de passe oublié ? Sur l'écran de connexion, cliquez sur <b style={{ color: C.teal }}>« Mot de passe oublié ? »</b> : vous recevrez un lien par e-mail pour en choisir un nouveau.</p>
+          </>,
+        },
+        {
+          q: "Installer le site comme une application sur mon téléphone",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le site s'installe comme une vraie appli, avec son icône : sur <b>iPhone</b>, ouvrez aladj.fr dans Safari → bouton Partager → <b>« Sur l'écran d'accueil »</b>. Sur <b>Android</b>, Chrome propose « Installer l'application » (ou menu ⋮ → Ajouter à l'écran d'accueil).</p>
+            <p style={{ margin: 0 }}>Dans l'appli, le bouton <RefreshCw size={13} style={{ verticalAlign: "-2px" }} /> en haut à droite recharge les données — pratique pour voir tout de suite ce qu'un autre membre vient d'ajouter.</p>
+          </>,
+        },
+        {
+          q: "Activer les notifications",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, activez les notifications pour être prévenu sur votre téléphone : commentaires sur vos jeux, envies de découverte, invitations aux moments, parties à confirmer, quorum atteint…</p>
+            <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
+          </>,
+        },
+        {
+          q: "Compléter mon profil (et mes couleurs de jeu préférées)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Menu → <b>Mon profil</b> : photo, ville, présentation, mécaniques préférées… et vos <b>couleurs de jeu préférées</b> : cliquez-en jusqu'à 3, dans l'ordre de préférence.</p>
+            <Illu caption="Vos couleurs apparaissent à côté de votre nom dans les moments jeux — fini les négociations pour le pion rouge.">
+              <span style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
+                <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>L</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>Léa</span>
+                <ColorPrefs colors={["rouge", "bleu", "vert"]} />
+              </span>
+            </Illu>
+          </>,
+        },
+      ],
+    },
+    {
+      icon: "📚", title: "La ludothèque",
+      items: [
+        {
+          q: "Trouver un jeu",
+          a: <p style={{ margin: 0 }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>,
+        },
+        {
+          q: "Noter un jeu, avoir envie de le découvrir",
+          a: <p style={{ margin: 0 }}>Ouvrez la fiche d'un jeu pour lui donner votre note (re-cliquez la même note pour la retirer). Pas encore joué ? Le cœur <Heart size={13} style={{ verticalAlign: "-2px", color: C.red }} /> « envie de découvrir » prévient les propriétaires du jeu — parfait pour provoquer une partie au prochain moment jeux.</p>,
+        },
+        {
+          q: "Ajouter un jeu à ma ludothèque",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b> ou la <b>Ludothèque</b> → « Ajouter un jeu ». Deux chemins : la recherche <b>BoardGameGeek</b> (la fiche arrive préremplie et traduite — vous pouvez tout retoucher avant validation : nom, image, prix, mécaniques…) ou la saisie manuelle.</p>
+            <p style={{ margin: 0 }}>Vous pouvez déclarer que le jeu appartient à un autre membre (ou à plusieurs) : chacun devra confirmer depuis son espace. Le site signale les doublons probables au moment de la saisie.</p>
+          </>,
+        },
+        {
+          q: "Confirmer une possession déclarée par un autre membre",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Quand quelqu'un déclare que vous possédez un jeu ou une extension, un encart « Possessions à confirmer » apparaît dans <b>Mon espace</b>. Tant que vous n'avez pas confirmé, le jeu ne compte pas dans votre ludothèque.</p>
+            <Illu caption="L'encart de confirmation dans Mon espace.">
+              <MockBtn color={C.teal}><Check size={14} /> Confirmer</MockBtn>
+              <MockBtn color={C.red}><X size={14} /> Supprimer</MockBtn>
+            </Illu>
+          </>,
+        },
+        {
+          q: "Les extensions",
+          a: <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>,
+        },
+        {
+          q: "Louer un jeu à un autre membre",
+          a: <p style={{ margin: 0 }}>Les membres peuvent se louer des jeux entre eux (environ 10 % du prix neuf). Tout se passe dans la rubrique <b>Location</b> de la fiche du jeu ; vos prêts et emprunts en cours sont récapitulés dans <b>Mes locations</b>.</p>,
+        },
+      ],
+    },
+    {
+      icon: "📅", title: "Les moments jeux",
+      items: [
+        {
+          q: "Proposer un moment et comprendre le quorum",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Page <b>Moments jeux</b> → « Proposer un moment jeux » (ou cliquez directement un jour libre du calendrier). Choisissez présentiel ou <b>en ligne sur Board Game Arena</b> — les jeux BGA sont gratuits pour tous grâce au compte premium de l'association.</p>
+            <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous.</p>
+          </>,
+        },
+        {
+          q: "Lire le calendrier",
+          a: <>
+            <Illu caption="La légende du calendrier — et le jour actuel, entouré de bleu nuit.">
+              <span style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "center" }}>
+                <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
+              </span>
+            </Illu>
+            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un.</p>
+          </>,
+        },
+        {
+          q: "S'inscrire, inviter, et voir les couleurs préférées de chacun",
+          a: <p style={{ margin: 0 }}>Sur la fiche d'un moment : « J'y serai ! » pour s'inscrire, et « Ajouter un invité » pour un proche ou un membre (le membre invité doit confirmer). À côté du nom de chaque inscrit, ses pastilles de couleurs préférées — un coup d'œil et la distribution des pions est réglée.</p>,
+        },
+        {
+          q: "Déclarer les jeux joués (et le nombre de parties)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Pendant ou après un moment, les participants ajoutent les <b>jeux joués</b> sur sa fiche. Si un jeu a été joué plusieurs fois, montez son compteur :</p>
+            <Illu caption="Le compteur de parties d'un jeu joué — ici, 3 parties de Catan dans la soirée.">
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, display: "grid", placeItems: "center", fontSize: 15 }}>−</span>
+                <span style={{ minWidth: 20, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, color: C.navy }}>3</span>
+                <span style={{ width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, display: "grid", placeItems: "center", fontSize: 15 }}>+</span>
+              </span>
+            </Illu>
+            <p style={{ margin: "6px 0 0" }}>Chaque participant recevra ensuite une suggestion par partie (« Catan — partie 2/3 ») à confirmer dans son espace.</p>
+          </>,
+        },
+        {
+          q: "Recevoir les moments dans mon agenda personnel",
+          a: <p style={{ margin: 0 }}>Sous la légende du calendrier, <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les soirées apparaissent ensuite toutes seules dans votre agenda (les moments en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
+        },
+      ],
+    },
+    {
+      icon: "🏆", title: "Parties, victoires et badges",
+      items: [
+        {
+          q: "Enregistrer une partie jouée",
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → « 🎲 Enregistrer une partie jouée » : tapez le nom du jeu pour le retrouver, choisissez la date, les membres et invités présents, et cochez le trophée des vainqueurs. Les autres membres impliqués reçoivent une notification et devront <b>confirmer</b> leur participation — c'est leur propre déclaration de victoire qui compte.</p>,
+        },
+        {
+          q: "Confirmer les parties qui me concernent",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>L'encart <b>« Parties à confirmer »</b> de Mon espace regroupe les parties des soirées où vous étiez inscrit et les parties manuelles enregistrées par d'autres. Cochez « j'ai gagné » si c'est le cas, puis :</p>
+            <Illu caption="Tant que vous n'avez pas confirmé, la partie ne compte pas dans vos statistiques.">
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49" }}><input type="checkbox" readOnly checked /> j'ai gagné</label>
+              <MockBtn color={C.teal}>J'y ai joué</MockBtn>
+              <MockBtn color="#8a7c6a" soft>Non</MockBtn>
+            </Illu>
+          </>,
+        },
+        {
+          q: "J'ai oublié de me déclarer vainqueur !",
+          a: <p style={{ margin: 0 }}>Dans Mon espace → « Voir toutes mes parties », chaque ligne porte un bouton <b>🏆 Vainqueur ?</b> : un clic vous déclare gagnant (ou vous retire si vous l'étiez). Vos statistiques et le champion en titre se mettent à jour aussitôt.</p>,
+        },
+        {
+          q: "C'est quoi, le badge doré sur certains jeux ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>C'est le <b>champion en titre</b> : le ou les vainqueurs de la toute dernière partie de ce jeu. Il passe de main en main à chaque nouvelle partie enregistrée !</p>
+            <Illu caption="La ceinture de champion, sur la carte du jeu et sur sa fiche.">
+              <ChampionBelt belt={{ playedAt: new Date().toISOString(), winners: [{ name: "Léa", userId: null, avatar: null }] }} size={64} />
+            </Illu>
+          </>,
+        },
+        {
+          q: "Comment fonctionnent les badges ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Douze badges récompensent votre vie ludique (parties, victoires, séries, découvertes, moments, possessions, notes…). Chacun a <b>8 paliers</b> : Novice, Apprenti, Aventurier, Champion, Héros, Maître, Légende… et Dieu. Le palier le plus haut atteint remplace le précédent.</p>
+            <Illu caption="Cliquez un badge dans Mon espace pour voir tous ses paliers — et mettez vos 3 préférés en vitrine : ils s'afficheront à côté de votre nom.">
+              <BadgeMedal def={BADGE_DEFS[0]} tier={3} size={58} />
+              <BadgeMedal def={BADGE_DEFS[1]} tier={5} size={58} />
+              <BadgeMedal def={BADGE_DEFS[8]} tier={2} size={58} />
+            </Illu>
+          </>,
+        },
+      ],
+    },
+    {
+      icon: "⏱️", title: "Le chronomètre",
+      items: [
+        {
+          q: "Lancer un chrono",
+          a: <p style={{ margin: 0 }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>,
+        },
+        {
+          q: "Jouer à plusieurs téléphones",
+          a: <p style={{ margin: 0 }}>Chaque partie a un <b>code</b> affiché à l'écran : les autres joueurs le saisissent dans le champ « code » de la page d'accueil (ou via le lien partagé) pour rejoindre depuis leur propre téléphone et suivre leur temps eux-mêmes. Tout le monde voit les mêmes chronos, en direct.</p>,
+        },
+        {
+          q: "Les trois phases : mise en place, jeu, rangement",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le chrono distingue trois temps, pour des statistiques honnêtes :</p>
+            <Illu caption="On bascule d'une phase à l'autre d'un appui ; « Pause » suspend tout (l'arrivée de la pizza, par exemple).">
+              <MockBtn color={C.teal}>Mise en place & explications</MockBtn>
+              <MockBtn color={C.navy}>Jeu</MockBtn>
+              <MockBtn color={C.purple}>Rangement</MockBtn>
+            </Illu>
+            <p style={{ margin: "6px 0 0" }}>Pendant le jeu, le gros bouton <b>« C'est mon tour »</b> permet à chacun de prendre la main pour compter son temps de réflexion — ou laissez tourner en mode simultané.</p>
+          </>,
+        },
+        {
+          q: "Enchaîner plusieurs parties du même jeu",
+          a: <p style={{ margin: 0 }}>Le bouton <b>« Nouvelle partie »</b> clôt la manche en cours : vous déclarez son ou ses vainqueurs, le chrono de jeu et les temps de chaque joueur repartent à zéro, et la mise en place comme le rangement (communs) sont conservés — ils seront répartis équitablement entre les parties dans les statistiques de durée.</p>,
+        },
+        {
+          q: "Terminer… ou quitter sans enregistrer",
+          a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : cochez les vainqueurs (laissez vide pour un jeu coopératif) et enregistrez — la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
+        },
+      ],
+    },
+    {
+      icon: "🧰", title: "En cas de pépin",
+      items: [
+        {
+          q: "Quelque chose ne s'affiche pas ou semble périmé",
+          a: <p style={{ margin: 0 }}>Appuyez sur le bouton <RefreshCw size={13} style={{ verticalAlign: "-2px" }} /> (en haut sur mobile) pour recharger les données. Si le problème persiste, fermez et rouvrez l'appli, ou déconnectez-vous puis reconnectez-vous.</p>,
+        },
+        {
+          q: "Je n'arrive plus à me connecter",
+          a: <p style={{ margin: 0 }}>Utilisez « Mot de passe oublié ? » sur l'écran de connexion. Si vous vous étiez inscrit avec Google, reconnectez-vous avec le bouton Google. En dernier recours, écrivez à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 700 }}>aladj50200@gmail.com</a>.</p>,
+        },
+        {
+          q: "J'ai une idée d'amélioration",
+          a: <p style={{ margin: 0 }}>Le site évolue en continu grâce aux retours des membres. Partagez vos idées sur la conversation Signal « Organisation jeux » ou par e-mail — les bonnes idées finissent ici !</p>,
+        },
+      ],
+    },
+  ];
+
+  return (
+    <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <div style={{ marginBottom: 30 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mode d'emploi</span>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 8px", letterSpacing: "-0.02em" }}>Le guide du site & du chrono</h1>
+        <p style={{ color: "#8a7c6a", fontSize: 15, lineHeight: 1.6, margin: 0, maxWidth: 640 }}>
+          Tout ce qu'il faut savoir pour profiter du site et du chronomètre, question par question. Cliquez sur une question pour dérouler la réponse.
+        </p>
+      </div>
+      {sections.map((sec) => (
+        <div key={sec.title} style={{ marginBottom: 28 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ fontSize: 23 }}>{sec.icon}</span> {sec.title}
+          </h2>
+          <div style={{ display: "grid", gap: 8 }}>
+            {sec.items.map((it) => <FaqItem key={it.q} q={it.q}>{it.a}</FaqItem>)}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -8509,7 +8793,7 @@ function Shell() {
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
-      const valid = ["accueil", "soirees", "ludotheque", "ma-ludo", "a-venir", "locations"];
+      const valid = ["accueil", "soirees", "ludotheque", "ma-ludo", "a-venir", "locations", "guide"];
       return u && valid.includes(u) ? u : "accueil";
     } catch (e) { return "accueil"; }
   });
@@ -8548,6 +8832,7 @@ function Shell() {
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
         {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
+        {page === "guide" && <GuidePage />}
       </main>
       <Footer setPage={setPage} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} setToast={setToast} />}
