@@ -15,11 +15,6 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 /* Échappe le texte pour le format iCalendar (RFC 5545). */
 function esc(t) {
   return String(t || '')
@@ -64,11 +59,20 @@ function addHours(dateStr, timeStr, hours) {
 }
 
 export default async function handler(req, res) {
+  try {
+  // Vérifications explicites : un env manquant donne un message clair, pas un crash.
+  if (!process.env.SUPABASE_URL) { res.status(500).send('Config manquante : SUPABASE_URL'); return; }
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) { res.status(500).send('Config manquante : SUPABASE_SERVICE_ROLE_KEY'); return; }
+  if (!process.env.CALENDAR_TOKEN) { res.status(500).send('Config manquante : CALENDAR_TOKEN (variable Vercel a ajouter, puis redeployer)'); return; }
+
   // Jeton d'accès : évite que le flux soit lisible par n'importe qui.
-  if (!process.env.CALENDAR_TOKEN || req.query.k !== process.env.CALENDAR_TOKEN) {
+  const k = (req.query && req.query.k) || new URL(req.url, 'https://aladj.fr').searchParams.get('k');
+  if (k !== process.env.CALENDAR_TOKEN) {
     res.status(401).send('Accès refusé');
     return;
   }
+
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   // Moments : des 2 derniers mois jusqu'au futur.
   const since = new Date();
@@ -151,4 +155,8 @@ export default async function handler(req, res) {
   // Cache CDN 30 min : soulage Supabase, tout en restant frais.
   res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
   res.status(200).send(L.join('\r\n') + '\r\n');
+  } catch (e) {
+    // Message lisible plutôt qu'un crash opaque FUNCTION_INVOCATION_FAILED.
+    res.status(500).send('Erreur calendrier : ' + (e && e.message ? e.message : String(e)));
+  }
 }
