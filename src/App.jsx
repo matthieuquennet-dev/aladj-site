@@ -589,7 +589,8 @@ function AppProvider({ children }) {
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
   const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
-  const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial
+  const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial (le mien)
+  const [householdByUser, setHouseholdByUser] = useState({}); // user_id -> ids des membres de son foyer
   const [fatalError, setFatalError] = useState(null);
   // Garde anti-chevauchement : si un rechargement est déjà en cours, on note qu'il
   // faudra en relancer un à la fin (au lieu de laisser deux chargements s'entremêler
@@ -623,7 +624,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -711,7 +712,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [] })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -777,11 +778,18 @@ function AppProvider({ children }) {
         createdAt: n.created_at,
       })));
       setDismissedIds((dismissedRows || []).map((d) => d.game_id));
-      // Foyer (regroupement familial) : la RLS ne remonte que mon propre foyer
+      // Foyers (regroupement familial) : la composition de tous les foyers est
+      // lisible ; on en tire mon foyer + une carte user -> membres de son foyer.
       {
         const myId = currentUserIdRef.current;
+        const byHH = {};
+        (hhMembers || []).forEach((m) => { (byHH[m.household_id] ||= []).push(m.user_id); });
+        const map = {};
+        Object.values(byHH).forEach((ids) => ids.forEach((id) => { map[id] = ids; }));
+        setHouseholdByUser(map);
+        const mine = (map[myId] || []);
         setHousehold({
-          memberIds: (hhMembers || []).map((m) => m.user_id),
+          memberIds: mine.length ? mine : (hhMembers || []).filter((m) => m.user_id === myId).map((m) => m.user_id),
           invitesReceived: (hhInvites || []).filter((i) => i.invitee_id === myId),
           invitesSent: (hhInvites || []).filter((i) => i.inviter_id === myId),
         });
@@ -867,7 +875,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1268,6 +1276,7 @@ function AppProvider({ children }) {
     if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
     if (patch.favColors !== undefined) fields.fav_colors = (patch.favColors || []).slice(0, 3);
     if (patch.featuredBadges !== undefined) fields.featured_badges = (patch.featuredBadges || []).slice(0, 3);
+    if (patch.topGames !== undefined) fields.top_games = (patch.topGames || []).slice(0, 10);
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
@@ -1963,7 +1972,7 @@ function AppProvider({ children }) {
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
-    household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
+    household, householdByUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
@@ -3065,7 +3074,14 @@ function GuidePage() {
         },
         {
           q: "Les extensions",
-          a: <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Une extension est un contenu qui <b>nécessite absolument le jeu de base</b> pour être joué (nouvelles cartes, plateaux, modules…). Si une boîte se joue seule, ce n'est pas une extension : entrez-la comme un <b>jeu</b> à part entière.</p>
+            <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>
+          </>,
+        },
+        {
+          q: "Le top 10 ever des membres",
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b>, juste au-dessus de votre ludothèque : composez votre <b>top 10 ever</b> — les 10 jeux que vous garderiez s'il n'y avait plus que ça à jouer sur Terre, dans l'ordre. Il s'affiche sur votre fiche de membre, et chaque jeu élu le mentionne fièrement sur sa fiche (« 💎 Dans le top 10 de Fabien (n°3) »). Modifiable à tout moment.</p>,
         },
         {
           q: "Louer un jeu à un autre membre",
@@ -3123,7 +3139,7 @@ function GuidePage() {
       items: [
         {
           q: "Enregistrer une partie jouée",
-          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → « 🎲 Enregistrer une partie jouée » : tapez le nom du jeu pour le retrouver, choisissez la date, les membres et invités présents, et cochez le trophée des vainqueurs. Les autres membres impliqués reçoivent une notification et devront <b>confirmer</b> leur participation — c'est leur propre déclaration de victoire qui compte.</p>,
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → « 🎲 Enregistrer une partie jouée » : tapez le nom du jeu pour le retrouver, choisissez la date, les membres et invités présents, et cochez le trophée des vainqueurs. Vous êtes <b>ajouté d'office</b> comme participant — la petite croix vous retire si vous notez la partie pour d'autres. Les autres membres impliqués reçoivent une notification et devront <b>confirmer</b> leur participation — c'est leur propre déclaration de victoire qui compte, et refuser n'affecte en rien la partie des autres joueurs.</p>,
         },
         {
           q: "Confirmer les parties qui me concernent",
@@ -3138,7 +3154,7 @@ function GuidePage() {
         },
         {
           q: "J'ai oublié de me déclarer vainqueur !",
-          a: <p style={{ margin: 0 }}>Dans Mon espace → « Voir toutes mes parties », chaque ligne porte un bouton <b>🏆 Vainqueur ?</b> : un clic vous déclare gagnant (ou vous retire si vous l'étiez). Vos statistiques et le champion en titre se mettent à jour aussitôt.</p>,
+          a: <p style={{ margin: 0 }}>Dans Mon espace → « Voir toutes mes parties », chaque ligne porte un bouton <b>🏆 Vainqueur ?</b> : un clic vous déclare gagnant (ou vous retire si vous l'étiez). La corbeille <Trash2 size={13} style={{ verticalAlign: "-2px", color: C.red }} /> retire la partie de <b>votre</b> historique uniquement — les autres joueurs de la partie ne sont jamais affectés. Vos statistiques et le champion en titre se mettent à jour aussitôt.</p>,
         },
         {
           q: "C'est quoi, le badge doré sur certains jeux ?",
@@ -3208,7 +3224,7 @@ function GuidePage() {
         },
         {
           q: "J'ai une idée d'amélioration",
-          a: <p style={{ margin: 0 }}>Le site évolue en continu grâce aux retours des membres. Partagez vos idées sur la conversation Signal « Organisation jeux » ou par e-mail — les bonnes idées finissent ici !</p>,
+          a: <p style={{ margin: 0 }}>Le site évolue en continu grâce aux retours des membres. Partagez vos idées sur la conversation Signal « Blabla » ou par e-mail — les bonnes idées finissent ici !</p>,
         },
       ],
     },
@@ -3692,7 +3708,7 @@ function MembersModal({ onClose, onPickMember }) {
 
 /* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
 function MemberLibraryModal({ memberId, onClose }) {
-  const { games, users, plays, events, upcoming, beltByGame } = useApp();
+  const { games, users, plays, events, upcoming, beltByGame, householdByUser } = useApp();
   const member = users.find((u) => u.id === memberId);
   // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
   const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => {
@@ -3701,6 +3717,16 @@ function MemberLibraryModal({ memberId, onClose }) {
     return a.name.localeCompare(b.name, "fr");
   });
   const initial = member ? member.name[0].toUpperCase() : "?";
+  // Top 10 ever du membre (jeux encore présents en ludothèque)
+  const theirTop = (member?.topGames || []).filter((id) => games.some((g) => g.id === id));
+  // Foyer : autres membres avec qui il partage sa ludothèque
+  const famIds = (householdByUser[memberId] || []).filter((id) => id !== memberId);
+  const famNames = famIds.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean);
+  // Ludothèque familiale : les jeux des autres membres du foyer (repli quand il n'a pas de jeu à lui)
+  const famGames = famIds.length
+    ? games.filter((g) => !(g.ownerIds || []).includes(memberId) && (g.ownerIds || []).some((id) => famIds.includes(id))).sort((a, b) => a.name.localeCompare(b.name, "fr"))
+    : [];
+  const showFamilyFallback = theirGames.length === 0 && famGames.length > 0;
   // Nombre d'extensions que ce membre possède
   const theirExtCount = (() => {
     let n = 0;
@@ -3764,15 +3790,42 @@ function MemberLibraryModal({ memberId, onClose }) {
         </div>
       )}
 
+      {theirTop.length > 0 && (
+        <>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+            💎 Son top 10 ever <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux qu'il garderait s'il ne restait qu'eux</span>
+          </h4>
+          <div style={{ marginBottom: 18 }}><Top10List ids={theirTop} /></div>
+        </>
+      )}
+
       <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
         Sa ludothèque ({theirGames.length}{theirExtCount > 0 ? ` + ${theirExtCount} ${theirExtCount > 1 ? "extensions" : "extension"}` : ""}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· classée par ses notes</span>
       </h4>
-      {theirGames.length === 0 ? (
+      {famNames.length > 0 && (
+        <p style={{ margin: "-4px 0 12px", fontSize: 13, color: "#8a7c6a" }}>
+          👨‍👩‍👧 Partage une ludothèque familiale avec <b style={{ color: C.navy }}>{famNames.join(", ")}</b>.
+        </p>
+      )}
+      {showFamilyFallback && (
+        <>
+          <p style={{ margin: "0 0 10px", fontSize: 13.5, color: "#6e6256" }}>Ce membre n'a pas de jeu à son nom — voici la <b>ludothèque familiale</b> :</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 6 }}>
+            {famGames.map((g) => (
+              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy, lineHeight: 1.2 }}>{g.name}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {theirGames.length === 0 && !showFamilyFallback ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
           <Gamepad2 size={40} style={{ opacity: .4, marginBottom: 12 }} />
           <p style={{ fontSize: 14.5 }}>Ce membre n'a pas encore ajouté de jeu.</p>
         </div>
-      ) : (
+      ) : theirGames.length === 0 ? null : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "55vh", overflowY: "auto", padding: 2 }}>
           {theirGames.map((g) => {
             const myRating = g.ratings?.[memberId] || 0;
@@ -5247,6 +5300,22 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
           )}
         </div>
       )}
+
+      {/* dans le top 10 de… */}
+      {(() => {
+        const fans = (users || [])
+          .map((u) => ({ u, rank: (u.topGames || []).indexOf(g.id) }))
+          .filter((x) => x.rank >= 0 && !x.u.banned)
+          .sort((a, b) => a.rank - b.rank);
+        if (!fans.length) return null;
+        return (
+          <div style={{ background: "rgba(232,163,23,.09)", border: "1.5px solid #eedbA8", borderRadius: 13, padding: "10px 15px", marginBottom: 18, fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>
+            💎 <b style={{ color: C.navy }}>Dans le top 10 de</b> {fans.map((x, i) => (
+              <span key={x.u.id}>{i > 0 ? ", " : " "}{x.u.name} <b style={{ color: C.amber }}>(n°{x.rank + 1})</b></span>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* ma note */}
       <div style={{ background: C.paper, border: "2px solid #ece2d0", borderRadius: 16, padding: "14px 18px", marginBottom: 18 }}>
@@ -7940,8 +8009,133 @@ function AdminBackupSection() {
   );
 }
 
+/* =============================================================================
+   TOP 10 EVER — les 10 jeux qu'un membre garderait s'il n'y avait plus qu'eux.
+   ============================================================================= */
+// Liste ordonnée d'un top 10 (couverture + rang), réutilisée dans Mon espace et
+// sur la fiche d'un membre.
+function Top10List({ ids, onOpenGame }) {
+  const { games } = useApp();
+  const list = (ids || []).map((id) => games.find((g) => g.id === id)).filter(Boolean);
+  if (!list.length) return null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+      {list.map((g, i) => (
+        <div key={g.id} onClick={onOpenGame ? () => onOpenGame(g.id) : undefined}
+          style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px", cursor: onOpenGame ? "pointer" : "default" }}>
+          <span style={{ position: "absolute", top: -7, left: -7, width: 24, height: 24, borderRadius: "50%", background: i === 0 ? C.amber : C.navy, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, border: "2px solid #FBF7EF" }}>{i + 1}</span>
+          <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy, lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{g.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Éditeur du top 10 : recherche d'un jeu, liste ordonnée avec montée/descente/retrait.
+function Top10Editor({ open, onClose, setToast }) {
+  const { games, currentUser, updateProfile } = useApp();
+  const [ids, setIds] = useState([]);
+  const [q, setQ] = useState("");
+  const [listOpen, setListOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setIds((currentUser?.topGames || []).filter((id) => games.some((g) => g.id === id))); setQ(""); setListOpen(false); } }, [open, currentUser, games]);
+  const norm = (x) => (x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const results = useMemo(() => {
+    const query = norm(q);
+    return [...(games || [])]
+      .filter((g) => !ids.includes(g.id) && (!query || norm(g.name).includes(query)))
+      .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 60);
+  }, [games, ids, q]);
+  const move = (i, d) => setIds((arr) => {
+    const j = i + d;
+    if (j < 0 || j >= arr.length) return arr;
+    const cp = [...arr]; [cp[i], cp[j]] = [cp[j], cp[i]]; return cp;
+  });
+  const save = async () => {
+    setBusy(true);
+    await updateProfile({ topGames: ids });
+    setBusy(false);
+    setToast("Votre top 10 est enregistré !");
+    onClose();
+  };
+  if (!open) return null;
+  const fieldStyle = { width: "100%", padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy, boxSizing: "border-box" };
+  return (
+    <Modal open onClose={onClose} title="💎 Mon top 10 ever" width={560}>
+      <p style={{ fontSize: 13.5, color: "#6e6256", margin: "0 0 14px", lineHeight: 1.55 }}>
+        Les 10 jeux que vous garderiez s'il n'y avait plus que ça à jouer sur Terre — dans l'ordre. Vous pourrez le modifier quand vous voulez.
+      </p>
+      {ids.length < 10 && (
+        <div style={{ position: "relative", marginBottom: 14 }}>
+          <input value={q} onChange={(e) => { setQ(e.target.value); setListOpen(true); }} onFocus={() => setListOpen(true)}
+            onBlur={() => setTimeout(() => setListOpen(false), 150)} placeholder={`Ajouter le n°${ids.length + 1} — tape le nom d'un jeu…`} style={fieldStyle} />
+          {listOpen && (
+            <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, maxHeight: 210, overflowY: "auto", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 10, zIndex: 40, boxShadow: "0 8px 24px rgba(0,0,0,.14)" }}>
+              {results.length === 0 && <div style={{ padding: "10px 12px", color: "#9c8d79", fontSize: 13.5 }}>Aucun jeu trouvé.</div>}
+              {results.map((g) => (
+                <button key={g.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setIds((arr) => [...arr, g.id]); setQ(""); setListOpen(false); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", borderBottom: "1px solid #f4ecda", background: "#fff", cursor: "pointer", fontSize: 14, color: C.navy, fontFamily: "'Nunito',sans-serif" }}>
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+        {ids.length === 0 && <div style={{ textAlign: "center", color: "#a89a86", fontSize: 13.5, padding: "14px 0" }}>Votre podium est vide — ajoutez votre premier jeu ci-dessus.</div>}
+        {ids.map((id, i) => {
+          const g = games.find((x) => x.id === id);
+          if (!g) return null;
+          return (
+            <div key={id} style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, padding: "6px 9px" }}>
+              <span style={{ width: 24, height: 24, borderRadius: "50%", background: i === 0 ? C.amber : C.navy, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{i + 1}</span>
+              <div style={{ width: 32, height: 32, borderRadius: 7, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+              <span style={{ flex: 1, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} style={{ border: "none", background: "none", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#ddd2bd" : C.navy, padding: 3 }}>▲</button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === ids.length - 1} style={{ border: "none", background: "none", cursor: i === ids.length - 1 ? "default" : "pointer", color: i === ids.length - 1 ? "#ddd2bd" : C.navy, padding: 3 }}>▼</button>
+              <button type="button" onClick={() => setIds((arr) => arr.filter((x) => x !== id))} style={{ border: "none", background: "none", cursor: "pointer", color: C.red, padding: 3 }}><X size={15} /></button>
+            </div>
+          );
+        })}
+      </div>
+      <Btn full size="lg" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={17} /> Enregistrer mon top 10</>}</Btn>
+    </Modal>
+  );
+}
+
+// Section « Mon top 10 ever » de Mon espace, juste au-dessus de Ma ludothèque.
+function MyTop10Section({ setToast, onOpenGame }) {
+  const { currentUser, games } = useApp();
+  const [editOpen, setEditOpen] = useState(false);
+  if (!currentUser) return null;
+  const ids = (currentUser.topGames || []).filter((id) => games.some((g) => g.id === id));
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20 }}>💎</span> Mon top 10 ever
+        </h3>
+        {ids.length > 0 && <Btn size="sm" variant="soft" onClick={() => setEditOpen(true)}><PenLine size={13} /> Modifier</Btn>}
+      </div>
+      {ids.length === 0 ? (
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1.5px dashed #e3c98a", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <span style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>
+            S'il ne restait plus que <b>10 jeux</b> à jouer sur Terre, lesquels garderiez-vous ? Composez votre top 10 : il sera visible sur votre fiche et sur celle de chaque jeu élu.
+          </span>
+          <Btn variant="amber" onClick={() => setEditOpen(true)}>💎 Composer mon top 10</Btn>
+        </div>
+      ) : (
+        <Top10List ids={ids} onOpenGame={onOpenGame} />
+      )}
+      <Top10Editor open={editOpen} onClose={() => setEditOpen(false)} setToast={setToast} />
+    </div>
+  );
+}
+
 function MyPlaysSection({ setToast }) {
-  const { plays, currentUser, games, deleteGamePlay, setMyPlayResult } = useApp();
+  const { plays, currentUser, games, declinePlayParticipation, setMyPlayResult } = useApp();
   const [period, setPeriod] = useState("year");
   const [allOpen, setAllOpen] = useState(false);
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
@@ -8018,7 +8212,7 @@ function MyPlaysSection({ setToast }) {
           {myPlays.map((pl) => {
             const g = gameById[pl.gameId];
             const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
-            const canDel = pl.recordedBy === currentUser.id || currentUser.admin;
+            const canDel = true; // chacun peut retirer une partie de SON historique
             return (
               <div key={pl.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
                 <div style={{ flex: 1 }}>
@@ -8030,7 +8224,7 @@ function MyPlaysSection({ setToast }) {
                   style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
                   🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
                 </button>
-                {canDel && <button onClick={async () => { if (window.confirm("Supprimer cette partie ?")) await deleteGamePlay(pl.id); }} title="Supprimer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>}
+                {canDel && <button onClick={async () => { if (window.confirm("Retirer cette partie de votre historique ? Les autres joueurs de la partie ne sont pas affectés.")) await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>}
               </div>
             );
           })}
@@ -8041,7 +8235,7 @@ function MyPlaysSection({ setToast }) {
 }
 
 function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
-  const { games, users, recordManualPlay } = useApp();
+  const { games, users, currentUser, recordManualPlay } = useApp();
   const [gameId, setGameId] = useState(defaultGameId || "");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [parts, setParts] = useState([]);
@@ -8050,8 +8244,12 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [gameSearch, setGameSearch] = useState("");
   const [gameListOpen, setGameListOpen] = useState(false);
   useEffect(() => {
-    if (open) { setGameId(defaultGameId || ""); setParts([]); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false); }
-  }, [open, defaultGameId]);
+    if (open) {
+      setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
+      // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
+      setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false }] : []);
+    }
+  }, [open, defaultGameId, currentUser]);
 
   const fieldStyle = { width: "100%", padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy, boxSizing: "border-box" };
   const sortedGames = useMemo(() => [...(games || [])].sort((a, b) => a.name.localeCompare(b.name)), [games]);
@@ -8538,6 +8736,8 @@ function MyLudoPage({ setToast, setPage }) {
           </div>
         </div>
       )}
+
+      <MyTop10Section setToast={setToast} onOpenGame={(id) => setSelected(id)} />
 
       <div style={{ margin: "34px 0 18px" }}>
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mes jeux</span>
