@@ -862,6 +862,7 @@ function AppProvider({ children }) {
     const { data, error } = await supabase.from("games").insert({
       name: d.name.trim(), year: d.year || null, min_players: d.min || null, max_players: d.max || null,
       play_time: d.time || null, mechanics: d.mechanics || [], description: d.desc || "", image_url: imgUrl,
+      new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
       source: d.source || "manuel", owner_id: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
     }).select().single();
@@ -3443,10 +3444,10 @@ function EventsPage({ onAuth, setToast }) {
             const clickable = hasEv || (!isPast && currentUser);
             return (
               <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} className="aladj-cal-cell" style={{
-                aspectRatio: "1", minWidth: 0, border: isToday ? `2px solid ${C.amber}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
+                aspectRatio: "1", minWidth: 0, border: isToday ? `2px solid ${C.navy}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
                 cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", overflow: "hidden", opacity: isPast && !hasEv ? 0.5 : 1,
               }}>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: isToday ? C.amber : C.navy }}>{cell.d}</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy }}>{cell.d}</span>
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
                   const pillBg = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
@@ -3458,7 +3459,7 @@ function EventsPage({ onAuth, setToast }) {
           })}
         </div>
         <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.amber} label="Aujourd'hui" outline />
+          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
         </div>
       </div>
 
@@ -6710,6 +6711,9 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
       <div>
         <button onClick={() => setPreview(null)} style={backLinkStyle}><ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> Autre jeu</button>
         <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16 }}><GameCover g={preview} size="lg" /></div>
+        <Field label="Image" hint="L'image BoardGameGeek est reprise par défaut — remplacez-la par une adresse web ou une image de votre appareil si vous préférez.">
+          <ImageField value={preview.img || ""} onChange={(v) => updatePreview({ img: v })} />
+        </Field>
 
         {/* Bandeau d'info : la fiche est modifiable avant validation */}
         <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.25)", borderRadius: 11, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#6e6256", display: "flex", alignItems: "center", gap: 8 }}>
@@ -6724,6 +6728,9 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           <Field label="Joueurs max"><TextInput type="number" value={preview.max || ""} onChange={(e) => updatePreview({ max: Number(e.target.value) || "" })} /></Field>
           <Field label="Durée (min)"><TextInput type="number" value={preview.time || ""} onChange={(e) => updatePreview({ time: Number(e.target.value) || "" })} /></Field>
         </div>
+        <Field label="Prix neuf (€)" hint="Facultatif — sert notamment au calcul du tarif de location.">
+          <TextInput type="number" step="0.01" value={preview.newPrice ?? ""} onChange={(e) => updatePreview({ newPrice: e.target.value })} placeholder="50" />
+        </Field>
 
         <Field label="Mécaniques" hint="Décochez celles avec lesquelles vous n'êtes pas d'accord, cochez-en d'autres, ou ajoutez-en de personnalisées.">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -6880,7 +6887,7 @@ const backLinkStyle = { background: "none", border: "none", color: C.teal, fontF
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
   const { games, upcoming, users, currentUser, addOwner } = useApp();
-  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "" });
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const [busy, setBusy] = useState(false); // anti double-clic : verrouille le bouton pendant la création
@@ -6977,6 +6984,9 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
         <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
         <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
       </div>
+      <Field label="Prix neuf (€)" hint="Facultatif — sert notamment au calcul du tarif de location.">
+        <TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} placeholder="50" />
+      </Field>
       <Field label="Mécaniques" hint="Cliquez pour sélectionner, ou ajoutez vos propres mécaniques ci-dessous.">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
           {[...new Set([...MECHANIC_SUGGESTIONS, ...(f.mechanics || [])])].map((m) => {
