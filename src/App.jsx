@@ -40,6 +40,76 @@ const GAME_COLORS = [
 ];
 const colorByKey = (k) => GAME_COLORS.find((c) => c.key === k) || null;
 
+/* =============================================================================
+   BADGES — calculés en direct à partir des données déjà chargées.
+   8 paliers par badge ; seul le plus haut atteint est affiché.
+   ============================================================================= */
+const TIER_NAMES = ["Novice", "Apprenti", "Aventurier", "Champion", "Héros", "Maître", "Légende", "Dieu"];
+const TIER_COLORS = ["#A9714B", "#8FA3AD", "#E8A317", "#1E8A8A", "#2F6FB3", "#6B3A7A", "#B5283A", "#1A3A5C"];
+const BADGE_DEFS = [
+  { key: "joueur",      emoji: "🎲", label: "Joueur",        unit: "parties jouées",                 thresholds: [10, 50, 100, 200, 500, 1000, 5000, 10000] },
+  { key: "vainqueur",   emoji: "🏆", label: "Vainqueur",     unit: "victoires",                      thresholds: [10, 50, 100, 500, 1000, 2500, 5000, 10000] },
+  { key: "champion",    emoji: "👑", label: "Multi-champion", unit: "titres de champion détenus",    thresholds: [5, 10, 25, 50, 100, 250, 500, 1000], dynamic: true },
+  { key: "serie",       emoji: "🔥", label: "Série dorée",   unit: "victoires d'affilée (record)",   thresholds: [3, 5, 10, 20, 35, 50, 75, 100] },
+  { key: "explorateur", emoji: "🧭", label: "Explorateur",   unit: "jeux différents joués",          thresholds: [10, 50, 100, 200, 500, 1000, 2500, 5000] },
+  { key: "marathon",    emoji: "⏱️", label: "Marathonien",   unit: "parties de plus de 3 h",         thresholds: [1, 5, 10, 25, 50, 100, 200, 500] },
+  { key: "pilier",      emoji: "📅", label: "Pilier des moments", unit: "moments jeux vécus",        thresholds: [5, 10, 50, 100, 250, 500, 1000, 5000] },
+  { key: "sociable",    emoji: "🤝", label: "Sociable",      unit: "partenaires de jeu différents",  thresholds: [5, 10, 15, 20, 35, 50, 75, 100] },
+  { key: "ludo",        emoji: "📚", label: "Ludothécaire",  unit: "jeux et extensions possédés",    thresholds: [10, 25, 50, 100, 500, 1000, 2000, 5000] },
+  { key: "critique",    emoji: "⭐", label: "Critique",      unit: "jeux notés",                     thresholds: [10, 50, 100, 250, 500, 1000, 2000, 5000] },
+  { key: "plume",       emoji: "✍️", label: "Plume",         unit: "commentaires écrits",            thresholds: [5, 10, 25, 50, 100, 250, 500, 1000] },
+  { key: "batisseur",   emoji: "🛠️", label: "Bâtisseur",     unit: "fiches de jeux créées",          thresholds: [5, 10, 50, 100, 250, 500, 1000, 2000] },
+];
+
+// Compte, pour un membre, la valeur de chaque badge à partir des données du site.
+function computeBadgeCounts(uid, { plays, events, games, upcoming, beltByGame }) {
+  const mine = (plays || [])
+    .filter((pl) => pl.participants.some((pt) => pt.userId === uid && pt.confirmed !== false))
+    .sort((a, b) => new Date(a.playedAt) - new Date(b.playedAt) || (a.occurrence || 1) - (b.occurrence || 1));
+  const wins = mine.filter((pl) => pl.participants.some((pt) => pt.userId === uid && pt.isWinner && pt.confirmed !== false));
+  let streak = 0, bestStreak = 0;
+  mine.forEach((pl) => {
+    const won = pl.participants.some((pt) => pt.userId === uid && pt.isWinner && pt.confirmed !== false);
+    streak = won ? streak + 1 : 0;
+    if (streak > bestStreak) bestStreak = streak;
+  });
+  const partners = new Set();
+  mine.forEach((pl) => pl.participants.forEach((pt) => { if (pt.userId && pt.userId !== uid && pt.confirmed !== false) partners.add(pt.userId); }));
+  const today = new Date().toISOString().slice(0, 10);
+  let ownedExt = 0;
+  (games || []).forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).includes(uid)) ownedExt++; }));
+  let comments = 0;
+  (games || []).forEach((g) => (g.comments || []).forEach((c) => { if (c.authorId === uid) comments++; }));
+  (events || []).forEach((e) => (e.comments || []).forEach((c) => { if (c.authorId === uid) comments++; }));
+  (upcoming || []).forEach((u) => (u.comments || []).forEach((c) => { if (c.authorId === uid) comments++; }));
+  return {
+    joueur: mine.length,
+    vainqueur: wins.length,
+    champion: Object.values(beltByGame || {}).filter((b) => (b.winners || []).some((w) => w.userId === uid)).length,
+    serie: bestStreak,
+    explorateur: new Set(mine.map((pl) => pl.gameId)).size,
+    marathon: mine.filter((pl) => (pl.durationSeconds || 0) > 3 * 3600).length,
+    pilier: (events || []).filter((e) => e.date && e.date <= today && (e.players || []).some((p) => p.id === uid)).length,
+    sociable: partners.size,
+    ludo: (games || []).filter((g) => (g.ownerIds || []).includes(uid)).length + ownedExt,
+    critique: (games || []).filter((g) => g.ratings && g.ratings[uid] != null).length,
+    plume: comments,
+    batisseur: (games || []).filter((g) => g.ownerId === uid).length + (upcoming || []).filter((x) => x.createdBy === uid).length,
+  };
+}
+
+// Badges d'un membre : pour chaque définition, palier atteint (0 = pas encore) + progression.
+function badgesFor(uid, data) {
+  const counts = computeBadgeCounts(uid, data);
+  return BADGE_DEFS.map((def) => {
+    const count = counts[def.key] || 0;
+    let tier = 0;
+    def.thresholds.forEach((t) => { if (count >= t) tier++; });
+    const next = tier < 8 ? def.thresholds[tier] : null;
+    return { def, count, tier, next };
+  });
+}
+
 const VAPID_PUBLIC_KEY = "BEsHP5Lx1BjGjJxeO9upUgkuSUR6dXqwjUHhb330zTmexkwZgCYmIx4sgJKM-eJmzpVdwikuk1L_wmeVBPkbkOE";
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -339,6 +409,52 @@ function ColorPrefs({ colors, size = 13 }) {
   );
 }
 
+// Badges en vitrine d'un membre, en mini-médailles inline (trombinoscope, listes).
+function FeaturedBadgesInline({ member, size = 16 }) {
+  const { plays, events, games, upcoming, beltByGame } = useApp();
+  const keys = (member?.featuredBadges || []).slice(0, 3);
+  const badges = useMemo(() => {
+    if (!keys.length) return [];
+    return badgesFor(member.id, { plays, events, games, upcoming, beltByGame })
+      .filter((b) => keys.includes(b.def.key) && b.tier > 0);
+  }, [member, plays, events, games, upcoming, beltByGame]); // eslint-disable-line
+  if (!badges.length) return null;
+  return (
+    <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
+      {badges.map((b) => (
+        <span key={b.def.key} title={`${b.def.label} — ${TIER_NAMES[b.tier - 1]} (${b.count} ${b.def.unit})`}
+          style={{ width: size + 6, height: size + 6, borderRadius: "50%", display: "grid", placeItems: "center", background: `${TIER_COLORS[b.tier - 1]}22`, border: `1.5px solid ${TIER_COLORS[b.tier - 1]}`, fontSize: size * 0.62, lineHeight: 1 }}>
+          {b.def.emoji}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// Rangée des badges obtenus d'un membre (fiche publique) : vitrine d'abord.
+function MemberBadgesRow({ member, data }) {
+  const badges = useMemo(() => {
+    const all = badgesFor(member.id, data).filter((b) => b.tier > 0);
+    const feat = member.featuredBadges || [];
+    return all.sort((a, b) => (feat.includes(b.def.key) ? 1 : 0) - (feat.includes(a.def.key) ? 1 : 0) || b.tier - a.tier);
+  }, [member, data]); // eslint-disable-line
+  if (!badges.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+      <span style={{ fontSize: 12, color: "#9c8d79" }}>Badges :</span>
+      {badges.map((b) => (
+        <span key={b.def.key} title={`${b.def.label} — ${b.count} ${b.def.unit}`}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px 3px 5px", borderRadius: 999, background: `${TIER_COLORS[b.tier - 1]}15`, border: `1.5px solid ${TIER_COLORS[b.tier - 1]}` }}>
+          <span style={{ fontSize: 14 }}>{b.def.emoji}</span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, color: C.navy }}>{b.def.label}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: TIER_COLORS[b.tier - 1] }}>{TIER_NAMES[b.tier - 1]}</span>
+          {(member.featuredBadges || []).includes(b.def.key) && <span style={{ fontSize: 11 }}>⭐</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function DeciderCrownFor({ id, size = 13 }) {
   const { deciderIds } = useApp();
   if (!id || !deciderIds || !deciderIds.has(id)) return null;
@@ -507,7 +623,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -546,7 +662,7 @@ function AppProvider({ children }) {
       (gppRows || []).forEach((pp) => { (partsByPlay[pp.play_id] ||= []).push(pp); });
       const playsList = (gamePlaysRows || []).map((gp) => ({
         id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
-        sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
+        sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by, durationSeconds: gp.duration_seconds || null,
         participants: (partsByPlay[gp.id] || []).map((pp) => ({
           userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
           name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
@@ -595,7 +711,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [] })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -706,7 +822,7 @@ function AppProvider({ children }) {
     (gppRows || []).forEach((pp) => { (partsByPlay[pp.play_id] ||= []).push(pp); });
     setPlays((gamePlaysRows || []).map((gp) => ({
       id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
-      sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
+      sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by, durationSeconds: gp.duration_seconds || null,
       participants: (partsByPlay[gp.id] || []).map((pp) => ({
         userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner, confirmed: pp.confirmed !== false,
         name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
@@ -751,7 +867,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1151,6 +1267,7 @@ function AppProvider({ children }) {
     if (patch.okkazeoUrl !== undefined) fields.okkazeo_url = patch.okkazeoUrl.trim();
     if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
     if (patch.favColors !== undefined) fields.fav_colors = (patch.favColors || []).slice(0, 3);
+    if (patch.featuredBadges !== undefined) fields.featured_badges = (patch.featuredBadges || []).slice(0, 3);
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
@@ -3243,6 +3360,7 @@ function MembersModal({ onClose, onPickMember }) {
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>
                     {m.name}
+                    <FeaturedBadgesInline member={m} size={17} />
                     {m.admin && <ShieldCheck size={13} color={C.purple} />}
                     {m.banned && <span style={{ fontSize: 10.5, background: C.red, color: "#fff", borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>BANNI</span>}
                   </span>
@@ -3290,7 +3408,7 @@ function MembersModal({ onClose, onPickMember }) {
 
 /* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
 function MemberLibraryModal({ memberId, onClose }) {
-  const { games, users } = useApp();
+  const { games, users, plays, events, upcoming, beltByGame } = useApp();
   const member = users.find((u) => u.id === memberId);
   // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
   const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => {
@@ -3342,6 +3460,7 @@ function MemberLibraryModal({ memberId, onClose }) {
                   {member.favMechanics.map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
                 </div>
               )}
+              <MemberBadgesRow member={member} data={{ plays, events, games, upcoming, beltByGame }} />
               {member.favColors && member.favColors.length > 0 && (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
                   <span style={{ fontSize: 12, color: "#9c8d79" }}>Couleurs préférées :</span>
@@ -7383,6 +7502,107 @@ function EventPlaySuggestions() {
   );
 }
 
+/* =============================================================================
+   BADGES — affichage
+   ============================================================================= */
+// Médaille d'un badge : pastille colorée selon le palier, emoji au centre.
+function BadgeMedal({ def, tier, size = 54, grayed = false }) {
+  const color = tier > 0 ? TIER_COLORS[tier - 1] : "#d8cdb9";
+  return (
+    <span style={{ position: "relative", width: size, height: size, borderRadius: "50%", display: "grid", placeItems: "center", flexShrink: 0,
+      background: grayed ? "#f1ebdd" : `${color}22`, border: `3px solid ${grayed ? "#ddd2bd" : color}`, filter: grayed ? "grayscale(.9)" : "none" }}>
+      <span style={{ fontSize: size * 0.45, lineHeight: 1 }}>{def.emoji}</span>
+      {tier > 0 && (
+        <span style={{ position: "absolute", bottom: -7, left: "50%", transform: "translateX(-50%)", background: color, color: "#fff",
+          borderRadius: 999, fontSize: size * 0.19, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "1px 7px", whiteSpace: "nowrap", border: "2px solid #FBF7EF" }}>
+          {TIER_NAMES[tier - 1]}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// Détail d'un badge : les 8 paliers avec leur dénomination, la progression, la mise en avant.
+function BadgeDetailModal({ b, onClose, canFeature, isFeatured, featureFull, onToggleFeature }) {
+  const { def, count, tier, next } = b;
+  return (
+    <Modal open onClose={onClose} title={`${def.emoji} ${def.label}`} width={480}>
+      <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 6px" }}>
+        {tier > 0
+          ? <>Niveau actuel : <b style={{ color: TIER_COLORS[tier - 1] }}>{TIER_NAMES[tier - 1]}</b> — {count} {def.unit}{def.dynamic ? " (badge évolutif : il peut se perdre !)" : ""}.</>
+          : <>Pas encore obtenu — {count} {def.unit}.</>}
+      </p>
+      {next != null && <p style={{ fontSize: 13, color: "#9c8d79", margin: "0 0 14px" }}>Prochain palier : {next} ({count}/{next}).</p>}
+      {next == null && <p style={{ fontSize: 13, color: C.amber, fontWeight: 700, margin: "0 0 14px" }}>Palier maximal atteint. Respect. 🙇</p>}
+      <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+        {def.thresholds.map((t, i) => {
+          const reached = tier >= i + 1;
+          const current = tier === i + 1;
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 10,
+              background: reached ? `${TIER_COLORS[i]}18` : "#fff", border: `1.5px solid ${current ? TIER_COLORS[i] : "#ece2d0"}`, opacity: reached ? 1 : .65 }}>
+              <span style={{ width: 26, height: 26, borderRadius: "50%", background: reached ? TIER_COLORS[i] : "#e4dac6", color: "#fff", display: "grid", placeItems: "center", fontSize: 12.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ flex: 1, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{TIER_NAMES[i]}</span>
+              <span style={{ fontSize: 13, color: "#8a7c6a" }}>{t} {def.unit}</span>
+              {reached && <Check size={15} color={TIER_COLORS[i]} />}
+            </div>
+          );
+        })}
+      </div>
+      {canFeature && tier > 0 && (
+        <Btn full variant={isFeatured ? "soft" : "amber"} disabled={!isFeatured && featureFull}
+          onClick={() => onToggleFeature(def.key)}>
+          {isFeatured ? "Retirer de ma vitrine" : featureFull ? "Vitrine pleine (3 badges max)" : "⭐ Mettre en avant sur ma fiche"}
+        </Btn>
+      )}
+    </Modal>
+  );
+}
+
+// Section « Mes badges » de Mon espace.
+function MyBadgesSection({ setToast }) {
+  const { plays, events, games, upcoming, beltByGame, currentUser, updateProfile } = useApp();
+  const [openKey, setOpenKey] = useState(null);
+  const myBadges = useMemo(
+    () => (currentUser ? badgesFor(currentUser.id, { plays, events, games, upcoming, beltByGame }) : []),
+    [plays, events, games, upcoming, beltByGame, currentUser]
+  );
+  if (!currentUser) return null;
+  const featured = currentUser.featuredBadges || [];
+  const earnedCount = myBadges.filter((b) => b.tier > 0).length;
+  const opened = openKey ? myBadges.find((b) => b.def.key === openKey) : null;
+  const toggleFeature = async (key) => {
+    const arr = featured.includes(key) ? featured.filter((k) => k !== key) : [...featured, key].slice(0, 3);
+    await updateProfile({ featuredBadges: arr });
+    setToast(featured.includes(key) ? "Badge retiré de votre vitrine." : "Badge mis en avant sur votre fiche !");
+  };
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 20 }}>🎖️</span> Mes badges
+        <span style={{ fontSize: 12.5, color: "#9c8d79", fontWeight: 400, fontFamily: "'Nunito',sans-serif" }}>{earnedCount}/{BADGE_DEFS.length} obtenus</span>
+      </h3>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6e6256" }}>Cliquez sur un badge pour voir ses paliers. Mettez jusqu'à 3 badges en vitrine : ils apparaîtront à côté de votre nom.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))", gap: 10 }}>
+        {myBadges.map((b) => (
+          <button key={b.def.key} type="button" onClick={() => setOpenKey(b.def.key)}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "14px 8px 10px", background: "#fff", border: "1px solid #ece2d0", borderRadius: 14, cursor: "pointer", position: "relative" }}>
+            {featured.includes(b.def.key) && b.tier > 0 && <span style={{ position: "absolute", top: 5, right: 7, fontSize: 13 }} title="En vitrine">⭐</span>}
+            <BadgeMedal def={b.def} tier={b.tier} grayed={b.tier === 0} />
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, color: b.tier > 0 ? C.navy : "#a89a86", textAlign: "center", lineHeight: 1.2 }}>{b.def.label}</span>
+            <span style={{ fontSize: 10.5, color: "#9c8d79" }}>{b.next != null ? `${b.count}/${b.next}` : b.count}</span>
+          </button>
+        ))}
+      </div>
+      {opened && (
+        <BadgeDetailModal b={opened} onClose={() => setOpenKey(null)} canFeature
+          isFeatured={featured.includes(opened.def.key)} featureFull={featured.length >= 3}
+          onToggleFeature={(k) => toggleFeature(k)} />
+      )}
+    </div>
+  );
+}
+
 /* ---- Sauvegarde admin : télécharge toutes les données en JSON ----
    Filet de sécurité en cas de fausse manipulation : un fichier daté, à conserver
    (le ré-import se ferait via l'éditeur SQL si besoin). ---- */
@@ -7872,6 +8092,7 @@ function MyLudoPage({ setToast, setPage }) {
       <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
       <EventPlaySuggestions />
       <MyPlaysSection setToast={setToast} />
+      <MyBadgesSection setToast={setToast} />
       <AdminBackupSection />
 
       <FamilySection setToast={setToast} />
