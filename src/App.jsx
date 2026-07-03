@@ -1613,7 +1613,7 @@ function AppProvider({ children }) {
       const gName = (games || []).find((g) => g.id === gameId)?.name || "un jeu";
       await notifyUsers(others, {
         type: "play_recorded",
-        message: `${currentUser.name} a enregistré une partie de « ${gName} » avec vous — confirmez-la dans Ma ludothèque`,
+        message: `${currentUser.name} a enregistré une partie de « ${gName} » avec vous — confirmez-la dans Mon espace`,
         linkKind: "game", linkId: gameId,
       });
     }
@@ -2362,7 +2362,7 @@ const NAV = [
   { key: "accueil", label: "Accueil", icon: Home },
   { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
-  { key: "ma-ludo", label: "Ma ludothèque", icon: BookOpen, auth: true },
+  { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
   { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
 ];
@@ -2855,7 +2855,7 @@ function HomePage({ setPage, onAuth }) {
           <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(20px,3vw,26px)", fontWeight: 700, lineHeight: 1.1, marginBottom: 6 }}>Nouveau : nos soirées jeux en ligne&nbsp;!</div>
             <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, opacity: .92 }}>
-              En plus de nos rendez-vous au local, l'association organise désormais des parties <b>en ligne sur Board&nbsp;Game&nbsp;Arena</b>. Repérez les moments « en ligne » (en violet) dans le calendrier, et rejoignez la conversation Signal dédiée pour nous retrouver à l'heure du rendez-vous.
+              En plus de nos rendez-vous au local, l'association organise désormais des parties <b>en ligne sur Board&nbsp;Game&nbsp;Arena</b>. <b>Les jeux y sont gratuits pour vous</b> : l'association dispose d'un compte premium qui permet de lancer tous les jeux et d'inviter les participants à la table. Repérez les moments « en ligne » (en violet) dans le calendrier, et rejoignez la conversation Signal dédiée pour nous retrouver à l'heure du rendez-vous.
             </p>
           </div>
           <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
@@ -3730,7 +3730,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
       </div>
       {f.online ? (
         <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
-          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée.
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).
         </div>
       ) : (
         <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
@@ -3831,7 +3831,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
             {e.online ? (
-              <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Globe size={16} /> Board Game Arena</span>
+              <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Globe size={16} /> Board Game Arena · jeux gratuits (compte de l'asso)</span>
             ) : !currentUser ? (
               <span style={{ display: "flex", gap: 6, alignItems: "center", opacity: .8 }}><MapPin size={16} /> <i>Lieu réservé aux membres connectés</i></span>
             ) : linkedPlace ? (
@@ -4147,7 +4147,7 @@ function EditEventModal({ e, onClose, onSave }) {
       </div>
       {f.online ? (
         <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
-          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée.
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).
         </div>
       ) : (
         <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
@@ -6839,7 +6839,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
 
         {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
         {!forUpcoming && (
-          <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Ma ludothèque.">
+          <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Mon espace.">
             <div style={{ display: "grid", gap: 8 }}>
               {[
                 { v: "self",  t: "Je le possède" },
@@ -7092,7 +7092,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
       </Field>
 
       {/* Bloc : qui possède ce jeu ? (procuration possible) */}
-      <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Ma ludothèque.">
+      <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Mon espace.">
         <div style={{ display: "grid", gap: 8 }}>
           {[
             { v: "self",  t: "Je le possède",                                d: "Vous êtes inscrit·e comme propriétaire." },
@@ -7754,7 +7754,7 @@ function MyLudoPage({ setToast, setPage }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 26 }}>
         <div>
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Espace membre</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ma ludothèque</h1>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Mon espace</h1>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={exportExcel} disabled={mine.length === 0}><Download size={17} /> Export Excel</Btn>
@@ -7959,6 +7959,11 @@ function MyLudoPage({ setToast, setPage }) {
           </div>
         </div>
       )}
+
+      <div style={{ margin: "34px 0 18px" }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mes jeux</span>
+        <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(24px,4vw,34px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ma ludothèque</h2>
+      </div>
 
       {allMine.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "rgba(26,58,92,.03)", borderRadius: 20, border: "2px dashed #e0d4bf" }}>
