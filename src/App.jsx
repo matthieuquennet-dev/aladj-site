@@ -23,6 +23,23 @@ const LOGO_URL = "data:image/webp;base64,UklGRrpJAABXRUJQVlA4WAoAAAAQAAAAsgAAlQA
 // Le jeton doit correspondre à la variable CALENDAR_TOKEN configurée sur Vercel.
 const CALENDAR_FEED_URL = "https://aladj.fr/api/calendar?k=51d278fd6d41a8632b8065ceb56ece3c";
 
+// Palette de couleurs de jeu (pions/plateaux). label = nom affiché, hex = pastille.
+const GAME_COLORS = [
+  { key: "rouge",   label: "Rouge",   hex: "#D64545" },
+  { key: "bleu",    label: "Bleu",    hex: "#2F6FB3" },
+  { key: "vert",    label: "Vert",    hex: "#3B9B5B" },
+  { key: "jaune",   label: "Jaune",   hex: "#E8B21C" },
+  { key: "orange",  label: "Orange",  hex: "#E08A1E" },
+  { key: "violet",  label: "Violet",  hex: "#7E4FA0" },
+  { key: "rose",    label: "Rose",    hex: "#D96BA0" },
+  { key: "noir",    label: "Noir",    hex: "#2B2B2B" },
+  { key: "blanc",   label: "Blanc",   hex: "#F3EFE6" },
+  { key: "gris",    label: "Gris",    hex: "#9AA0A6" },
+  { key: "marron",  label: "Marron",  hex: "#8A5A2B" },
+  { key: "turquoise", label: "Turquoise", hex: "#1FA8A0" },
+];
+const colorByKey = (k) => GAME_COLORS.find((c) => c.key === k) || null;
+
 const VAPID_PUBLIC_KEY = "BEsHP5Lx1BjGjJxeO9upUgkuSUR6dXqwjUHhb330zTmexkwZgCYmIx4sgJKM-eJmzpVdwikuk1L_wmeVBPkbkOE";
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -308,6 +325,20 @@ const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
 // Petite couronne ambre signalant un membre décisionnaire (réutilisable dans les listes)
+// Pastilles des couleurs de jeu préférées d'un membre (top 1/2/3), pour les soirées.
+function ColorPrefs({ colors, size = 13 }) {
+  const list = (colors || []).map(colorByKey).filter(Boolean).slice(0, 3);
+  if (!list.length) return null;
+  const label = list.map((c, i) => `${i + 1}. ${c.label}`).join("  ·  ");
+  return (
+    <span title={`Couleurs préférées — ${label}`} style={{ display: "inline-flex", alignItems: "center", gap: 2, marginLeft: 2 }}>
+      {list.map((c, i) => (
+        <span key={i} style={{ width: size, height: size, borderRadius: "50%", background: c.hex, border: "1.5px solid #fff", boxShadow: "0 0 0 1px rgba(0,0,0,.12)", marginLeft: i ? -4 : 0, zIndex: 3 - i }} />
+      ))}
+    </span>
+  );
+}
+
 function DeciderCrownFor({ id, size = 13 }) {
   const { deciderIds } = useApp();
   if (!id || !deciderIds || !deciderIds.has(id)) return null;
@@ -476,7 +507,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -564,7 +595,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [] })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -720,7 +751,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1119,6 +1150,7 @@ function AppProvider({ children }) {
     if (patch.bggUrl !== undefined) fields.bgg_url = patch.bggUrl.trim();
     if (patch.okkazeoUrl !== undefined) fields.okkazeo_url = patch.okkazeoUrl.trim();
     if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
+    if (patch.favColors !== undefined) fields.fav_colors = (patch.favColors || []).slice(0, 3);
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
@@ -2481,6 +2513,7 @@ function ProfileEditModal({ onClose }) {
     name: currentUser?.name || "", avatar: currentUser?.avatar || "", city: currentUser?.city || "",
     bio: currentUser?.bio || "", bggUrl: currentUser?.bggUrl || "", okkazeoUrl: currentUser?.okkazeoUrl || "",
     favMechanics: currentUser?.favMechanics || [],
+    favColors: currentUser?.favColors || [],
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -2489,6 +2522,13 @@ function ProfileEditModal({ onClose }) {
     if (s.favMechanics.includes(m)) return { ...s, favMechanics: s.favMechanics.filter((x) => x !== m) };
     if (s.favMechanics.length >= 6) return s; // max 6
     return { ...s, favMechanics: [...s.favMechanics, m] };
+  });
+  // Couleurs préférées : clic = ajoute en fin (top suivant) ; re-clic = retire (les suivantes remontent). Max 3.
+  const toggleColor = (k) => setF((s) => {
+    const cur = s.favColors || [];
+    if (cur.includes(k)) return { ...s, favColors: cur.filter((x) => x !== k) };
+    if (cur.length >= 3) return s;
+    return { ...s, favColors: [...cur, k] };
   });
 
   const save = async () => {
@@ -2534,6 +2574,29 @@ function ProfileEditModal({ onClose }) {
             return <button key={m} type="button" onClick={() => toggleMech(m)} disabled={disabled} style={{ padding: "6px 12px", borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : (disabled ? "#cdbfa8" : "#8a7c6a"), opacity: disabled ? .6 : 1 }}>{m}</button>;
           })}
         </div>
+      </Field>
+
+      <Field label="Couleurs de jeu préférées" hint="Cliquez dans l'ordre de préférence (jusqu'à 3). Utile pour distribuer les couleurs en soirée.">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+          {GAME_COLORS.map((col) => {
+            const rank = (f.favColors || []).indexOf(col.key); // -1 si non choisi
+            const active = rank >= 0;
+            const full = !active && (f.favColors || []).length >= 3;
+            return (
+              <button key={col.key} type="button" onClick={() => toggleColor(col.key)} disabled={full} title={col.label}
+                style={{ position: "relative", display: "flex", alignItems: "center", gap: 7, padding: "5px 11px 5px 6px", borderRadius: 999, cursor: full ? "not-allowed" : "pointer", background: "#fff", border: `2px solid ${active ? C.navy : "#e6dcc9"}`, opacity: full ? .45 : 1 }}>
+                <span style={{ width: 22, height: 22, borderRadius: "50%", background: col.hex, border: "1px solid rgba(0,0,0,.15)", flexShrink: 0 }} />
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy }}>{col.label}</span>
+                {active && <span style={{ minWidth: 18, height: 18, borderRadius: "50%", background: C.navy, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", padding: "0 2px" }}>{rank + 1}</span>}
+              </button>
+            );
+          })}
+        </div>
+        {(f.favColors || []).length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12.5, color: "#8a7c6a" }}>
+            Votre podium : {(f.favColors || []).map((k, i) => `${i + 1}. ${colorByKey(k)?.label || k}`).join("   ")}
+          </div>
+        )}
       </Field>
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
@@ -3279,6 +3342,16 @@ function MemberLibraryModal({ memberId, onClose }) {
                   {member.favMechanics.map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
                 </div>
               )}
+              {member.favColors && member.favColors.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: "#9c8d79" }}>Couleurs préférées :</span>
+                  {member.favColors.map(colorByKey).filter(Boolean).map((c, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, color: C.navy, fontWeight: 600 }}>
+                      <span style={{ width: 15, height: 15, borderRadius: "50%", background: c.hex, border: "1px solid rgba(0,0,0,.15)" }} /> {i + 1}. {c.label}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           {/* encart de présentation */}
@@ -3883,6 +3956,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                 <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} />
+                <ColorPrefs colors={(users.find((u) => u.id === p.id) || {}).favColors} />
               </span>
             ))}
             {(e.guests || []).map((g) => {
