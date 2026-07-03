@@ -673,7 +673,7 @@ function AppProvider({ children }) {
       id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
       sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
       participants: (partsByPlay[gp.id] || []).map((pp) => ({
-        userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
+        userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner, confirmed: pp.confirmed !== false,
         name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
       })),
     })));
@@ -1578,7 +1578,7 @@ function AppProvider({ children }) {
   const beltByGame = useMemo(() => {
     const latest = {};
     (plays || []).forEach((pl) => {
-      const winners = pl.participants.filter((x) => x.isWinner);
+      const winners = pl.participants.filter((x) => x.isWinner && x.confirmed !== false);
       if (!winners.length) return;
       const prev = latest[pl.gameId];
       if (!prev || new Date(pl.playedAt) > new Date(prev.playedAt)) {
@@ -1603,9 +1603,19 @@ function AppProvider({ children }) {
       p_game_id: gameId, p_played_at: playedAt, p_participants: payload,
     });
     if (error) return { error: error.message };
+    // Les autres membres impliqués doivent confirmer : on les notifie (pastille + push).
+    const others = (participants || []).map((pp) => pp.userId).filter((id) => id && id !== currentUser?.id);
+    if (others.length && currentUser) {
+      const gName = (games || []).find((g) => g.id === gameId)?.name || "un jeu";
+      await notifyUsers(others, {
+        type: "play_recorded",
+        message: `${currentUser.name} a enregistré une partie de « ${gName} » avec vous — confirmez-la dans Ma ludothèque`,
+        linkKind: "game", linkId: gameId,
+      });
+    }
     await reloadPlays();
     return {};
-  }, [reloadPlays]);
+  }, [reloadPlays, currentUser, games, notifyUsers]);
 
   const deleteGamePlay = useCallback(async (playId) => {
     const { error } = await supabase.rpc("delete_game_play", { p_play_id: playId });
@@ -1650,6 +1660,28 @@ function AppProvider({ children }) {
     await reloadPlays();
     return {};
   }, [currentUser, reloadPlays]);
+
+  // Parties manuelles où un autre membre m'a inscrit : en attente de MA confirmation.
+  const myPendingPlays = useMemo(() => {
+    if (!currentUser) return [];
+    return (plays || [])
+      .filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed === false))
+      .sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
+  }, [plays, currentUser]);
+
+  const confirmPlayParticipation = useCallback(async (playId, isWinner) => {
+    const { error } = await supabase.rpc("confirm_play_participation", { p_play_id: playId, p_is_winner: !!isWinner });
+    if (error) return { error: error.message };
+    await reloadPlays();
+    return {};
+  }, [reloadPlays]);
+
+  const declinePlayParticipation = useCallback(async (playId) => {
+    const { error } = await supabase.rpc("decline_play_participation", { p_play_id: playId });
+    if (error) return { error: error.message };
+    await reloadPlays();
+    return {};
+  }, [reloadPlays]);
 
   const confirmEventPlay = useCallback(async (eventId, gameId, occurrence, isWinner) => {
     const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_occurrence: occurrence || 1, p_is_winner: !!isWinner });
@@ -1775,6 +1807,7 @@ function AppProvider({ children }) {
     momentsUnseen, markMomentsSeen, deciderIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
     eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
+    myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
     household, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
@@ -2331,14 +2364,14 @@ const NAV = [
 ];
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, reload } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, reload } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => !n.auth || currentUser);
   const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
-  const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length;
+  const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length;
 
   return (
     <>
@@ -4523,7 +4556,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [selDeclare, setSelDeclare] = useState([]);
   const [declBusy, setDeclBusy] = useState(false);
   const ownerIdSet = new Set([...confirmedOwners.map((o) => o.id), ...pendingOwners.map((o) => o.id)]);
-  const myGamePlays = (currentUser ? (plays || []).filter((pl) => pl.gameId === g.id && pl.participants.some((pt) => pt.userId === currentUser.id)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
+  const myGamePlays = (currentUser ? (plays || []).filter((pl) => pl.gameId === g.id && pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
   const myWinCount = currentUser ? myGamePlays.filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner)).length : 0;
   const winPct = myGamePlays.length ? Math.round((myWinCount / myGamePlays.length) * 100) : 0;
   const belt = beltByGame?.[g.id];
@@ -7168,19 +7201,42 @@ function FamilySection({ setToast }) {
 }
 
 function EventPlaySuggestions() {
-  const { eventPlaySuggestions, confirmEventPlay, dismissEventPlay } = useApp();
+  const { eventPlaySuggestions, confirmEventPlay, dismissEventPlay, myPendingPlays, confirmPlayParticipation, declinePlayParticipation, games, users } = useApp();
   const [busy, setBusy] = useState(null);
   const [wonSet, setWonSet] = useState({});
-  if (!eventPlaySuggestions.length) return null;
+  const total = eventPlaySuggestions.length + (myPendingPlays || []).length;
+  if (!total) return null;
   const keyOf = (s) => s.eventId + "|" + s.gameId + "|" + s.occurrence;
   return (
     <div style={{ marginBottom: 22 }}>
       <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 20 }}>📋</span> Parties à confirmer
-        <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{eventPlaySuggestions.length}</span>
+        <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{total}</span>
       </h3>
-      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6e6256" }}>Tu étais présent à ces soirées : confirme les jeux auxquels tu as joué pour les ajouter à tes parties.</p>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6e6256" }}>Confirme les parties qui te concernent pour les ajouter à tes statistiques.</p>
       <div style={{ display: "grid", gap: 8 }}>
+        {(myPendingPlays || []).map((pl) => {
+          const k = "play|" + pl.id;
+          const won = !!wonSet[k];
+          const isBusy = busy === k;
+          const gName = (games || []).find((g) => g.id === pl.gameId)?.name || "Jeu";
+          const recorder = (users || []).find((u) => u.id === pl.recordedBy)?.name || "Un membre";
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "10px 13px" }}>
+              <div style={{ flex: 1, minWidth: 150 }}>
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{gName}</div>
+                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Partie du {new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })} · enregistrée par {recorder}</div>
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49", cursor: "pointer" }}>
+                <input type="checkbox" checked={won} onChange={() => setWonSet((p) => ({ ...p, [k]: !won }))} /> j'ai gagné
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Btn size="sm" variant="teal" disabled={isBusy} onClick={async () => { setBusy(k); await confirmPlayParticipation(pl.id, won); setBusy(null); }}>J'y ai joué</Btn>
+                <Btn size="sm" variant="ghost" disabled={isBusy} onClick={async () => { setBusy(k); await declinePlayParticipation(pl.id); setBusy(null); }}>Non</Btn>
+              </div>
+            </div>
+          );
+        })}
         {eventPlaySuggestions.map((s) => {
           const k = keyOf(s);
           const won = !!wonSet[k];
@@ -7265,7 +7321,7 @@ function MyPlaysSection({ setToast }) {
   const [allOpen, setAllOpen] = useState(false);
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
   const myPlays = useMemo(
-    () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
+    () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
     [plays, currentUser]
   );
   const years = useMemo(() => [...new Set(myPlays.map((pl) => new Date(pl.playedAt).getFullYear()))].sort((a, b) => b - a), [myPlays]);
@@ -7720,7 +7776,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
