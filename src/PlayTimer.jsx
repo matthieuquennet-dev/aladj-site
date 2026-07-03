@@ -194,6 +194,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   useEffect(() => () => { if (channelRef.current) supabase.removeChannel(channelRef.current); }, [supabase]);
 
+  // Au retour au premier plan (téléphone déverrouillé, onglet réactivé), le canal
+  // temps réel a pu être coupé : on resynchronise l'état et on réabonne.
+  useEffect(() => {
+    const sid0 = session?.id;
+    if (!sid0) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      refetchSession(sid0);
+      refetchPlayers(sid0);
+      refetchTotals(sid0);
+      subscribe(sid0);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [session?.id, refetchSession, refetchPlayers, refetchTotals, subscribe]);
+
   // ---- horloge live (uniquement en partie) ---------------------------
   useEffect(() => {
     if (phase !== 'running' && phase !== 'lobby') return;
@@ -337,7 +353,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const openNewGame = () => { setNewGameWinners([]); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
-  const confirmNewGame = async () => { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); setNewGamePrompt(false); setNewGameWinners([]); };
+  const [newGameBusy, setNewGameBusy] = useState(false);
+  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -595,7 +612,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
-                <button style={{ ...btnPrimary, flex: 1 }} onClick={confirmNewGame}>Nouvelle partie &rarr;</button>
+                <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
               </div>
             </div>
           </div>
