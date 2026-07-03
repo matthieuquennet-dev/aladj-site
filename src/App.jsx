@@ -4,7 +4,7 @@ import {
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
-  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw
+  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer from "./PlayTimer";
@@ -19,6 +19,10 @@ const LOGO_URL = "data:image/webp;base64,UklGRrpJAABXRUJQVlA4WAoAAAAQAAAAsgAAlQA
 
 // --- Notifications push (Web Push) ---
 // Clé PUBLIQUE VAPID (non secrète). À remplacer par la tienne si tu régénères la paire.
+// Flux iCal des moments jeux (fonction serverless api/calendar.js).
+// Le jeton doit correspondre à la variable CALENDAR_TOKEN configurée sur Vercel.
+const CALENDAR_FEED_URL = "https://aladj.fr/api/calendar?k=51d278fd6d41a8632b8065ceb56ece3c";
+
 const VAPID_PUBLIC_KEY = "BEsHP5Lx1BjGjJxeO9upUgkuSUR6dXqwjUHhb330zTmexkwZgCYmIx4sgJKM-eJmzpVdwikuk1L_wmeVBPkbkOE";
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -3405,6 +3409,43 @@ function EventCardMini({ e, onOpen }) {
 /* =============================================================================
    PAGE — SOIRÉES (calendrier + création + fond rouge/vert)
    ============================================================================= */
+/* ---- Abonnement au calendrier (flux iCal) ---- */
+function CalendarSubscribeModal({ onClose, setToast }) {
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(CALENDAR_FEED_URL);
+      setToast("Lien du calendrier copié !");
+    } catch (e) {
+      // Repli pour les navigateurs sans accès presse-papiers
+      const ta = document.createElement("textarea");
+      ta.value = CALENDAR_FEED_URL; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      setToast("Lien du calendrier copié !");
+    }
+  };
+  const stepStyle = { fontSize: 13.5, color: "#5e5346", lineHeight: 1.6, margin: "0 0 4px" };
+  return (
+    <Modal open onClose={onClose} title="S'abonner au calendrier" width={560}>
+      <p style={{ fontSize: 14, color: "#6e6256", lineHeight: 1.55, margin: "0 0 14px" }}>
+        Ajoutez les moments jeux directement dans votre agenda personnel : les soirées (et leurs modifications) apparaîtront automatiquement, sans rien faire. Les soirées « en attente » de joueurs sont marquées comme provisoires.
+      </p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 11, padding: "9px 12px", marginBottom: 16 }}>
+        <span style={{ flex: 1, fontSize: 12.5, color: C.navy, wordBreak: "break-all", fontFamily: "monospace" }}>{CALENDAR_FEED_URL}</span>
+        <Btn size="sm" variant="teal" onClick={copy}><Copy size={13} /> Copier</Btn>
+      </div>
+      <div style={{ background: "rgba(30,138,138,.06)", borderRadius: 12, padding: "12px 15px", marginBottom: 10 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14, marginBottom: 4 }}>Google Agenda</div>
+        <p style={stepStyle}>Sur ordinateur : calendar.google.com → à gauche, « Autres agendas » → <b>+</b> → « À partir de l'URL » → collez le lien. Le calendrier apparaîtra ensuite aussi dans l'application sur téléphone.</p>
+      </div>
+      <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "12px 15px", marginBottom: 10 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14, marginBottom: 4 }}>iPhone / iPad</div>
+        <p style={stepStyle}>Réglages → Calendrier → Comptes → Ajouter un compte → Autre → « Ajouter un cal. avec abonnement » → collez le lien.</p>
+      </div>
+      <p style={{ fontSize: 12.5, color: "#9c8d79", margin: 0 }}>Les agendas se mettent à jour automatiquement (comptez quelques heures de délai selon l'application). Ce lien est réservé aux membres : inutile de le diffuser en dehors de l'association.</p>
+    </Modal>
+  );
+}
+
 function EventsPage({ onAuth, setToast }) {
   const { events, currentUser, addEvent, toggleJoin, removeEvent } = useApp();
   const [showCreate, setShowCreate] = useState(false);
@@ -3412,6 +3453,7 @@ function EventsPage({ onAuth, setToast }) {
   const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
   const [selected, setSelected] = useState(null);
   const [dayPicker, setDayPicker] = useState(null); // plusieurs moments le même jour → fenêtre de choix
+  const [calSub, setCalSub] = useState(false); // fenêtre « s'abonner au calendrier »
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
   const sorted = useMemo(() => {
@@ -3420,6 +3462,7 @@ function EventsPage({ onAuth, setToast }) {
   }, [events]);
 
   const selectedEvent = events.find((e) => e.id === selected);
+  // (le rendu du modal d'abonnement est ajouté en bas de page)
 
   // grille calendrier
   const cal = useMemo(() => {
@@ -3493,6 +3536,9 @@ function EventsPage({ onAuth, setToast }) {
         </div>
         <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
           <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
+          <button onClick={() => setCalSub(true)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, padding: "2px 4px" }}>
+            <CalendarPlus size={15} /> S'abonner au calendrier
+          </button>
         </div>
       </div>
 
@@ -3515,6 +3561,7 @@ function EventsPage({ onAuth, setToast }) {
           </div>
         </Modal>
       )}
+      {calSub && <CalendarSubscribeModal onClose={() => setCalSub(false)} setToast={setToast} />}
       {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Moment jeux supprimé."); }} onAuth={onAuth} />}
     </div>
   );
