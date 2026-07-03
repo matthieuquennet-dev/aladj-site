@@ -137,10 +137,19 @@ const R2_PUBLIC_PREFIX = "https://pub-a3613b9531e948d684f5307f0105183b.r2.dev";
 // Le code d'affiliation est ajouté avec "?" ou "&" selon que l'URL a déjà des paramètres.
 const LUDUM_AFF = "146";
 const LUDUM_SEARCH_BASE = "https://www.ludum.fr/recherche?controller=search&s=";
+// Neutralise les URLs saisies par les membres : seuls http(s) sont autorisés
+// (rejette javascript:, data:, etc.) ; ajoute https:// si le schéma manque.
+function safeUrl(u) {
+  const v = (u || "").trim();
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return ""; // autre schéma → refusé
+  return "https://" + v;
+}
+
 function ludumLink(name, storedUrl) {
-  const base = (storedUrl && storedUrl.trim())
-    ? storedUrl.trim()
-    : LUDUM_SEARCH_BASE + encodeURIComponent((name || "").trim());
+  const stored = safeUrl(storedUrl);
+  const base = stored || (LUDUM_SEARCH_BASE + encodeURIComponent((name || "").trim()));
   return base + (base.includes("?") ? "&" : "?") + "aff=" + LUDUM_AFF;
 }
 async function uploadImageToStorage(image, folder = "games") {
@@ -313,17 +322,18 @@ async function fetchAllRows(table, columns, orderCols) {
   const size = 1000;
   let from = 0;
   const all = [];
+  let err = null;
   for (let guard = 0; guard < 100; guard++) {
     let q = supabase.from(table).select(columns);
     (orderCols || []).forEach((c) => { q = q.order(c, { ascending: true }); });
     const { data, error } = await q.range(from, from + size - 1);
-    if (error) { console.error("fetchAllRows", table, error.message); break; }
+    if (error) { console.error("fetchAllRows", table, error.message); err = error; break; }
     if (!data || data.length === 0) break;
     all.push(...data);
     if (data.length < size) break;
     from += size;
   }
-  return { data: all };
+  return { data: all, error: err };
 }
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
@@ -430,6 +440,12 @@ function AppProvider({ children }) {
   const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
   const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial
   const [fatalError, setFatalError] = useState(null);
+  // Garde anti-chevauchement : si un rechargement est déjà en cours, on note qu'il
+  // faudra en relancer un à la fin (au lieu de laisser deux chargements s'entremêler
+  // et écraser des données plus fraîches par des plus anciennes).
+  const loadingRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+
   // Ref vers l'id du membre connecté, lisible dans loadData sans le mettre en dépendance.
   const currentUserIdRef = useRef(null);
   useEffect(() => { currentUserIdRef.current = currentUser?.id || null; }, [currentUser]);
@@ -445,6 +461,8 @@ function AppProvider({ children }) {
 
   /* ---- Chargement des données partagées ---- */
   const loadData = useCallback(async () => {
+    if (loadingRef.current) { loadQueuedRef.current = true; return; }
+    loadingRef.current = true;
     try {
       // Historique préservé : on ne supprime plus automatiquement les moments anciens.
       // (Auparavant, les moments > 1 an étaient nettoyés ; ce n'est plus le cas pour
@@ -620,8 +638,46 @@ function AppProvider({ children }) {
     } catch (e) {
       console.error(e);
       setFatalError("Impossible de charger les données. Vérifiez la configuration Supabase.");
+    } finally {
+      loadingRef.current = false;
+      if (loadQueuedRef.current) { loadQueuedRef.current = false; loadData(); }
     }
   }, []);
+
+  /* ---- Rechargements ciblés (évitent de tout recharger pour les actions fréquentes) ---- */
+  // Notes + envies de découvrir : ne recharge que ces deux tables et les fusionne
+  // dans les jeux déjà en mémoire.
+  const reloadGameSignals = useCallback(async () => {
+    const [{ data: ratings }, { data: discs }] = await Promise.all([
+      fetchAllRows("ratings", "*", ["game_id", "user_id"]),
+      fetchAllRows("game_discoveries", "*", ["game_id", "user_id"]),
+    ]);
+    const rByGame = {};
+    (ratings || []).forEach((r) => { (rByGame[r.game_id] ||= {})[r.user_id] = Number(r.value); });
+    const dByGame = {};
+    (discs || []).forEach((d) => { (dByGame[d.game_id] ||= []).push(d.user_id); });
+    setGames((prev) => prev.map((g) => ({ ...g, ratings: rByGame[g.id] || {}, wantIds: dByGame[g.id] || [] })));
+  }, []);
+
+  // Parties jouées : ne recharge que les parties et leurs participants.
+  const reloadPlays = useCallback(async () => {
+    const [{ data: gamePlaysRows }, { data: gppRows }] = await Promise.all([
+      fetchAllRows("game_plays", "*", ["played_at", "id"]),
+      fetchAllRows("game_play_participants", "*", ["id"]),
+    ]);
+    const nameById = {};
+    (users || []).forEach((u) => { nameById[u.id] = u.name; });
+    const partsByPlay = {};
+    (gppRows || []).forEach((pp) => { (partsByPlay[pp.play_id] ||= []).push(pp); });
+    setPlays((gamePlaysRows || []).map((gp) => ({
+      id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
+      sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by,
+      participants: (partsByPlay[gp.id] || []).map((pp) => ({
+        userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
+        name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
+      })),
+    })));
+  }, [users]);
 
   /* ---- Session + écoute des changements d'auth ---- */
   useEffect(() => {
@@ -926,8 +982,8 @@ function AppProvider({ children }) {
         }
       }
     }
-    await loadData();
-  }, [currentUser, games, loadData]);
+    await reloadGameSignals();
+  }, [currentUser, games, reloadGameSignals]);
 
   // ---- Extensions ----
   // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
@@ -967,8 +1023,10 @@ function AppProvider({ children }) {
   // Confirmer une possession d'extension déclarée par un autre membre.
   const confirmExtensionOwnership = useCallback(async (extId) => {
     if (!currentUser) return;
-    await supabase.rpc("confirm_extension_ownership", { p_ext_id: extId });
+    const { error } = await supabase.rpc("confirm_extension_ownership", { p_ext_id: extId });
+    if (error) { console.error("confirm_extension_ownership:", error.message); return { error: error.message }; }
     await loadData();
+    return {};
   }, [currentUser, loadData]);
 
   // Se retirer d'une extension. Si plus aucun propriétaire, l'extension est supprimée.
@@ -1076,8 +1134,8 @@ function AppProvider({ children }) {
       // (sans gravité si je ne l'avais pas marqué : la requête supprime simplement zéro ligne.)
       await supabase.from("game_discoveries").delete().eq("game_id", id).eq("user_id", currentUser.id);
     }
-    await loadData();
-  }, [currentUser, games, loadData]);
+    await reloadGameSignals();
+  }, [currentUser, games, reloadGameSignals]);
 
   // Effacer explicitement sa note pour un jeu
   const clearRating = useCallback(async (id) => {
@@ -1544,16 +1602,16 @@ function AppProvider({ children }) {
       p_game_id: gameId, p_played_at: playedAt, p_participants: payload,
     });
     if (error) return { error: error.message };
-    await loadData();
+    await reloadPlays();
     return {};
-  }, [loadData]);
+  }, [reloadPlays]);
 
   const deleteGamePlay = useCallback(async (playId) => {
     const { error } = await supabase.rpc("delete_game_play", { p_play_id: playId });
     if (error) return { error: error.message };
-    await loadData();
+    await reloadPlays();
     return {};
-  }, [loadData]);
+  }, [reloadPlays]);
 
   // Suggestions : jeux des soirées passées où je suis présent et que je n'ai pas encore enregistrés
   const eventPlaySuggestions = useMemo(() => {
@@ -1586,16 +1644,18 @@ function AppProvider({ children }) {
   // Se declarer (ou se retirer) vainqueur d'une partie deja enregistree.
   const setMyPlayResult = useCallback(async (playId, isWinner) => {
     if (!currentUser) return;
-    await supabase.rpc("set_my_play_result", { p_play_id: playId, p_is_winner: !!isWinner });
-    await loadData();
-  }, [currentUser, loadData]);
+    const { error } = await supabase.rpc("set_my_play_result", { p_play_id: playId, p_is_winner: !!isWinner });
+    if (error) { console.error("set_my_play_result:", error.message); return { error: error.message }; }
+    await reloadPlays();
+    return {};
+  }, [currentUser, reloadPlays]);
 
   const confirmEventPlay = useCallback(async (eventId, gameId, occurrence, isWinner) => {
     const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_occurrence: occurrence || 1, p_is_winner: !!isWinner });
     if (error) return { error: error.message };
-    await loadData();
+    await reloadPlays();
     return {};
-  }, [loadData]);
+  }, [reloadPlays]);
 
   const dismissEventPlay = useCallback(async (eventId, gameId, occurrence) => {
     if (!currentUser) return { error: "Non connecté" };
@@ -1609,8 +1669,10 @@ function AppProvider({ children }) {
   // Regler le nombre de parties d'un jeu joue lors d'un moment.
   const setEventPlayCount = useCallback(async (playedGameId, count) => {
     if (!currentUser) return;
-    await supabase.rpc("set_event_play_count", { p_event_game_id: playedGameId, p_count: count });
+    const { error } = await supabase.rpc("set_event_play_count", { p_event_game_id: playedGameId, p_count: count });
+    if (error) { console.error("set_event_play_count:", error.message); return { error: error.message }; }
     await loadData();
+    return {};
   }, [currentUser, loadData]);
 
   const momentsUnseen = useMemo(() => {
@@ -3169,8 +3231,8 @@ function MemberLibraryModal({ memberId, onClose }) {
               </div>
               {/* liens externes */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                {member.bggUrl && <a href={member.bggUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: "#ff5100", padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> BGG</a>}
-                {member.okkazeoUrl && <a href={member.okkazeoUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: C.purple, padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> Okkazeo</a>}
+                {safeUrl(member.bggUrl) && <a href={safeUrl(member.bggUrl)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: "#ff5100", padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> BGG</a>}
+                {safeUrl(member.okkazeoUrl) && <a href={safeUrl(member.okkazeoUrl)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: "#fff", background: C.purple, padding: "4px 10px", borderRadius: 8, textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><ExternalLink size={12} /> Okkazeo</a>}
               </div>
               {/* mécaniques préférées */}
               {member.favMechanics && member.favMechanics.length > 0 && (
@@ -6026,6 +6088,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     return { allYears: [...s].sort((a, b) => b - a), hasNoYear: none };
   }, [communGames]);
 
+  // Rendu progressif : on affiche les jeux par tranches pour rester fluide
+  // quand la ludothèque grossit (des milliers de cartes tuent les téléphones).
+  const [visibleCount, setVisibleCount] = useState(60);
   const filtered = useMemo(() => {
     let list = communGames.filter((g) => {
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
@@ -6161,7 +6226,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                 <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
                 <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
               </div>
-              {filtered.map((g) => {
+              {filtered.slice(0, visibleCount).map((g) => {
                 const { avg, count } = gameStats(g);
                 const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
                 const wantC = (g.wantIds || []).length;
@@ -6180,7 +6245,14 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {filtered.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth} />)}
+              {filtered.slice(0, visibleCount).map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth} />)}
+            </div>
+          )}
+          {filtered.length > visibleCount && (
+            <div style={{ textAlign: "center", marginTop: 20 }}>
+              <Btn variant="soft" onClick={() => setVisibleCount((c) => c + 60)}>
+                Afficher plus de jeux ({filtered.length - visibleCount} restant{filtered.length - visibleCount > 1 ? "s" : ""})
+              </Btn>
             </div>
           )}
         </div>
@@ -7124,7 +7196,60 @@ function EventPlaySuggestions() {
   );
 }
 
-function MyPlaysSection() {
+/* ---- Sauvegarde admin : télécharge toutes les données en JSON ----
+   Filet de sécurité en cas de fausse manipulation : un fichier daté, à conserver
+   (le ré-import se ferait via l'éditeur SQL si besoin). ---- */
+function AdminBackupSection() {
+  const { currentUser } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState("");
+  if (!currentUser?.admin) return null;
+  const TABLES = [
+    ["profiles", ["id"]], ["games", ["id"]], ["game_owners", ["game_id", "owner_id"]],
+    ["extensions", ["id"]], ["extension_owners", ["id"]], ["ratings", ["game_id", "user_id"]],
+    ["game_weights", ["game_id", "owner_id"]], ["game_discoveries", ["game_id", "user_id"]],
+    ["game_comments", ["created_at", "id"]], ["events", ["id"]], ["event_players", ["event_id", "user_id"]],
+    ["event_games", ["id"]], ["event_comments", ["created_at", "id"]], ["places", ["id"]],
+    ["upcoming_games", ["id"]], ["upcoming_comments", ["created_at", "id"]],
+    ["game_plays", ["played_at", "id"]], ["game_play_participants", ["id"]],
+  ];
+  const download = async () => {
+    setBusy(true);
+    const out = {}; const errors = [];
+    for (let i = 0; i < TABLES.length; i++) {
+      const [t, order] = TABLES[i];
+      setProg(`${i + 1}/${TABLES.length} — ${t}`);
+      try {
+        const { data, error } = await fetchAllRows(t, "*", order);
+        if (error) errors.push(t); else out[t] = data || [];
+      } catch (e) { errors.push(t); }
+    }
+    const payload = { site: "aladj.fr", exportedAt: new Date().toISOString(), errors, tables: out };
+    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `aladj-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setBusy(false); setProg("");
+  };
+  return (
+    <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: "1px solid #ece2d0", marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <ShieldCheck size={19} color={C.purple} />
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 17, margin: 0, color: C.navy }}>Sauvegarde des données (admin)</h3>
+      </div>
+      <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 12px" }}>
+        Télécharge une copie complète des données du site (jeux, membres, moments, parties…) dans un fichier daté. À faire régulièrement et à conserver précieusement : c'est le filet de sécurité en cas de mauvaise manipulation.
+      </p>
+      <Btn variant="soft" disabled={busy} onClick={download}>
+        {busy ? <><Loader2 size={15} className="aladj-spin" /> {prog}</> : <>💾 Télécharger une sauvegarde (JSON)</>}
+      </Btn>
+    </div>
+  );
+}
+
+function MyPlaysSection({ setToast }) {
   const { plays, currentUser, games, deleteGamePlay, setMyPlayResult } = useApp();
   const [period, setPeriod] = useState("year");
   const [allOpen, setAllOpen] = useState(false);
@@ -7209,7 +7334,7 @@ function MyPlaysSection() {
                   <div style={{ fontWeight: 700, color: C.navy, fontSize: 14 }}>{g?.name || "Jeu supprimé"}</div>
                   <div style={{ fontSize: 12.5, color: "#9c8d79" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
                 </div>
-                <button onClick={async () => { await setMyPlayResult(pl.id, !iWon); }}
+                <button onClick={async () => { const r = await setMyPlayResult(pl.id, !iWon); if (r?.error && setToast) setToast("Impossible d'enregistrer le résultat : " + r.error); }}
                   title={iWon ? "Vous etes declare vainqueur - cliquer pour retirer" : "Me declarer vainqueur"}
                   style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
                   🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
@@ -7559,7 +7684,8 @@ function MyLudoPage({ setToast, setPage }) {
       </div>
       <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
       <EventPlaySuggestions />
-      <MyPlaysSection />
+      <MyPlaysSection setToast={setToast} />
+      <AdminBackupSection />
 
       <FamilySection setToast={setToast} />
 
@@ -7663,7 +7789,7 @@ function MyLudoPage({ setToast, setPage }) {
                   Un membre a indiqué que vous possédiez l'extension <b style={{ color: C.navy }}>{ext.name}</b> <span style={{ color: "#9c8d79" }}>({gameName})</span>.
                 </span>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <Btn size="sm" variant="teal" onClick={async () => { await confirmExtensionOwnership(ext.id); setToast(`« ${ext.name} » confirmée dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
+                  <Btn size="sm" variant="teal" onClick={async () => { const r = await confirmExtensionOwnership(ext.id); if (r?.error) { setToast("Erreur : " + r.error); return; } setToast(`« ${ext.name} » confirmée dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
                   <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(ext.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
                 </div>
               </div>
