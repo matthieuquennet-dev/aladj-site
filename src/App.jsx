@@ -44,7 +44,7 @@ const colorByKey = (k) => GAME_COLORS.find((c) => c.key === k) || null;
    BADGES — calculés en direct à partir des données déjà chargées.
    8 paliers par badge ; seul le plus haut atteint est affiché.
    ============================================================================= */
-const TIER_NAMES = ["Novice", "Apprenti", "Aventurier", "Champion", "Héros", "Maître", "Légende", "Dieu"];
+const TIER_NAMES = ["Novice", "Apprenti", "Aventurier", "Champion", "Héros", "Maître", "Légende", "Divinité"];
 const TIER_COLORS = ["#A9714B", "#8FA3AD", "#E8A317", "#1E8A8A", "#2F6FB3", "#6B3A7A", "#B5283A", "#1A3A5C"];
 const BADGE_DEFS = [
   { key: "joueur",      emoji: "🎲", label: "Joueur",        unit: "parties jouées",                 thresholds: [10, 50, 100, 200, 500, 1000, 5000, 10000] },
@@ -3176,7 +3176,7 @@ function GuidePage() {
         {
           q: "Comment fonctionnent les badges ?",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Douze badges récompensent votre vie ludique (parties, victoires, séries, découvertes, moments, possessions, notes…). Chacun a <b>8 paliers</b> : Novice, Apprenti, Aventurier, Champion, Héros, Maître, Légende… et Dieu. Le palier le plus haut atteint remplace le précédent.</p>
+            <p style={{ margin: "0 0 8px" }}>Douze badges récompensent votre vie ludique (parties, victoires, séries, découvertes, moments, possessions, notes…). Chacun a <b>8 paliers</b> : Novice, Apprenti, Aventurier, Champion, Héros, Maître, Légende… et Divinité. Le palier le plus haut atteint remplace le précédent.</p>
             <Illu caption="Cliquez un badge dans Mon espace pour voir tous ses paliers — et mettez vos 3 préférés en vitrine : ils s'afficheront à côté de votre nom.">
               <BadgeMedal def={BADGE_DEFS[0]} tier={3} size={58} />
               <BadgeMedal def={BADGE_DEFS[1]} tier={5} size={58} />
