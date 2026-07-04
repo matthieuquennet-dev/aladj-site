@@ -624,7 +624,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -875,7 +875,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1262,6 +1262,13 @@ function AppProvider({ children }) {
     setCurrentUser((u) => u ? { ...u, shareLibrary: value } : u);
     await loadData();
   }, [currentUser, loadData]);
+
+  // Recevoir (ou non) sa rétrospective mensuelle/annuelle par e-mail.
+  const setRetroEmails = useCallback(async (value) => {
+    if (!currentUser) return;
+    await supabase.from("profiles").update({ retro_emails: value }).eq("id", currentUser.id);
+    setCurrentUser((u) => u ? { ...u, retroEmails: value } : u);
+  }, [currentUser]);
 
   // Mise à jour du profil du membre connecté
   const updateProfile = useCallback(async (patch) => {
@@ -1972,6 +1979,7 @@ function AppProvider({ children }) {
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
+    setRetroEmails,
     household, householdByUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
@@ -3081,7 +3089,7 @@ function GuidePage() {
         },
         {
           q: "Le top 10 ever des membres",
-          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b>, juste au-dessus de votre ludothèque : composez votre <b>top 10 ever</b> — les 10 jeux que vous garderiez s'il n'y avait plus que ça à jouer sur Terre, dans l'ordre. Il s'affiche sur votre fiche de membre, et chaque jeu élu le mentionne fièrement sur sa fiche (« 💎 Dans le top 10 de Fabien (n°3) »). Modifiable à tout moment.</p>,
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b>, juste au-dessus de votre ludothèque : composez votre <b>top 10 ever</b> — les 10 jeux que vous garderiez s'il n'y avait plus que ça à jouer sur Terre, dans l'ordre. Il s'affiche sur votre fiche de membre, et chaque jeu élu le mentionne fièrement sur sa fiche (« 💎 Dans le top 10 de Fabien (n°3) »). Modifiable à tout moment. Pour voir votre fiche telle que les autres la voient : bouton « Voir ma fiche » en haut de Mon espace.</p>,
         },
         {
           q: "Louer un jeu à un autre membre",
@@ -3175,6 +3183,10 @@ function GuidePage() {
               <BadgeMedal def={BADGE_DEFS[8]} tier={2} size={58} />
             </Illu>
           </>,
+        },
+        {
+          q: "La rétrospective : votre bilan ludique",
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b>, la bannière « 🎁 Ma rétrospective » dresse votre bilan du mois ou de l'année : parties, victoires, jeu fétiche, heures de jeu — et pour l'année, partenaire favori, découvertes, meilleure série et badges. Chaque début de mois, la version du mois écoulé arrive aussi <b>par e-mail</b> (et le grand bilan annuel en janvier) — désactivable dans les réglages de Mon espace.</p>,
         },
       ],
     },
@@ -8010,6 +8022,170 @@ function AdminBackupSection() {
 }
 
 /* =============================================================================
+   RÉTROSPECTIVE — le bilan ludique d'un membre sur une période (mois ou année),
+   calculé en direct à partir des parties confirmées.
+   ============================================================================= */
+function computeRetro(uid, startIso, endIso, { plays, games, users }) {
+  const allMine = (plays || [])
+    .filter((pl) => pl.participants.some((pt) => pt.userId === uid && pt.confirmed !== false))
+    .sort((a, b) => new Date(a.playedAt) - new Date(b.playedAt) || (a.occurrence || 1) - (b.occurrence || 1));
+  const inRange = allMine.filter((pl) => pl.playedAt >= startIso && pl.playedAt < endIso);
+  const won = (pl) => pl.participants.some((pt) => pt.userId === uid && pt.isWinner && pt.confirmed !== false);
+  const wins = inRange.filter(won).length;
+  const seconds = inRange.reduce((sum, pl) => sum + (pl.durationSeconds || 0), 0);
+  // jeu fétiche de la période
+  const byGame = {};
+  inRange.forEach((pl) => { byGame[pl.gameId] = (byGame[pl.gameId] || 0) + 1; });
+  const topGameId = Object.keys(byGame).sort((a, b) => byGame[b] - byGame[a])[0] || null;
+  const topGame = topGameId ? { ...(games.find((g) => g.id === topGameId) || { name: "Un jeu" }), count: byGame[topGameId] } : null;
+  // partenaire favori
+  const byPartner = {};
+  inRange.forEach((pl) => pl.participants.forEach((pt) => {
+    if (pt.userId && pt.userId !== uid && pt.confirmed !== false) byPartner[pt.userId] = (byPartner[pt.userId] || 0) + 1;
+  }));
+  const topPartnerId = Object.keys(byPartner).sort((a, b) => byPartner[b] - byPartner[a])[0] || null;
+  const topPartner = topPartnerId ? { name: users.find((u) => u.id === topPartnerId)?.name || "Un membre", count: byPartner[topPartnerId] } : null;
+  // découvertes : jeux dont la toute première partie (de ce membre) tombe dans la période
+  const firstPlayByGame = {};
+  allMine.forEach((pl) => { if (!firstPlayByGame[pl.gameId]) firstPlayByGame[pl.gameId] = pl.playedAt; });
+  const discoveries = Object.keys(firstPlayByGame).filter((gid) => firstPlayByGame[gid] >= startIso && firstPlayByGame[gid] < endIso).length;
+  // meilleure série de victoires de la période
+  let streak = 0, bestStreak = 0;
+  inRange.forEach((pl) => { streak = won(pl) ? streak + 1 : 0; if (streak > bestStreak) bestStreak = streak; });
+  return {
+    plays: inRange.length, wins, hours: Math.round(seconds / 360) / 10,
+    distinctGames: Object.keys(byGame).length, topGame, topPartner, discoveries, bestStreak,
+  };
+}
+
+function RetroStat({ big, label, emoji }) {
+  return (
+    <div style={{ background: "rgba(255,255,255,.12)", borderRadius: 14, padding: "13px 10px", textAlign: "center" }}>
+      <div style={{ fontSize: 21 }}>{emoji}</div>
+      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 27, color: "#fff", lineHeight: 1.1 }}>{big}</div>
+      <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.75)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</div>
+    </div>
+  );
+}
+
+function RetroModal({ open, onClose }) {
+  const { plays, games, users, currentUser } = useApp();
+  const now = new Date();
+  const monthNames = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+  // Périodes proposées : mois dernier, mois en cours, année en cours, année dernière.
+  const periods = useMemo(() => {
+    const y = now.getFullYear(), m = now.getMonth();
+    const iso = (yy, mm) => new Date(Date.UTC(yy, mm, 1)).toISOString();
+    const pm = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 };
+    return [
+      { key: "lastMonth", label: `${monthNames[pm.m]} ${pm.y}`, kind: "month", start: iso(pm.y, pm.m), end: iso(pm.m === 11 ? pm.y + 1 : pm.y, (pm.m + 1) % 12) },
+      { key: "thisMonth", label: `${monthNames[m]} ${y} (en cours)`, kind: "month", start: iso(y, m), end: iso(m === 11 ? y + 1 : y, (m + 1) % 12) },
+      { key: "thisYear", label: `Année ${y} (en cours)`, kind: "year", start: iso(y, 0), end: iso(y + 1, 0) },
+      { key: "lastYear", label: `Année ${y - 1}`, kind: "year", start: iso(y - 1, 0), end: iso(y, 0) },
+    ];
+  }, []); // eslint-disable-line
+  const [periodKey, setPeriodKey] = useState("lastMonth");
+  const period = periods.find((p) => p.key === periodKey) || periods[0];
+  const r = useMemo(
+    () => (currentUser ? computeRetro(currentUser.id, period.start, period.end, { plays, games, users }) : null),
+    [currentUser, period, plays, games, users]
+  );
+  const badgesEarned = useMemo(
+    () => (currentUser && period.kind === "year" ? badgesFor(currentUser.id, { plays, events: [], games, upcoming: [], beltByGame: {} }).filter((b) => b.tier > 0).length : 0),
+    [currentUser, period, plays, games]
+  );
+  if (!open || !currentUser || !r) return null;
+  const isYear = period.kind === "year";
+  return (
+    <Modal open onClose={onClose} title="🎁 Ma rétrospective" width={560}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {periods.map((p) => (
+          <button key={p.key} onClick={() => setPeriodKey(p.key)}
+            style={{ padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${p.key === periodKey ? C.teal : "#e6dcc9"}`, background: p.key === periodKey ? C.teal : "#fff", color: p.key === periodKey ? "#fff" : "#8a7c6a" }}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ background: `linear-gradient(140deg, ${C.navy}, ${C.teal})`, borderRadius: 20, padding: "22px 20px", marginBottom: 14 }}>
+        <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 30 }}>✨</div>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: "#fff" }}>{currentUser.name} — {period.label}</div>
+        </div>
+        {r.plays === 0 ? (
+          <p style={{ textAlign: "center", color: "rgba(255,255,255,.85)", fontSize: 14.5, margin: "0 0 6px" }}>
+            Aucune partie enregistrée sur cette période… la prochaine sera la bonne ! 🎲
+          </p>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(105px, 1fr))", gap: 9, marginBottom: 12 }}>
+              <RetroStat emoji="🎲" big={r.plays} label={r.plays > 1 ? "parties" : "partie"} />
+              <RetroStat emoji="🏆" big={r.wins} label={r.wins > 1 ? "victoires" : "victoire"} />
+              <RetroStat emoji="🧭" big={r.distinctGames} label={r.distinctGames > 1 ? "jeux différents" : "jeu"} />
+              {r.hours > 0 && <RetroStat emoji="⏱️" big={`${String(r.hours).replace(".", ",")} h`} label="de jeu" />}
+            </div>
+            {r.topGame && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.12)", borderRadius: 14, padding: "10px 13px", marginBottom: isYear ? 9 : 0 }}>
+                <div style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0, background: r.topGame.img ? `center/cover url("${r.topGame.img}")` : "rgba(255,255,255,.25)" }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11.5, color: "rgba(255,255,255,.75)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em" }}>{isYear ? "Jeu de l'année" : "Jeu du mois"}</div>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>{r.topGame.name} <span style={{ fontWeight: 400, fontSize: 13, color: "rgba(255,255,255,.8)" }}>· {r.topGame.count} partie{r.topGame.count > 1 ? "s" : ""}</span></div>
+                </div>
+              </div>
+            )}
+            {isYear && (
+              <div style={{ display: "grid", gap: 7 }}>
+                {r.topPartner && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,.12)", borderRadius: 12, padding: "9px 13px", color: "#fff", fontSize: 14 }}>
+                    🤝 <span>Partenaire de jeu favori : <b>{r.topPartner.name}</b> ({r.topPartner.count} partie{r.topPartner.count > 1 ? "s" : ""} ensemble)</span>
+                  </div>
+                )}
+                {r.discoveries > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,.12)", borderRadius: 12, padding: "9px 13px", color: "#fff", fontSize: 14 }}>
+                    💡 <span><b>{r.discoveries}</b> jeu{r.discoveries > 1 ? "x" : ""} découvert{r.discoveries > 1 ? "s" : ""} cette année</span>
+                  </div>
+                )}
+                {r.bestStreak >= 2 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,.12)", borderRadius: 12, padding: "9px 13px", color: "#fff", fontSize: 14 }}>
+                    🔥 <span>Meilleure série : <b>{r.bestStreak} victoires d'affilée</b></span>
+                  </div>
+                )}
+                {badgesEarned > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,.12)", borderRadius: 12, padding: "9px 13px", color: "#fff", fontSize: 14 }}>
+                    🎖️ <span><b>{badgesEarned}</b> badge{badgesEarned > 1 ? "s" : ""} à votre tableau de chasse</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <p style={{ fontSize: 12.5, color: "#9c8d79", margin: 0, textAlign: "center" }}>
+        Basée sur vos parties confirmées. La version du mois dernier arrive aussi par e-mail chaque début de mois (désactivable plus bas dans Mon espace).
+      </p>
+    </Modal>
+  );
+}
+
+// Bannière « Ma rétrospective » de Mon espace.
+function MyRetroSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ background: `linear-gradient(120deg, ${C.navy}, ${C.teal})`, borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 26 }}>🎁</span>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Ma rétrospective</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,.8)" }}>Votre bilan ludique du mois ou de l'année : parties, victoires, jeu fétiche…</div>
+        </div>
+        <Btn variant="amber" onClick={() => setOpen(true)}>Découvrir</Btn>
+      </div>
+      <RetroModal open={open} onClose={() => setOpen(false)} />
+    </div>
+  );
+}
+
+/* =============================================================================
    TOP 10 EVER — les 10 jeux qu'un membre garderait s'il n'y avait plus qu'eux.
    ============================================================================= */
 // Liste ordonnée d'un top 10 (couverture + rang), réutilisée dans Mon espace et
@@ -8336,9 +8512,10 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
@@ -8533,6 +8710,7 @@ function MyLudoPage({ setToast, setPage }) {
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Mon espace</h1>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Btn variant="ghost" onClick={() => setViewSelf(true)}><Eye size={17} /> Voir ma fiche</Btn>
           <Btn variant="ghost" onClick={exportExcel} disabled={mine.length === 0}><Download size={17} /> Export Excel</Btn>
           <Btn variant="amber" onClick={() => setShowAdd(true)}><Plus size={17} /> Ajouter un jeu</Btn>
         </div>
@@ -8575,6 +8753,7 @@ function MyLudoPage({ setToast, setPage }) {
       <EventPlaySuggestions />
       <MyPlaysSection setToast={setToast} />
       <MyBadgesSection setToast={setToast} />
+      <MyRetroSection />
       <AdminBackupSection />
 
       <FamilySection setToast={setToast} />
@@ -8595,6 +8774,21 @@ function MyLudoPage({ setToast, setPage }) {
           }}>{pushEnabled ? "Désactiver" : "Activer"}</Btn>
         </div>
       )}
+
+      {/* Rétrospective par e-mail */}
+      <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: "14px 20px", marginBottom: 22, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 230 }}>
+          <span style={{ fontSize: 22 }}>💌</span>
+          <div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy }}>Rétrospective par e-mail</div>
+            <div style={{ fontSize: 13, color: "#6e6256" }}>{currentUser.retroEmails ? "Chaque début de mois, votre bilan ludique arrive par e-mail (l'annuel en janvier)." : "Vous ne recevez pas les rétrospectives par e-mail."}</div>
+          </div>
+        </div>
+        <Btn size="sm" variant={currentUser.retroEmails ? "soft" : "amber"} onClick={async () => {
+          await setRetroEmails(!currentUser.retroEmails);
+          setToast(currentUser.retroEmails ? "Rétrospectives par e-mail désactivées." : "Rétrospectives par e-mail activées !");
+        }}>{currentUser.retroEmails ? "Désactiver" : "Activer"}</Btn>
+      </div>
 
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
@@ -8738,6 +8932,7 @@ function MyLudoPage({ setToast, setPage }) {
       )}
 
       <MyTop10Section setToast={setToast} onOpenGame={(id) => setSelected(id)} />
+      {viewSelf && currentUser && <MemberLibraryModal memberId={currentUser.id} onClose={() => setViewSelf(false)} />}
 
       <div style={{ margin: "34px 0 18px" }}>
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mes jeux</span>
