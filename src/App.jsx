@@ -624,7 +624,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -712,7 +712,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: p.role, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [] })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -864,7 +864,7 @@ function AppProvider({ children }) {
       const meta = authUser.user_metadata || {};
       const name = meta.full_name || meta.name || (authUser.email ? authUser.email.split("@")[0] : "Membre");
       const { data: created } = await supabase.from("profiles").insert({
-        id: authUser.id, name, role: "decideur", is_admin: false,
+        id: authUser.id, name, role: "membre", is_admin: false,
       }).select().single();
       data = created;
     }
@@ -875,7 +875,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -920,7 +920,7 @@ function AppProvider({ children }) {
   /* ---- Auth ---- */
   const register = useCallback(async ({ name, email, pwd, role }) => {
     const { data, error } = await supabase.auth.signUp({
-      email, password: pwd, options: { data: { name: name.trim(), role: role || "membre" } },
+      email, password: pwd, options: { data: { name: name.trim(), role: "membre" } },
     });
     if (error) return { error: error.message.includes("already") ? "Un compte existe déjà avec cet e-mail." : error.message };
     // si confirmation e-mail désactivée, on est connecté direct
@@ -994,12 +994,20 @@ function AppProvider({ children }) {
   }, [currentUser, loadData]);
 
   // Changer le statut décisionnaire d'un membre (admin uniquement).
-  const setMemberRole = useCallback(async (userId, role) => {
+  // Admin : accorder des jours de statut décisionnaire (s'ajoutent au restant).
+  const adminAddMembershipDays = useCallback(async (userId, days) => {
     if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
-    if (role !== "decideur" && role !== "membre") return { error: "Statut invalide." };
-    const { data, error } = await supabase.from("profiles").update({ role }).eq("id", userId).select("id");
+    const { error } = await supabase.rpc("admin_add_membership_days", { p_user_id: userId, p_days: days });
     if (error) return { error: error.message };
-    if (!data || data.length === 0) return { error: "Modification refusée (droits insuffisants)." };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Admin : retirer immédiatement le statut décisionnaire.
+  const adminRevokeMembership = useCallback(async (userId) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    const { error } = await supabase.rpc("admin_revoke_membership", { p_user_id: userId });
+    if (error) return { error: error.message };
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -1971,7 +1979,7 @@ function AppProvider({ children }) {
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, declareOwners, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
-    banUser, unbanUser, deleteUser, setMemberRole, memberEmails, bannedNotice, setBannedNotice,
+    banUser, unbanUser, deleteUser, adminAddMembershipDays, adminRevokeMembership, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
@@ -2749,7 +2757,7 @@ function AuthModal({ mode, onClose, setToast }) {
   const [tab, setTab] = useState(mode || "login");
   const [forgot, setForgot] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", pwd: "", pwd2: "", role: "decideur" });
+  const [form, setForm] = useState({ name: "", email: "", pwd: "", pwd2: "", role: "membre" });
   const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
@@ -2920,28 +2928,9 @@ function AuthModal({ mode, onClose, setToast }) {
       )}
 
       {tab === "register" && (
-        <Field label="Type d'adhésion" hint="Le statut peut être ajusté ensuite par le bureau.">
-          <div style={{ display: "grid", gap: 8 }}>
-            {[
-              { v: "decideur", t: "Membre décisionnaire", d: "Cotisation 20 €/an · voix délibérative en AG", icon: Crown },
-              { v: "membre", t: "Membre non décisionnaire", d: "Gratuit · accès aux moments jeux et à la ludothèque", icon: Heart },
-            ].map((o) => {
-              const Icon = o.icon; const active = form.role === o.v;
-              return (
-                <button key={o.v} onClick={() => setForm({ ...form, role: o.v })} style={{
-                  textAlign: "left", padding: "12px 14px", borderRadius: 13, cursor: "pointer", display: "flex", gap: 12, alignItems: "center",
-                  border: `2px solid ${active ? C.teal : "#e6dcc9"}`, background: active ? "rgba(30,138,138,.07)" : "#fff",
-                }}>
-                  <Icon size={20} color={active ? C.teal : "#b6a78f"} />
-                  <span>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>{o.t}</span>
-                    <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>{o.d}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </Field>
+        <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "0 0 14px", lineHeight: 1.5 }}>
+          Tout le monde s'inscrit comme <b>membre</b> (gratuit). Le statut de <b>membre décisionnaire</b> (cotisation 20 €/an, voix délibérative en AG) s'obtient ensuite depuis Mon espace.
+        </p>
       )}
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
@@ -3022,6 +3011,10 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google). Pensez ensuite à vous présenter à l'association — conversation Signal « Organisation jeux » ou e-mail.</p>
             <p style={{ margin: 0 }}>Mot de passe oublié ? Sur l'écran de connexion, cliquez sur <b style={{ color: C.teal }}>« Mot de passe oublié ? »</b> : vous recevrez un lien par e-mail pour en choisir un nouveau.</p>
           </>,
+        },
+        {
+          q: "Devenir membre décisionnaire",
+          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an, fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : paiement <b>en ligne</b> (CB, Apple Pay, Google Pay, PayPal) ou engagement à régler <b>en espèces</b> auprès du bureau — aucun autre moyen n'est accepté. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
         },
         {
           q: "Installer le site comme une application sur mon téléphone",
@@ -3604,7 +3597,7 @@ function HomePage({ setPage, onAuth }) {
 
 /* ---- Pop-up : liste des membres, couleur selon statut ---- */
 function MembersModal({ onClose, onPickMember }) {
-  const { users, currentUser, memberEmails, banUser, unbanUser, deleteUser, setMemberRole } = useApp();
+  const { users, currentUser, memberEmails, banUser, unbanUser, deleteUser, adminAddMembershipDays, adminRevokeMembership } = useApp();
   const isAdmin = currentUser && currentUser.admin;
   const [busyId, setBusyId] = useState(null);
   const [confirmBan, setConfirmBan] = useState(null); // id du membre en attente de confirmation de bannissement
@@ -3631,9 +3624,18 @@ function MembersModal({ onClose, onPickMember }) {
     setBusyId(null); setConfirmDelete(null);
     if (res?.error) alert(res.error);
   };
-  const doRole = async (id, role) => {
-    setBusyId(id);
-    const res = await setMemberRole(id, role);
+  // Accorde des jours de statut décisionnaire (ou retire le statut).
+  const doRole = async (m) => {
+    const left = m.decideurUntil ? Math.max(0, Math.ceil((new Date(m.decideurUntil) - new Date()) / 86400000)) : 0;
+    const input = window.prompt(
+      `${m.name} — statut décisionnaire : ${left > 0 ? `encore ${left} jour${left > 1 ? "s" : ""}` : "inactif"}.\n\nNombre de jours à AJOUTER (ex. 365), ou 0 pour retirer le statut :`,
+      "365"
+    );
+    if (input === null) return;
+    const days = parseInt(input, 10);
+    if (isNaN(days) || days < 0) { alert("Nombre invalide."); return; }
+    setBusyId(m.id);
+    const res = days === 0 ? await adminRevokeMembership(m.id) : await adminAddMembershipDays(m.id, days);
     setBusyId(null);
     if (res?.error) alert(res.error);
   };
@@ -3698,7 +3700,7 @@ function MembersModal({ onClose, onPickMember }) {
                   </span>
                 ) : (
                   <span style={{ display: "flex", gap: 5 }}>
-                    <Btn size="sm" variant={m.role === "decideur" ? "amber" : "soft"} onClick={() => doRole(m.id, m.role === "decideur" ? "membre" : "decideur")} disabled={busyId === m.id} title={m.role === "decideur" ? "Retirer le statut décisionnaire" : "Rendre décisionnaire"}>
+                    <Btn size="sm" variant={m.role === "decideur" ? "amber" : "soft"} onClick={() => doRole(m)} disabled={busyId === m.id} title="Gérer le statut décisionnaire (jours)">
                       {busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : <Crown size={13} />}
                     </Btn>
                     <Btn size="sm" variant="soft" onClick={() => setConfirmDelete(m.id)} title="Supprimer définitivement"><Trash2 size={13} /></Btn>
@@ -8022,6 +8024,166 @@ function AdminBackupSection() {
 }
 
 /* =============================================================================
+   COTISATION — statut de membre décisionnaire (365 jours, cumulables).
+   Paiement en ligne (Stripe : CB, Apple Pay, Google Pay, PayPal) ou
+   engagement à régler en espèces auprès du bureau. Aucun autre moyen accepté.
+   ============================================================================= */
+const COTISATION_EUR = 20;
+
+function membershipDaysLeft(user) {
+  if (!user?.decideurUntil) return 0;
+  return Math.max(0, Math.ceil((new Date(user.decideurUntil) - new Date()) / 86400000));
+}
+
+function MembershipModal({ onClose, setToast }) {
+  const { currentUser, reload } = useApp();
+  const [mode, setMode] = useState(null); // null | "cash"
+  const [cashOk, setCashOk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const daysLeft = membershipDaysLeft(currentUser);
+
+  const callApi = async (action) => {
+    setErr(""); setBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Session expirée — reconnectez-vous.");
+      const resp = await fetch("/api/membership", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action }),
+      });
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(out.error || "Le service de cotisation ne répond pas.");
+      return out;
+    } catch (e) {
+      setErr(e.message); setBusy(false);
+      return null;
+    }
+  };
+
+  const payOnline = async () => {
+    const out = await callApi("checkout");
+    if (out?.url) window.location.href = out.url; // redirection vers la page de paiement
+    else setBusy(false);
+  };
+
+  const commitCash = async () => {
+    const out = await callApi("cash");
+    setBusy(false);
+    if (out?.ok) {
+      setToast("Merci ! Votre statut de membre décisionnaire est actif — pensez au règlement en espèces auprès du bureau.");
+      onClose();
+      await reload();
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="👑 Cotisation — membre décisionnaire" width={540}>
+      <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: "0 0 6px" }}>
+        La cotisation de <b>{COTISATION_EUR} €</b> vous donne le statut de <b>membre décisionnaire</b> pour <b>365 jours</b> : voix délibérative en assemblée générale, pass Ludovore (Ludum.fr) offert pendant un an, et les fonctionnalités du site qui y seront réservées.
+      </p>
+      {daysLeft > 0 && (
+        <p style={{ fontSize: 13.5, color: C.teal, fontWeight: 700, margin: "0 0 6px" }}>
+          Il vous reste {daysLeft} jour{daysLeft > 1 ? "s" : ""} de statut : les 365 nouveaux jours <u>s'ajouteront</u> (total : {daysLeft + 365} jours).
+        </p>
+      )}
+      <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "0 0 16px" }}>
+        Seuls deux moyens de paiement sont acceptés : <b>en ligne</b> ou <b>en espèces</b> auprès d'un membre du bureau. Chèques et virements sont refusés.
+      </p>
+
+      {!mode && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <button onClick={payOnline} disabled={busy}
+            style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: `2px solid ${C.teal}`, background: "rgba(30,138,138,.06)" }}>
+            <span style={{ fontSize: 24 }}>💳</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Payer en ligne — {COTISATION_EUR} €</span>
+              <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>Carte bancaire, Apple Pay, Google Pay ou PayPal. Statut activé immédiatement.</span>
+            </span>
+            {busy && <Loader2 size={17} className="aladj-spin" color={C.teal} />}
+          </button>
+          <button onClick={() => setMode("cash")} disabled={busy}
+            style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: "2px solid #e6dcc9", background: "#fff" }}>
+            <span style={{ fontSize: 24 }}>💶</span>
+            <span>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Régler en espèces</span>
+              <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>Je m'engage à remettre {COTISATION_EUR} € en espèces à un membre du bureau.</span>
+            </span>
+          </button>
+        </div>
+      )}
+
+      {mode === "cash" && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: "1.5px solid #eedbA8", borderRadius: 14, padding: "15px 17px" }}>
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 13.5, color: "#5e5346", lineHeight: 1.55 }}>
+            <input type="checkbox" checked={cashOk} onChange={(e) => setCashOk(e.target.checked)} style={{ marginTop: 3 }} />
+            <span>Je m'engage à régler ma cotisation de <b>{COTISATION_EUR} € en espèces</b> auprès d'un membre du bureau dans les meilleurs délais. Je comprends que mon statut est activé dès maintenant sur cet engagement, et que le bureau en est informé par e-mail.</span>
+          </label>
+          <div style={{ display: "flex", gap: 8, marginTop: 13 }}>
+            <Btn variant="amber" disabled={!cashOk || busy} onClick={commitCash}>
+              {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> Je m'engage — activer mon statut</>}
+            </Btn>
+            <Btn variant="soft" disabled={busy} onClick={() => { setMode(null); setCashOk(false); }}>Retour</Btn>
+          </div>
+        </div>
+      )}
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginTop: 14 }}>{err}</div>}
+    </Modal>
+  );
+}
+
+// Bandeau en haut de Mon espace : devenir décisionnaire / statut actif / expiration proche.
+function MembershipBanner({ setToast }) {
+  const { currentUser } = useApp();
+  const [open, setOpen] = useState(false);
+  if (!currentUser) return null;
+  const daysLeft = membershipDaysLeft(currentUser);
+  const expiring = daysLeft > 0 && daysLeft <= 15;
+  let bg, content;
+  if (daysLeft === 0) {
+    bg = `linear-gradient(120deg, ${C.amber}, #c97f10)`;
+    content = <>
+      <span style={{ fontSize: 24 }}>👑</span>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Devenir membre décisionnaire</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Cotisation {COTISATION_EUR} €/an — voix en AG, pass Ludum offert, et plus encore.</div>
+      </div>
+      <Btn variant="ghost" onClick={() => setOpen(true)} style={{ background: "#fff" }}>Adhérer</Btn>
+    </>;
+  } else if (expiring) {
+    bg = `linear-gradient(120deg, ${C.red}, #8f1f2e)`;
+    content = <>
+      <span style={{ fontSize: 24 }}>⏳</span>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Votre statut de membre décisionnaire se termine dans {daysLeft} jour{daysLeft > 1 ? "s" : ""} !</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Réinscrivez-vous pour 365 jours — ils <b>s'ajouteront</b> à vos {daysLeft} jour{daysLeft > 1 ? "s" : ""} restants.</div>
+      </div>
+      <Btn variant="amber" onClick={() => setOpen(true)}>Renouveler</Btn>
+    </>;
+  } else {
+    bg = `linear-gradient(120deg, ${C.teal}, ${C.navy})`;
+    content = <>
+      <span style={{ fontSize: 24 }}>👑</span>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Vous êtes membre décisionnaire pendant encore {daysLeft} jours</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,.85)" }}>Merci pour votre soutien ! Un renouvellement ajoutera 365 jours à ce total.</div>
+      </div>
+      <Btn variant="ghost" onClick={() => setOpen(true)} style={{ background: "rgba(255,255,255,.15)", color: "#fff" }}>Prolonger</Btn>
+    </>;
+  }
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ background: bg, borderRadius: 16, padding: "15px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        {content}
+      </div>
+      {open && <MembershipModal onClose={() => setOpen(false)} setToast={setToast} />}
+    </div>
+  );
+}
+
+/* =============================================================================
    RÉTROSPECTIVE — le bilan ludique d'un membre sur une période (mois ou année),
    calculé en direct à partir des parties confirmées.
    ============================================================================= */
@@ -8704,6 +8866,7 @@ function MyLudoPage({ setToast, setPage }) {
 
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <MembershipBanner setToast={setToast} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 26 }}>
         <div>
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Espace membre</span>
@@ -9185,6 +9348,20 @@ function ResetPasswordModal() {
    ============================================================================= */
 function Shell() {
   const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono, markMomentsSeen, passwordRecovery } = useApp();
+  // Retour du paiement en ligne : message + nettoyage de l'URL.
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const c = q.get("cotisation");
+      if (!c) return;
+      setToast(c === "ok"
+        ? "Merci ! Votre cotisation est réglée — votre statut de membre décisionnaire est actif. Un e-mail de bienvenue arrive."
+        : "Paiement annulé — vous pouvez réessayer quand vous voulez depuis Mon espace.");
+      q.delete("cotisation");
+      window.history.replaceState({}, "", window.location.pathname + (q.toString() ? "?" + q.toString() : ""));
+    } catch (e) {}
+  }, []); // eslint-disable-line
+
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
