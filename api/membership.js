@@ -40,12 +40,12 @@ export function thankYouEmailHtml(name, untilDateFr, viaCash) {
       <p style="font-size:14px;line-height:1.6;margin:0 0 6px;"><b>Tes avantages :</b></p>
       <ul style="font-size:14px;line-height:1.7;margin:0 0 14px;padding-left:20px;">
         <li>Voix délibérative aux assemblées générales de l'association</li>
-        <li>Le <b>pass Ludovore de Ludum.fr offert pendant un an</b> (voir ci-dessous)</li>
+        <li>Le <b>pass Ludovore de Ludum.fr offert pendant un an</b> — une valeur de <b>29,99&nbsp;€</b> (voir ci-dessous)</li>
         <li>Les fonctionnalités du site réservées aux décisionnaires, au fil de leur arrivée</li>
         <li>La couronne dorée à côté de ton nom sur le site 👑</li>
       </ul>
       <div style="background:rgba(255,255,255,.13);border-radius:10px;padding:12px 14px;font-size:13.5px;line-height:1.7;">
-        🎟️ <b>Ton pass Ludovore offert (1 an)</b> — pour l'obtenir :<br>
+        🎟️ <b>Ton pass Ludovore offert (1 an, valeur 29,99&nbsp;€)</b> — pour l'obtenir :<br>
         1. Crée ton compte (ou connecte-toi) sur <b>Ludum.fr</b><br>
         2. Ajoute le <b>pass Ludovore 365 jours</b> à ton panier<br>
         3. Au moment du paiement, entre le code de l'association dans la zone « votre code promo » :
