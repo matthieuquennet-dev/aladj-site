@@ -624,7 +624,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -712,7 +712,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [] })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -875,7 +875,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1292,6 +1292,9 @@ function AppProvider({ children }) {
     if (patch.favColors !== undefined) fields.fav_colors = (patch.favColors || []).slice(0, 3);
     if (patch.featuredBadges !== undefined) fields.featured_badges = (patch.featuredBadges || []).slice(0, 3);
     if (patch.topGames !== undefined) fields.top_games = (patch.topGames || []).slice(0, 10);
+    if (patch.birthDay !== undefined) fields.birth_day = patch.birthDay ? Number(patch.birthDay) : null;
+    if (patch.birthMonth !== undefined) fields.birth_month = patch.birthMonth ? Number(patch.birthMonth) : null;
+    if (patch.birthYear !== undefined) fields.birth_year = patch.birthYear ? Number(patch.birthYear) : null;
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
@@ -2657,6 +2660,9 @@ function ProfileEditModal({ onClose }) {
     bio: currentUser?.bio || "", bggUrl: currentUser?.bggUrl || "", okkazeoUrl: currentUser?.okkazeoUrl || "",
     favMechanics: currentUser?.favMechanics || [],
     favColors: currentUser?.favColors || [],
+    birthDay: currentUser?.birthDay || "",
+    birthMonth: currentUser?.birthMonth || "",
+    birthYear: currentUser?.birthYear || "",
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -2677,6 +2683,7 @@ function ProfileEditModal({ onClose }) {
   const save = async () => {
     setErr("");
     if (!f.name.trim()) { setErr("Le nom ne peut pas être vide."); return; }
+    if ((f.birthDay && !f.birthMonth) || (!f.birthDay && f.birthMonth)) { setErr("Pour l'anniversaire, indiquez le jour ET le mois (ou aucun des deux)."); return; }
     setBusy(true);
     const res = await updateProfile(f);
     setBusy(false);
@@ -2699,6 +2706,19 @@ function ProfileEditModal({ onClose }) {
 
       <Field label="Nom affiché"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <Field label="Ville"><TextInput value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} placeholder="Ex. Gouville-sur-Mer" /></Field>
+      <Field label="Anniversaire" hint="Jour et mois suffisent — l'année est facultative. Votre anniversaire apparaîtra 🎂 dans le calendrier des moments jeux.">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 8 }}>
+          <select value={f.birthDay} onChange={(e) => setF({ ...f, birthDay: e.target.value })} style={{ padding: "10px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy }}>
+            <option value="">Jour —</option>
+            {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+          </select>
+          <select value={f.birthMonth} onChange={(e) => setF({ ...f, birthMonth: e.target.value })} style={{ padding: "10px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy }}>
+            <option value="">Mois —</option>
+            {["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"].map((mo, i) => <option key={i + 1} value={i + 1}>{mo}</option>)}
+          </select>
+          <TextInput type="number" value={f.birthYear} onChange={(e) => setF({ ...f, birthYear: e.target.value })} placeholder="Année (facult.)" />
+        </div>
+      </Field>
 
       <Field label={`Présentation (${f.bio.length}/500)`} hint="Quelques mots sur vous, vos goûts de jeu...">
         <textarea value={f.bio} onChange={(e) => setF({ ...f, bio: e.target.value.slice(0, 500) })} rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="Joueur passionné depuis..." />
@@ -3001,7 +3021,37 @@ function MockBtn({ color = C.teal, children, soft }) {
 }
 
 function GuidePage() {
+  const histo = [
+    { year: "2010", title: "La naissance", text: <>L'association <b>« À l'assaut des jeux ! »</b> est fondée à Coutances par <b>Fabien Delisle</b>, <b>Julie Klatka</b> et <b>Martin Hamel</b>, trois passionnés bien décidés à partager le virus du jeu de société.</> },
+    { year: "2010-2013", title: "Les premières années", text: <>Un vendredi soir par mois au bar coutançais <b>l'Oreille cassée</b>, et un dimanche par mois aux <b>Unelles</b> (l'après-midi et en soirée), où la ludothèque de l'association est entreposée. En 2012, un certain <b>Matthieu Quennet</b> — aujourd'hui président — rejoint l'aventure. En 2013, les soirées au bar s'arrêtent : cap sur les Unelles.</> },
+    { year: "2014", title: "La presse en parle", text: <>La presse locale consacre un article à l'association : « Quand le virus du jeu empêche de vieillir ». On y découvre une vingtaine d'adhérents, des dimanches qui filent « de 14 h 30 jusqu'à minuit… et parfois même après », et une présence remarquée au <b>Festival du jeu et du jouet</b> de Coutances.</> },
+    { year: "Au fil des ans", title: "Au-delà des plateaux", text: <>L'association, c'est aussi des sorties entre membres, hors des tables de jeux : <b>paintball</b>, <b>acrobranche</b>, <b>bowling</b>… parce que le jeu est avant tout une histoire de bande.</> },
+    { year: "2020", title: "Pause forcée", text: <>Les contraintes du Covid mettent l'association en sommeil. Les boîtes de jeux prennent la poussière — mais l'envie, elle, ne s'éteint pas.</> },
+    { year: "2022", title: "La renaissance", text: <>L'ALADJ reprend du service dans un <b>nouveau local à Gouville-sur-Mer</b>. Les moments jeux s'organisent alors via l'application Signal.</> },
+    { year: "2026", title: "Une nouvelle ère", text: <>Le site <b>aladj.fr</b> est entièrement refait : les moments jeux s'y organisent, la ludothèque s'y explore, et l'association s'ouvre à plus de monde. Le bureau actuel : <b>Matthieu Quennet</b> (président), <b>Fabien Delisle</b> (trésorier et cofondateur) et <b>Nicolas Richard</b> (secrétaire).</> },
+  ];
+
   const sections = [
+    {
+      icon: "📜", title: "L'histoire de l'association",
+      custom: (
+        <div style={{ position: "relative", paddingLeft: 26 }}>
+          <div style={{ position: "absolute", left: 9, top: 6, bottom: 6, width: 3, borderRadius: 3, background: "linear-gradient(180deg, #1E8A8A, #E8A317)" }} />
+          {histo.map((h, i) => (
+            <div key={i} style={{ position: "relative", marginBottom: i === histo.length - 1 ? 0 : 18 }}>
+              <span style={{ position: "absolute", left: -26, top: 4, width: 19, height: 19, borderRadius: "50%", background: C.paper, border: `4px solid ${i === histo.length - 1 ? C.amber : C.teal}` }} />
+              <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 14, padding: "13px 16px" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, color: "#fff", background: C.navy, borderRadius: 999, padding: "2px 11px" }}>{h.year}</span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15.5, color: C.navy }}>{h.title}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 14, color: "#5e5346", lineHeight: 1.65 }}>{h.text}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
     {
       icon: "🚀", title: "Premiers pas",
       items: [
@@ -3014,7 +3064,7 @@ function GuidePage() {
         },
         {
           q: "Devenir membre décisionnaire",
-          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an, fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : paiement <b>en ligne</b> (CB, Apple Pay, Google Pay, PayPal) ou engagement à régler <b>en espèces</b> auprès du bureau — aucun autre moyen n'est accepté. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
+          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an, fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
         },
         {
           q: "Installer le site comme une application sur mon téléphone",
@@ -3033,7 +3083,7 @@ function GuidePage() {
         {
           q: "Compléter mon profil (et mes couleurs de jeu préférées)",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Menu → <b>Mon profil</b> : photo, ville, présentation, mécaniques préférées… et vos <b>couleurs de jeu préférées</b> : cliquez-en jusqu'à 3, dans l'ordre de préférence.</p>
+            <p style={{ margin: "0 0 8px" }}>Menu → <b>Mon profil</b> : photo, ville, présentation, mécaniques préférées, votre <b>anniversaire</b> (jour et mois suffisent, l'année est facultative — il apparaîtra 🎂 dans le calendrier des moments) et vos <b>couleurs de jeu préférées</b> : cliquez-en jusqu'à 3, dans l'ordre de préférence.</p>
             <Illu caption="Vos couleurs apparaissent à côté de votre nom dans les moments jeux — fini les négociations pour le pion rouge.">
               <span style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                 <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>L</span>
@@ -3108,7 +3158,7 @@ function GuidePage() {
                 <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
               </span>
             </Illu>
-            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un.</p>
+            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un. Un 🎂 signale l'anniversaire d'un membre — et la fiche d'un moment ce jour-là le rappelle fièrement.</p>
           </>,
         },
         {
@@ -3249,9 +3299,11 @@ function GuidePage() {
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 9 }}>
             <span style={{ fontSize: 23 }}>{sec.icon}</span> {sec.title}
           </h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            {sec.items.map((it) => <FaqItem key={it.q} q={it.q}>{it.a}</FaqItem>)}
-          </div>
+          {sec.custom ? sec.custom : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {sec.items.map((it) => <FaqItem key={it.q} q={it.q}>{it.a}</FaqItem>)}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -3990,7 +4042,7 @@ function CalendarSubscribeModal({ onClose, setToast }) {
 }
 
 function EventsPage({ onAuth, setToast }) {
-  const { events, currentUser, addEvent, toggleJoin, removeEvent } = useApp();
+  const { events, currentUser, users, addEvent, toggleJoin, removeEvent } = useApp();
   const [showCreate, setShowCreate] = useState(false);
   const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
   const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
@@ -4067,6 +4119,13 @@ function EventsPage({ onAuth, setToast }) {
                 cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", overflow: "hidden", opacity: isPast && !hasEv ? 0.5 : 1,
               }}>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy }}>{cell.d}</span>
+                {(() => {
+                  const bd = birthdayMembersOn(cell.iso, users);
+                  return bd.length > 0 ? (
+                    <span title={`Anniversaire de ${bd.map((u) => u.name).join(", ")} 🎉`}
+                      style={{ position: "absolute", top: 2, right: 4, fontSize: 11, lineHeight: 1 }}>🎂</span>
+                  ) : null;
+                })()}
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
                   const pillBg = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
@@ -4371,6 +4430,17 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}><X size={18} /></button>
           <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
+          {(() => {
+            const bd = birthdayMembersOn(e.date, users);
+            if (!bd.length) return null;
+            const names = bd.map((u) => u.name);
+            const list = names.length > 1 ? names.slice(0, -1).join(", ") + " et " + names[names.length - 1] : names[0];
+            return (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "rgba(255,255,255,.2)", borderRadius: 999, padding: "4px 13px", fontSize: 13.5, fontWeight: 700, marginBottom: 6 }}>
+                🎂 Ce jour-là, on fête l'anniversaire de {list} !
+              </div>
+            );
+          })()}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", opacity: .95, fontSize: 14.5 }}>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}><Clock size={16} /> {e.time}</span>
             {e.online ? (
@@ -8029,6 +8099,15 @@ function AdminBackupSection() {
    engagement à régler en espèces auprès du bureau. Aucun autre moyen accepté.
    ============================================================================= */
 const COTISATION_EUR = 20;
+// Paiement en ligne : mettre à true quand le compte Stripe de l'association sera actif.
+const ONLINE_PAYMENT_ENABLED = false;
+
+// Membres dont l'anniversaire tombe à la date donnée (AAAA-MM-JJ).
+function birthdayMembersOn(dateIso, users) {
+  if (!dateIso) return [];
+  const m = Number(dateIso.slice(5, 7)), d = Number(dateIso.slice(8, 10));
+  return (users || []).filter((u) => !u.banned && u.birthMonth === m && u.birthDay === d);
+}
 
 function membershipDaysLeft(user) {
   if (!user?.decideurUntil) return 0;
@@ -8089,12 +8168,14 @@ function MembershipModal({ onClose, setToast }) {
         </p>
       )}
       <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "0 0 16px" }}>
-        Seuls deux moyens de paiement sont acceptés : <b>en ligne</b> ou <b>en espèces</b> auprès d'un membre du bureau. Chèques et virements sont refusés.
+        {ONLINE_PAYMENT_ENABLED
+          ? <>Seuls deux moyens de paiement sont acceptés : <b>en ligne</b> ou <b>en espèces</b> auprès d'un membre du bureau. Chèques et virements sont refusés.</>
+          : <>Pour le moment, la cotisation se règle <b>en espèces</b> auprès d'un membre du bureau (le paiement en ligne arrive prochainement). Chèques et virements sont refusés.</>}
       </p>
 
       {!mode && (
         <div style={{ display: "grid", gap: 10 }}>
-          <button onClick={payOnline} disabled={busy}
+          {ONLINE_PAYMENT_ENABLED && <button onClick={payOnline} disabled={busy}
             style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: `2px solid ${C.teal}`, background: "rgba(30,138,138,.06)" }}>
             <span style={{ fontSize: 24 }}>💳</span>
             <span style={{ flex: 1 }}>
@@ -8102,7 +8183,7 @@ function MembershipModal({ onClose, setToast }) {
               <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>Carte bancaire, Apple Pay, Google Pay ou PayPal. Statut activé immédiatement.</span>
             </span>
             {busy && <Loader2 size={17} className="aladj-spin" color={C.teal} />}
-          </button>
+          </button>}
           <button onClick={() => setMode("cash")} disabled={busy}
             style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: "2px solid #e6dcc9", background: "#fff" }}>
             <span style={{ fontSize: 24 }}>💶</span>
