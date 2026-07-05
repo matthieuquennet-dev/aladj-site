@@ -3065,7 +3065,7 @@ function GuidePage() {
         },
         {
           q: "Devenir membre décisionnaire",
-          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an, fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
+          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an (valeur 29,99 €), fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
         },
         {
           q: "Installer le site comme une application sur mon téléphone",
@@ -3478,7 +3478,7 @@ function HomePage({ setPage, onAuth }) {
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Ticket size={15} color={C.amber} /></span>
-                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Pass Ludovore annuel</b> grâce à notre partenariat avec Ludum.</span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Pass Ludovore annuel</b> (valeur 29,99 €) grâce à notre partenariat avec Ludum.</span>
               </div>
             </div>
             {!currentUser && <Btn full variant="amber" size="md" style={{ marginTop: 18 }} onClick={() => onAuth("register")}><UserPlus size={15} /> Adhérer</Btn>}
@@ -3524,7 +3524,7 @@ function HomePage({ setPage, onAuth }) {
                 Pour soutenir l'association, pensez à acheter vos jeux chez <b style={{ color: "#fff" }}>Ludum</b> via notre lien partenaire. Une partie de votre achat revient à l'ALADJ, sans aucun surcoût pour vous.
               </p>
               <p style={{ color: "rgba(255,255,255,.6)", fontSize: 13.5, lineHeight: 1.55, margin: 0 }}>
-                <Ticket size={13} style={{ verticalAlign: "-2px" }} /> Les membres cotisants profitent en plus du <b style={{ color: C.amber }}>pass Ludovore annuel</b>.
+                <Ticket size={13} style={{ verticalAlign: "-2px" }} /> Les membres cotisants profitent en plus du <b style={{ color: C.amber }}>pass Ludovore annuel</b> (valeur 29,99 €).
               </p>
             </div>
             <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
@@ -8161,7 +8161,7 @@ function MembershipModal({ onClose, setToast }) {
   return (
     <Modal open onClose={onClose} title="👑 Cotisation — membre décisionnaire" width={540}>
       <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: "0 0 6px" }}>
-        La cotisation de <b>{COTISATION_EUR} €</b> vous donne le statut de <b>membre décisionnaire</b> pour <b>365 jours</b> : voix délibérative en assemblée générale, pass Ludovore (Ludum.fr) offert pendant un an, et les fonctionnalités du site qui y seront réservées.
+        La cotisation de <b>{COTISATION_EUR} €</b> vous donne le statut de <b>membre décisionnaire</b> pour <b>365 jours</b> : voix délibérative en assemblée générale, pass Ludovore (Ludum.fr) offert pendant un an <b style={{ color: C.amber }}>(valeur 29,99 €)</b>, et les fonctionnalités du site qui y seront réservées.
       </p>
       {daysLeft > 0 && (
         <p style={{ fontSize: 13.5, color: C.teal, fontWeight: 700, margin: "0 0 6px" }}>
@@ -8230,7 +8230,7 @@ function MembershipBanner({ setToast }) {
       <span style={{ fontSize: 24 }}>👑</span>
       <div style={{ flex: 1, minWidth: 220 }}>
         <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Devenir membre décisionnaire</div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Cotisation {COTISATION_EUR} €/an — voix en AG, pass Ludum offert, et plus encore.</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Cotisation {COTISATION_EUR} €/an — voix en AG, pass Ludovore offert (valeur 29,99 €), et plus encore.</div>
       </div>
       <Btn variant="ghost" onClick={() => setOpen(true)} style={{ background: "#fff" }}>Adhérer</Btn>
     </>;
