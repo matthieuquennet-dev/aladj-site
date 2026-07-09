@@ -2024,6 +2024,16 @@ function isEventVisible(e) {
   return totalPlayers >= e.min; // après la limite : visible seulement si quorum atteint
 }
 
+// Un moment est « annulé » quand sa date limite de validation est passée
+// sans que le quorum (min joueurs) ne soit atteint. Prolonger le délai
+// (créateur ou admin) le réactive automatiquement.
+function isEventExpired(e) {
+  if (!e?.deadline) return false;
+  if (Date.now() < new Date(e.deadline).getTime()) return false;
+  const total = (e.players?.length || 0) + (e.guests?.length || 0);
+  return total < e.min;
+}
+
 // Moteur de recommandations : propose des jeux non notés par l'utilisateur,
 // en combinant (a) les goûts des membres aux profils proches, (b) les mécaniques qu'il aime.
 function recommendGames(games, currentUserId, dismissedIds = []) {
@@ -3148,7 +3158,7 @@ function GuidePage() {
           q: "Proposer un moment et comprendre le quorum",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Page <b>Moments jeux</b> → « Proposer un moment jeux » (ou cliquez directement un jour libre du calendrier). Choisissez présentiel ou <b>en ligne sur Board Game Arena</b> — les jeux BGA sont gratuits pour tous grâce au compte premium de l'association.</p>
-            <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous.</p>
+            <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
           </>,
         },
         {
@@ -3156,7 +3166,7 @@ function GuidePage() {
           a: <>
             <Illu caption="La légende du calendrier — et le jour actuel, entouré de bleu nuit.">
               <span style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "center" }}>
-                <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
+                <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color={C.navy} label="Aujourd'hui" outline />
               </span>
             </Illu>
             <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un. Un 🎂 signale l'anniversaire d'un membre — et la fiche d'un moment ce jour-là le rappelle fièrement.</p>
@@ -3643,7 +3653,7 @@ function HomePage({ setPage, onAuth }) {
       </section>
 
       {showMembers && <MembersModal onClose={() => setShowMembers(false)} onPickMember={(id) => { setShowMembers(false); setViewMemberId(id); }} />}
-      {viewMemberId && <MemberLibraryModal memberId={viewMemberId} onClose={() => setViewMemberId(null)} />}
+      {viewMemberId && <MemberLibraryModal memberId={viewMemberId} onClose={() => setViewMemberId(null)} onAuth={onAuth} />}
     </div>
   );
 }
@@ -3774,7 +3784,8 @@ function MembersModal({ onClose, onPickMember }) {
 }
 
 /* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
-function MemberLibraryModal({ memberId, onClose }) {
+function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = () => {} }) {
+  const [gameOpen, setGameOpen] = useState(null); // fiche jeu ouverte depuis le top 10
   const { games, users, plays, events, upcoming, beltByGame, householdByUser } = useApp();
   const member = users.find((u) => u.id === memberId);
   // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
@@ -3862,7 +3873,11 @@ function MemberLibraryModal({ memberId, onClose }) {
           <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
             💎 Son top 10 ever <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux qu'il garderait s'il ne restait qu'eux</span>
           </h4>
-          <div style={{ marginBottom: 18 }}><Top10List ids={theirTop} /></div>
+          <div style={{ marginBottom: 18 }}><Top10List ids={theirTop} onOpenGame={setGameOpen} /></div>
+          {gameOpen && (() => {
+            const gg = games.find((g) => g.id === gameOpen);
+            return gg ? <GameDetailModal g={gg} onClose={() => setGameOpen(null)} onAuth={onAuth} setToast={setToast} /> : null;
+          })()}
         </>
       )}
 
@@ -4054,7 +4069,8 @@ function EventsPage({ onAuth, setToast }) {
 
   const sorted = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    // Les moments annulés (quorum non atteint) restent visibles, en noir.
+    return [...events].filter((e) => e.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   }, [events]);
 
   const selectedEvent = events.find((e) => e.id === selected);
@@ -4129,7 +4145,7 @@ function EventsPage({ onAuth, setToast }) {
                 })()}
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
-                  const pillBg = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
+                  const pillBg = isEventExpired(e) ? "#2B2B2B" : (e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red));
                   return <span key={e.id} style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: pillBg, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.time}</span>;
                 })}
                 {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
@@ -4138,7 +4154,7 @@ function EventsPage({ onAuth, setToast }) {
           })}
         </div>
         <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color={C.navy} label="Aujourd'hui" outline />
+          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color={C.navy} label="Aujourd'hui" outline />
           <button onClick={() => setCalSub(true)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, padding: "2px 4px" }}>
             <CalendarPlus size={15} /> S'abonner au calendrier
           </button>
@@ -4332,9 +4348,10 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
         </button>
       </div>
       {f.online ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
-          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).
-        </div>
+        <a href={SIGNAL_GROUPS.find((g) => g.name === "Jeux en ligne")?.url} target="_blank" rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14, textDecoration: "none", border: `1.5px solid ${C.purple}33`, cursor: "pointer" }}>
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> <span>Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée <b style={{ color: C.purple }}>(cliquez sur ce bandeau pour la rejoindre)</b>. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).</span>
+        </a>
       ) : (
         <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
       )}
@@ -4397,6 +4414,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
   const [showPlace, setShowPlace] = useState(false);
   const totalCount = e.players.length + (e.guests?.length || 0);
   const reached = totalCount >= e.min;
+  const expired = isEventExpired(e);
   const full = e.max ? totalCount >= e.max : false;
   const isIn = currentUser && e.players.some((p) => p.id === currentUser.id);
   const isParticipant = currentUser && (isIn || e.hostId === currentUser.id);
@@ -4411,8 +4429,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
   const deadlineStr = e.deadline ? new Date(e.deadline) : null;
   const deadlinePassed = deadlineStr && Date.now() > deadlineStr.getTime();
-  const overlayBg = e.online ? (reached ? "rgba(74,40,86,.92)" : "rgba(176,125,16,.92)") : (reached ? "rgba(19,97,95,.92)" : "rgba(138,31,45,.92)");
-  const headerGrad = e.online ? (reached ? `linear-gradient(135deg,${C.purple},#4a2856)` : `linear-gradient(135deg,${C.amber},#b07d10)`) : (reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`);
+  const overlayBg = expired ? "rgba(22,22,22,.94)" : e.online ? (reached ? "rgba(74,40,86,.92)" : "rgba(176,125,16,.92)") : (reached ? "rgba(19,97,95,.92)" : "rgba(138,31,45,.92)");
+  const headerGrad = expired ? "linear-gradient(135deg,#3a3a3a,#141414)" : e.online ? (reached ? `linear-gradient(135deg,${C.purple},#4a2856)` : `linear-gradient(135deg,${C.amber},#b07d10)`) : (reached ? `linear-gradient(135deg,${C.teal},#13615f)` : `linear-gradient(135deg,${C.red},#8a1f2d)`);
 
   const submitComment = async () => {
     if (!commentText.trim()) return;
@@ -4429,7 +4447,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}><X size={18} /></button>
-          <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
+          <Badge color="#fff" soft={false}>{expired ? "⛔ Annulé — quorum non atteint" : reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           {(() => {
             const bd = birthdayMembersOn(e.date, users);
@@ -4464,7 +4482,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               style={{ display: "flex", alignItems: "center", gap: 11, textDecoration: "none", background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "13px 15px", marginBottom: 16 }}>
               <Globe size={22} color={C.purple} style={{ flexShrink: 0 }} />
               <span style={{ fontSize: 13.5, lineHeight: 1.45, color: C.navy }}>
-                Partie <b>en ligne sur Board Game Arena</b>. Rendez-vous sur la conversation Signal <b>«&nbsp;Jeux en ligne&nbsp;»</b> à {e.time}.
+                Partie <b>en ligne sur Board Game Arena</b>. Rendez-vous sur la conversation Signal <b>«&nbsp;Jeux en ligne&nbsp;»</b> à {e.time} — <b style={{ color: "#e9d8f2" }}>cliquez ici pour la rejoindre</b>.
               </span>
             </a>
           )}
@@ -4472,7 +4490,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           {deadlineStr && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: reached ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: reached ? C.teal : "#9a7b2a", fontWeight: 600 }}>
               <Clock size={15} />
-              {reached ? "Quorum atteint, le moment jeux est maintenu." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
+              {expired ? "Le quorum n'a pas été atteint avant la fin du délai de validation : ce moment est annulé. Son créateur ou un admin peut prolonger le délai pour le réactiver." : reached ? "Quorum atteint, le moment jeux est maintenu." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
             </div>
           )}
 
@@ -4519,7 +4537,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
           {/* ajouter un invité (participants + créateur) */}
           {isParticipant && (
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 18, display: expired ? "none" : "block" }}>
               {!showGuest ? (
                 <Btn size="sm" variant="soft" onClick={() => setShowGuest(true)}><UserPlus size={15} /> Ajouter un invité</Btn>
               ) : (
@@ -4532,7 +4550,12 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
           <div style={{ fontSize: 13, color: "#9c8d79", marginBottom: 16 }}>Proposée par <b style={{ color: C.navy }}>{e.hostName}</b></div>
 
-          {currentUser ? (
+          {currentUser && expired && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
+              {canManage && <Btn full size="lg" variant="soft" onClick={() => setShowEdit(true)}><Edit3 size={17} /> Modifier le moment (prolonger le délai)</Btn>}
+            </div>
+          )}
+          {currentUser && !expired ? (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
               <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={!isIn && full} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
                 {isIn ? <><X size={17} /> Me retirer</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
@@ -4544,14 +4567,14 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }} style={{ marginBottom: 22 }}><LogIn size={18} /> Se connecter pour participer</Btn>
           )}
 
-          {currentUser && (
+          {currentUser && !expired && (
             <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
               <Clock size={17} /> Lancer le chrono de la partie
             </Btn>
           )}
 
           {/* JEUX JOUÉS */}
-          <EventPlayedGames e={e} isParticipant={!!isParticipant} canManage={!!canManage} />
+          <EventPlayedGames e={e} isParticipant={!expired && !!isParticipant} canManage={!expired && !!canManage} />
 
           {/* COMMENTAIRES */}
           <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18 }}>
@@ -4587,7 +4610,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                 );
               })}
             </div>
-            {currentUser ? (
+            {currentUser && !expired ? (
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                 <textarea value={commentText} onChange={(ev) => setCommentText(ev.target.value)} rows={1} placeholder="Écrire un commentaire..." style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
                 <Btn variant="teal" onClick={submitComment} disabled={busy || !commentText.trim()}>{busy ? <Loader2 size={16} className="aladj-spin" /> : "Envoyer"}</Btn>
@@ -4761,9 +4784,10 @@ function EditEventModal({ e, onClose, onSave }) {
         </button>
       </div>
       {f.online ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14 }}>
-          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).
-        </div>
+        <a href={SIGNAL_GROUPS.find((g) => g.name === "Jeux en ligne")?.url} target="_blank" rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.08)", color: C.navy, fontSize: 13.5, lineHeight: 1.45, marginBottom: 14, textDecoration: "none", border: `1.5px solid ${C.purple}33`, cursor: "pointer" }}>
+          <Globe size={18} color={C.purple} style={{ flexShrink: 0 }} /> <span>Sur <b>&nbsp;Board Game Arena&nbsp;</b> — rendez-vous sur la conversation Signal «&nbsp;Jeux en ligne&nbsp;» à l'heure indiquée <b style={{ color: C.purple }}>(cliquez sur ce bandeau pour la rejoindre)</b>. <b>Jeux gratuits pour tous les participants</b> (compte premium de l'association).</span>
+        </a>
       ) : (
         <PlaceSelector value={f.place} placeId={f.placeId} onChange={({ place, placeId }) => setF({ ...f, place, placeId })} />
       )}
@@ -4791,8 +4815,10 @@ function EditEventModal({ e, onClose, onSave }) {
 /* ---- Modale : partager le moment jeux sur Signal (message prêt à copier) ---- */
 function ShareEventModal({ event, onClose }) {
   const [copied, setCopied] = useState(false);
-  const orga = SIGNAL_GROUPS.find((g) => g.name === "Organisation jeux");
-  const siteUrl = "https://aladj-site.vercel.app";
+  // Moment en ligne → conversation « Jeux en ligne » ; présentiel → « Organisation jeux ».
+  const groupName = event.online ? "Jeux en ligne" : "Organisation jeux";
+  const orga = SIGNAL_GROUPS.find((g) => g.name === groupName);
+  const siteUrl = "https://aladj.fr";
 
   const deadlineTxt = event.deadline
     ? `\n⏳ À valider avant le ${formatDateFr(new Date(event.deadline).toISOString().slice(0,10))} à ${new Date(event.deadline).toTimeString().slice(0,5)}`
@@ -4820,7 +4846,7 @@ function ShareEventModal({ event, onClose }) {
   return (
     <Modal open onClose={onClose} title="Partager ce moment jeux" width={520}>
       <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 16px", lineHeight: 1.5 }}>
-        Votre moment jeux est créé ! Copiez ce message et collez-le dans le groupe Signal « Organisation jeux » pour prévenir les membres.
+        Votre moment jeux est créé ! Copiez ce message et collez-le dans le groupe Signal «&nbsp;{groupName}&nbsp;» pour prévenir les membres.
       </p>
       <div style={{ background: "rgba(26,58,92,.04)", border: "1px solid #ece2d0", borderRadius: 13, padding: 16, fontSize: 13.5, color: "#3a3a3a", whiteSpace: "pre-line", lineHeight: 1.5, marginBottom: 16, fontFamily: "'Nunito',sans-serif" }}>
         {message}
@@ -9177,7 +9203,7 @@ function MyLudoPage({ setToast, setPage }) {
       )}
 
       <MyTop10Section setToast={setToast} onOpenGame={(id) => setSelected(id)} />
-      {viewSelf && currentUser && <MemberLibraryModal memberId={currentUser.id} onClose={() => setViewSelf(false)} />}
+      {viewSelf && currentUser && <MemberLibraryModal memberId={currentUser.id} onClose={() => setViewSelf(false)} setToast={setToast} />}
 
       <div style={{ margin: "34px 0 18px" }}>
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mes jeux</span>
