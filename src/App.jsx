@@ -3216,7 +3216,7 @@ function GuidePage() {
         },
         {
           q: "J'ai oublié de me déclarer vainqueur !",
-          a: <p style={{ margin: 0 }}>Dans Mon espace → « Voir toutes mes parties », chaque ligne porte un bouton <b>🏆 Vainqueur ?</b> : un clic vous déclare gagnant (ou vous retire si vous l'étiez). La corbeille <Trash2 size={13} style={{ verticalAlign: "-2px", color: C.red }} /> retire la partie de <b>votre</b> historique uniquement — les autres joueurs de la partie ne sont jamais affectés. Vos statistiques et le champion en titre se mettent à jour aussitôt.</p>,
+          a: <p style={{ margin: 0 }}>Dans Mon espace → <b>Mes parties</b>, ouvrez « Voir toute la sélection » puis cliquez sur le jeu concerné : chaque partie porte un bouton <b>🏆 Vainqueur ?</b> — un clic vous déclare gagnant (ou vous retire si vous l'étiez). La corbeille <Trash2 size={13} style={{ verticalAlign: "-2px", color: C.red }} /> retire la partie de <b>votre</b> historique uniquement — les autres joueurs de la partie ne sont jamais affectés. Vos statistiques et le champion en titre se mettent à jour aussitôt.</p>,
         },
         {
           q: "C'est quoi, le badge doré sur certains jeux ?",
@@ -8582,22 +8582,42 @@ function MyTop10Section({ setToast, onOpenGame }) {
 
 function MyPlaysSection({ setToast }) {
   const { plays, currentUser, games, declinePlayParticipation, setMyPlayResult } = useApp();
-  const [period, setPeriod] = useState("year");
+  const mk = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = (key) => {
+    const [y, m] = key.split("-").map(Number);
+    const s = new Date(y, m - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  };
+  const now = new Date();
+  const [active, setActive] = useState("month"); // "month" | "year" | "all"
+  const [monthSel, setMonthSel] = useState(() => mk(new Date()));
+  const [yearSel, setYearSel] = useState(() => String(new Date().getFullYear()));
   const [allOpen, setAllOpen] = useState(false);
+  const [detailGameId, setDetailGameId] = useState(null);
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
   const myPlays = useMemo(
     () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
     [plays, currentUser]
   );
-  const years = useMemo(() => [...new Set(myPlays.map((pl) => new Date(pl.playedAt).getFullYear()))].sort((a, b) => b - a), [myPlays]);
+  // Liste des mois disponibles (mois du jour toujours inclus), du plus recent au plus ancien.
+  const monthsList = useMemo(() => {
+    const set = new Set(myPlays.map((pl) => mk(new Date(pl.playedAt))));
+    set.add(mk(now));
+    return [...set].sort().reverse();
+  }, [myPlays]);
+  // Liste des annees disponibles (annee en cours toujours incluse), decroissante.
+  const yearsList = useMemo(() => {
+    const set = new Set(myPlays.map((pl) => new Date(pl.playedAt).getFullYear()));
+    set.add(now.getFullYear());
+    return [...set].sort((a, b) => b - a);
+  }, [myPlays]);
   if (!currentUser) return null;
-  const now = new Date();
+
   const inPeriod = (pl) => {
     const d = new Date(pl.playedAt);
-    if (period === "all") return true;
-    if (period === "month") return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    if (period === "year") return d.getFullYear() === now.getFullYear();
-    return d.getFullYear() === Number(period);
+    if (active === "all") return true;
+    if (active === "month") return mk(d) === monthSel;
+    return d.getFullYear() === Number(yearSel);
   };
   const filtered = myPlays.filter(inPeriod);
   const by = {};
@@ -8608,21 +8628,42 @@ function MyPlaysSection({ setToast }) {
   });
   const ranking = Object.values(by).sort((a, b) => b.count - a.count);
   const top = ranking.slice(0, 20);
-  const chip = (val, label) => (
-    <button key={val} onClick={() => setPeriod(val)}
-      style={{ border: "none", cursor: "pointer", borderRadius: 999, padding: "5px 13px", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13,
-        background: period === val ? C.amber : "rgba(232,163,23,.12)", color: period === val ? "#fff" : "#8a6a1f" }}>{label}</button>
-  );
+  const selLabel = active === "all" ? "depuis toujours" : active === "month" ? monthLabel(monthSel) : yearSel;
+
+  const openSelection = () => { setDetailGameId(null); setAllOpen(true); };
+  const openGame = (id) => { setDetailGameId(id); setAllOpen(true); };
+  const closeModal = () => { setAllOpen(false); setDetailGameId(null); };
+
+  const detailGame = detailGameId != null ? gameById[detailGameId] : null;
+  const detailEntry = ranking.find((r) => r.gameId === detailGameId);
+  const detailPlays = detailGameId != null ? myPlays.filter((pl) => pl.gameId === detailGameId && inPeriod(pl)) : [];
+
+  const selStyle = (isActive) => ({
+    border: "none", cursor: "pointer", borderRadius: 999, padding: "5px 30px 5px 13px",
+    fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, lineHeight: 1.5,
+    background: isActive ? C.amber : "rgba(232,163,23,.12)", color: isActive ? "#fff" : "#8a6a1f",
+    appearance: "none", WebkitAppearance: "none", MozAppearance: "none", outline: "none",
+  });
+
   return (
     <div style={{ marginBottom: 22 }}>
       <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 20 }}>🎲</span> Mes parties
       </h3>
-      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
-        {chip("month", "Ce mois-ci")}
-        {chip("year", "Cette année")}
-        {years.filter((y) => y !== now.getFullYear()).map((y) => chip(String(y), String(y)))}
-        {chip("all", "Depuis toujours")}
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+          <select value={monthSel} onMouseDown={() => setActive("month")} onChange={(e) => { setMonthSel(e.target.value); setActive("month"); }} style={selStyle(active === "month")} title="Choisir un mois">
+            {monthsList.map((k) => <option key={k} value={k}>{monthLabel(k)}</option>)}
+          </select>
+          <ChevronDown size={14} style={{ position: "absolute", right: 10, pointerEvents: "none", color: active === "month" ? "#fff" : "#8a6a1f" }} />
+        </span>
+        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+          <select value={yearSel} onMouseDown={() => setActive("year")} onChange={(e) => { setYearSel(e.target.value); setActive("year"); }} style={selStyle(active === "year")} title="Choisir une annee">
+            {yearsList.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+          </select>
+          <ChevronDown size={14} style={{ position: "absolute", right: 10, pointerEvents: "none", color: active === "year" ? "#fff" : "#8a6a1f" }} />
+        </span>
+        <button onClick={() => setActive("all")} style={{ border: "none", cursor: "pointer", borderRadius: 999, padding: "5px 13px", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, background: active === "all" ? C.amber : "rgba(232,163,23,.12)", color: active === "all" ? "#fff" : "#8a6a1f" }}>Depuis toujours</button>
       </div>
       {filtered.length === 0 ? (
         <div style={{ background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 14, padding: "18px 20px", color: "#9c8d79", fontSize: 14 }}>
@@ -8639,7 +8680,7 @@ function MyPlaysSection({ setToast }) {
               return (
                 <div key={r.gameId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
                   <span style={{ width: 20, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
-                  <span style={{ flex: 1, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</span>
+                  <button onClick={() => openGame(r.gameId)} title="Voir les parties de ce jeu" style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 600, fontSize: 14, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</button>
                   {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {r.wins}</span>}
                   <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal }}>{r.count}</span>
                 </div>
@@ -8647,34 +8688,68 @@ function MyPlaysSection({ setToast }) {
             })}
           </div>
           {ranking.length > 20 && <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 8 }}>… et {ranking.length - 20} autre{ranking.length - 20 > 1 ? "s" : ""} jeu{ranking.length - 20 > 1 ? "x" : ""}</div>}
-          <button onClick={() => setAllOpen(true)} style={{ background: "none", border: "none", color: C.teal, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "12px 0 0", fontFamily: "'Nunito',sans-serif" }}>
-            Voir toutes mes parties ({myPlays.length})
+          <button onClick={openSelection} style={{ background: "none", border: "none", color: C.teal, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "12px 0 0", fontFamily: "'Nunito',sans-serif" }}>
+            Voir toute la sélection ({ranking.length} jeu{ranking.length > 1 ? "x" : ""})
           </button>
         </div>
       )}
-      <Modal open={allOpen} onClose={() => setAllOpen(false)} title="Toutes mes parties" width={540}>
-        <div style={{ display: "grid", gap: 7 }}>
-          {myPlays.length === 0 && <div style={{ color: "#9c8d79" }}>Aucune partie pour le moment.</div>}
-          {myPlays.map((pl) => {
-            const g = gameById[pl.gameId];
-            const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
-            const canDel = true; // chacun peut retirer une partie de SON historique
-            return (
-              <div key={pl.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, color: C.navy, fontSize: 14 }}>{g?.name || "Jeu supprimé"}</div>
-                  <div style={{ fontSize: 12.5, color: "#9c8d79" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
-                </div>
-                <button onClick={async () => { const r = await setMyPlayResult(pl.id, !iWon); if (r?.error && setToast) setToast("Impossible d'enregistrer le résultat : " + r.error); }}
-                  title={iWon ? "Vous etes declare vainqueur - cliquer pour retirer" : "Me declarer vainqueur"}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
-                  🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
-                </button>
-                {canDel && <button onClick={async () => { if (window.confirm("Retirer cette partie de votre historique ? Les autres joueurs de la partie ne sont pas affectés.")) await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>}
+      <Modal open={allOpen} onClose={closeModal} title={detailGame ? `${detailGame.name || "Jeu supprimé"} · ${selLabel}` : `Ma sélection · ${selLabel}`} width={540}>
+        {detailGameId == null ? (
+          <>
+            <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 12 }}>
+              <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif", fontSize: 16 }}>{filtered.length}</b> partie{filtered.length > 1 ? "s" : ""} · <b style={{ color: C.navy }}>{ranking.length}</b> jeu{ranking.length > 1 ? "x" : ""} différent{ranking.length > 1 ? "s" : ""}
+            </div>
+            {ranking.length === 0 ? (
+              <div style={{ color: "#9c8d79" }}>Aucune partie sur cette période.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 6 }}>
+                {ranking.map((r, i) => {
+                  const g = gameById[r.gameId];
+                  return (
+                    <button key={r.gameId} onClick={() => setDetailGameId(r.gameId)} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 11px", cursor: "pointer", textAlign: "left", width: "100%" }}>
+                      <span style={{ width: 22, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</span>
+                      {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {r.wins}</span>}
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal }}>{r.count}</span>
+                      <ChevronRight size={16} style={{ color: "#c3b49b" }} />
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
+            )}
+          </>
+        ) : (
+          <>
+            <button onClick={() => setDetailGameId(null)} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(26,58,92,.06)", border: "none", borderRadius: 999, padding: "6px 13px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, color: C.navy, marginBottom: 12 }}>
+              <ArrowRight size={14} style={{ transform: "rotate(180deg)" }} /> Retour à la sélection
+            </button>
+            <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 10 }}>
+              <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif", fontSize: 16 }}>{detailPlays.length}</b> partie{detailPlays.length > 1 ? "s" : ""}
+              {detailEntry && detailEntry.wins > 0 ? <> · <span style={{ color: C.amber, fontWeight: 700 }}>🏆 {detailEntry.wins} victoire{detailEntry.wins > 1 ? "s" : ""}</span></> : null}
+              <span style={{ color: "#9c8d79" }}> · {selLabel}</span>
+            </div>
+            {detailPlays.length === 0 ? (
+              <div style={{ color: "#9c8d79" }}>Plus aucune partie sur cette période.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 7 }}>
+                {detailPlays.map((pl) => {
+                  const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+                  return (
+                    <div key={pl.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: "#6b5d49" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
+                      <button onClick={async () => { const r = await setMyPlayResult(pl.id, !iWon); if (r?.error && setToast) setToast("Impossible d'enregistrer le résultat : " + r.error); }}
+                        title={iWon ? "Vous etes declare vainqueur - cliquer pour retirer" : "Me declarer vainqueur"}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
+                        🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
+                      </button>
+                      <button onClick={async () => { if (window.confirm("Retirer cette partie de votre historique ? Les autres joueurs de la partie ne sont pas affectés.")) await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
       </Modal>
     </div>
   );
