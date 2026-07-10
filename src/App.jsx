@@ -603,28 +603,6 @@ function AppProvider({ children }) {
   const [chrono, setChrono] = useState(null); // null | { gameId } | { eventId } | { joinCode }
   const openChrono = useCallback((opts) => setChrono(opts), []);
   const closeChrono = useCallback(() => setChrono(null), []);
-
-  // Confirmation universelle (promesse) : n'importe quel composant peut faire
-  //   if (!(await confirm({ title, message }))) return;
-  // La modale s'affiche par-dessus tout le reste (z-index 3000).
-  const [confirmState, setConfirmState] = useState(null);
-  const confirmResolver = useRef(null);
-  const confirm = useCallback((opts = {}) => new Promise((resolve) => {
-    confirmResolver.current = resolve;
-    setConfirmState({
-      title: opts.title || "Confirmer l'action",
-      message: opts.message || "",
-      confirmLabel: opts.confirmLabel || "Confirmer",
-      cancelLabel: opts.cancelLabel || "Annuler",
-      variant: opts.variant || "danger",
-    });
-  }), []);
-  const resolveConfirm = useCallback((result) => {
-    const r = confirmResolver.current;
-    confirmResolver.current = null;
-    setConfirmState(null);
-    if (r) r(result);
-  }, []);
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("chrono");
     if (code) setChrono({ joinCode: code });
@@ -2022,14 +2000,8 @@ function AppProvider({ children }) {
     reload: loadData,
     resetPassword, updatePassword, passwordRecovery, setPasswordRecovery,
     chrono, openChrono, closeChrono,
-    confirm,
   };
-  return (
-    <AppCtx.Provider value={value}>
-      {children}
-      <ConfirmDialog state={confirmState} onResolve={resolveConfirm} />
-    </AppCtx.Provider>
-  );
+  return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
 
 function gameStats(g) {
@@ -2537,49 +2509,6 @@ function Modal({ open, onClose, children, title, width = 560 }) {
           </button>
         </div>
         <div style={{ padding: 24 }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-/* ---- Modale de confirmation universelle (promesse) ---- */
-function ConfirmDialog({ state, onResolve }) {
-  useEffect(() => {
-    if (!state) return;
-    const h = (e) => {
-      if (e.key === "Escape") onResolve(false);
-      else if (e.key === "Enter") onResolve(true);
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [state, onResolve]);
-  if (!state) return null;
-  const danger = state.variant === "danger";
-  const accent = danger ? C.red : C.navy;
-  return (
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onResolve(false); }}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(18,41,63,.6)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "center", justifyContent: "center", padding: "5vh 16px", zIndex: 3000, overflowY: "auto",
-      }}>
-      <div style={{
-        background: C.paper, borderRadius: 22, width: "100%", maxWidth: 440,
-        boxShadow: "0 30px 80px rgba(18,41,63,.4)", border: "1px solid #ece2d0", animation: "popIn .2s ease", overflow: "hidden",
-      }}>
-        <div style={{ padding: "26px 26px 22px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: state.message ? 12 : 20 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 13, background: `${accent}1a`, display: "grid", placeItems: "center", flexShrink: 0 }}>
-              <AlertTriangle size={22} color={accent} />
-            </div>
-            <h3 style={{ margin: 0, fontFamily: "'Fredoka', sans-serif", color: C.navy, fontSize: 19, lineHeight: 1.25 }}>{state.title}</h3>
-          </div>
-          {state.message && <p style={{ margin: "0 0 22px", fontSize: 14.5, color: "#5e5346", lineHeight: 1.55 }}>{state.message}</p>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
-            <Btn variant="soft" size="md" onClick={() => onResolve(false)}>{state.cancelLabel}</Btn>
-            <Btn variant={danger ? "red" : "primary"} size="md" onClick={() => onResolve(true)}>{state.confirmLabel}</Btn>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -4477,7 +4406,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent, openChrono, confirm } = useApp();
+  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent, openChrono } = useApp();
   const linkedPlace = e.placeId ? places.find((p) => p.id === e.placeId) : null;
   const [showPlace, setShowPlace] = useState(false);
   const totalCount = e.players.length + (e.guests?.length || 0);
@@ -4597,7 +4526,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                   <span style={{ width: 24, height: 24, borderRadius: 7, background: sqBg, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
                   <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
                   {memberPending && <span style={{ fontSize: 10.5, color: "#b88a2e", fontWeight: 700 }}>en attente</span>}
-                  {canRemoveGuest && <button onClick={async () => { if (!(await confirm({ title: "Retirer cet invité ?", message: `${g.name} sera retiré(e) de la liste des invités de ce moment jeux.`, confirmLabel: "Retirer" }))) return; removeGuest(g.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: xColor, display: "grid", placeItems: "center" }}><X size={14} /></button>}
+                  {canRemoveGuest && <button onClick={() => removeGuest(g.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: xColor, display: "grid", placeItems: "center" }}><X size={14} /></button>}
                 </span>
               );
             })}
@@ -4629,7 +4558,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                 {isIn ? <><X size={17} /> Me retirer</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
               </Btn>
               {canManage && <Btn variant="soft" size="lg" onClick={() => setShowEdit(true)}><Edit3 size={17} /></Btn>}
-              {canManage && <Btn variant="danger" size="lg" onClick={async () => { if (!(await confirm({ title: "Supprimer ce moment jeux ?", message: "Le moment jeux et toutes ses données (participants, invités, jeux prévus, commentaires) seront définitivement supprimés.", confirmLabel: "Supprimer" }))) return; onRemove(e.id); }}><Trash2 size={17} /></Btn>}
+              {canManage && <Btn variant="danger" size="lg" onClick={() => onRemove(e.id)}><Trash2 size={17} /></Btn>}
             </div>
           ) : (
             <Btn full size="lg" variant="primary" onClick={() => { onClose(); onAuth("login"); }} style={{ marginBottom: 22 }}><LogIn size={18} /> Se connecter pour participer</Btn>
@@ -4659,7 +4588,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                       {mine && editingId !== c.id && (
                         <span style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
-                          <button onClick={async () => { if (!(await confirm({ title: "Supprimer ce commentaire ?", message: "Cette action est définitive." }))) return; removeComment(c.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+                          <button onClick={() => removeComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
                         </span>
                       )}
                     </div>
@@ -4697,7 +4626,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
 /* ---- Section : jeux joués lors d'un moment ---- */
 function EventPlayedGames({ e, isParticipant, canManage }) {
-  const { games, currentUser, addPlayedGame, removePlayedGame, setEventPlayCount, confirm } = useApp();
+  const { games, currentUser, addPlayedGame, removePlayedGame, setEventPlayCount } = useApp();
   const counterBtn = { width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center", padding: 0, flexShrink: 0 };
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState("");
@@ -4762,7 +4691,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
                     <button onClick={() => setEventPlayCount(p.id, Math.min(50, (p.playCount || 1) + 1))} style={counterBtn} aria-label="Une partie de plus">+</button>
                   </div>
                 )}
-                {mineToRemove && <button onClick={async (ev) => { ev.stopPropagation(); if (!(await confirm({ title: "Retirer ce jeu ?", message: "Ce jeu sera retiré de la liste des parties jouées lors de ce moment jeux.", confirmLabel: "Retirer" }))) return; removePlayedGame(p.id); }} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4, flexShrink: 0 }}><Trash2 size={14} /></button>}
+                {mineToRemove && <button onClick={(ev) => { ev.stopPropagation(); removePlayedGame(p.id); }} title="Retirer ce jeu" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4, flexShrink: 0 }}><Trash2 size={14} /></button>}
               </div>
             );
           })}
@@ -5252,10 +5181,9 @@ function fmtDuration(s) {
 }
 
 function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
-  const { confirm } = useApp();
   const [busyId, setBusyId] = useState(null);
   const del = async (id) => {
-    if (!(await confirm({ title: "Écarter cette partie ?", message: "La partie sera définitivement retirée des statistiques du jeu.", confirmLabel: "Écarter" }))) return;
+    if (!window.confirm("Écarter cette partie des statistiques ? Action définitive.")) return;
     setBusyId(id);
     const { error } = await supabase.rpc("delete_game_play", { p_play_id: id });
     setBusyId(null);
@@ -5292,7 +5220,7 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
 }
 
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
-  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono, plays, beltByGame, confirm } = useApp();
+  const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono, plays, beltByGame } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
   const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
@@ -5553,13 +5481,6 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             {isOwner ? (
               <Btn size="sm" variant="danger" onClick={async () => {
                 const last = owners.length === 1;
-                if (!(await confirm({
-                  title: "Vous ne possédez plus ce jeu ?",
-                  message: last
-                    ? "Vous êtes le dernier possesseur : retirer ce jeu supprimera aussi sa fiche de la ludothèque."
-                    : "Le jeu sera retiré de votre ludothèque personnelle.",
-                  confirmLabel: last ? "Retirer et supprimer la fiche" : "Retirer",
-                }))) return;
                 await removeOwner(g.id);
                 if (last) { onClose(); setToast("Jeu retiré de la ludothèque."); }
                 else setToast("Vous ne possédez plus ce jeu.");
@@ -5568,7 +5489,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
               <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); setToast("Ajouté à votre ludothèque !"); }}><Plus size={14} /> Je l'ai aussi</Btn>
             )}
             {currentUser.admin && owners.length > 0 && (
-              <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { if (!(await confirm({ title: "Supprimer cette fiche de jeu ?", message: "La fiche sera supprimée pour tous les membres, y compris les possessions, notes et commentaires associés. Action définitive.", confirmLabel: "Supprimer la fiche" }))) return; await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
+              <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
             )}
           </div>
         )}
@@ -5819,7 +5740,7 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
 
 /* ---- Une ligne d'extension : possession + déclaration d'un autre propriétaire (avec confirmation) ---- */
 function ExtensionRow({ x, setToast }) {
-  const { currentUser, users, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirm } = useApp();
+  const { currentUser, users, addExtensionOwner, removeExtensionOwner, declareExtensionOwners } = useApp();
   const [declaring, setDeclaring] = useState(false);
   const [sel, setSel] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -5848,7 +5769,7 @@ function ExtensionRow({ x, setToast }) {
         </div>
         {currentUser && (
           isOwner ? (
-            <Btn size="sm" variant="danger" onClick={async () => { if (!(await confirm({ title: "Vous ne possédez plus cette extension ?", message: "L'extension sera retirée de votre ludothèque personnelle.", confirmLabel: "Retirer" }))) return; await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
+            <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
           ) : (
             <Btn size="sm" variant="teal" onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
           )
@@ -5942,7 +5863,9 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
       const d = await bggDetails(id);
       // On bascule en mode édition manuel avec les données pré-remplies depuis BGG.
       // L'utilisateur peut alors corriger le nom, l'image, etc. avant validation.
-      setF({ name: d.name || name, img: d.img || "" });
+      // Le nom cliqué dans les résultats (souvent français) prime sur le nom
+      // "primaire" de BGG (presque toujours anglais).
+      setF({ name: name || d.name, img: d.img || "" });
       setMode("manual");
     } catch (e) {
       setBggErr("Impossible de récupérer cette fiche depuis BGG.");
@@ -6017,7 +5940,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
 
 /* ---- Section commentaires d'une fiche de jeu (signés, modifiables) ---- */
 function GameComments({ g, onAuth, onClose }) {
-  const { currentUser, addGameComment, updateGameComment, removeGameComment, confirm } = useApp();
+  const { currentUser, addGameComment, updateGameComment, removeGameComment } = useApp();
   const [text, setText] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
@@ -6048,7 +5971,7 @@ function GameComments({ g, onAuth, onClose }) {
                 {mine && editingId !== c.id && (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
-                    <button onClick={async () => { if (!(await confirm({ title: "Supprimer ce commentaire ?", message: "Cette action est définitive." }))) return; removeGameComment(c.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+                    <button onClick={() => removeGameComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
                   </span>
                 )}
               </div>
@@ -6430,7 +6353,7 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
 
 /* ---- Fiche détaillée d'un jeu À venir ---- */
 function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
-  const { upcoming, users, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment, confirm } = useApp();
+  const { upcoming, users, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment } = useApp();
   const u = upcoming.find((x) => x.id === upcId);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -6592,7 +6515,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
                   {mine && !isEdit && (
                     <span style={{ display: "flex", gap: 5 }}>
                       <button onClick={() => { setEditId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79" }}><Edit3 size={13} /></button>
-                      <button onClick={async () => { if (!(await confirm({ title: "Supprimer ce commentaire ?", message: "Cette action est définitive." }))) return; removeUpcomingComment(c.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.red }}><Trash2 size={13} /></button>
+                      <button onClick={() => removeUpcomingComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red }}><Trash2 size={13} /></button>
                     </span>
                   )}
                 </div>
@@ -7460,6 +7383,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   const [importing, setImporting] = useState(null);
   const [translating, setTranslating] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [saving, setSaving] = useState(false); // anti double-clic : verrouille la validation pendant la création
   // Procuration : ne s'applique que pour la ludothèque (pas pour les fiches À venir).
   const [ownership, setOwnership] = useState("self");
   const [forUserIds, setForUserIds] = useState([]);
@@ -7486,10 +7410,10 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
     setLoading(false);
   };
 
-  const pick = async (id) => {
-    setImporting(id); setErr(""); setFailed(false);
+  const pick = async (r) => {
+    setImporting(r.id); setErr(""); setFailed(false);
     try {
-      const d = await bggDetails(id);
+      const d = await bggDetails(r.id);
       setTranslating(true);
       // La traduction et la conversion des mécaniques ne doivent JAMAIS empêcher
       // l'affichage de l'aperçu éditable. On les protège individuellement.
@@ -7498,7 +7422,10 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
       let mechanics = d.mechanics || [];
       try { mechanics = translateMechanics(d.mechanics); } catch (e) { /* on garde les mécaniques d'origine */ }
       setTranslating(false);
-      setPreview({ ...d, desc, mechanics });
+      // On conserve le nom sur lequel l'utilisateur a cliqué dans la recherche
+      // (souvent le titre français) plutôt que le nom "primaire" de BGG, qui
+      // est presque toujours le titre anglais.
+      setPreview({ ...d, name: r.name || d.name, desc, mechanics });
     } catch (e) {
       setErr("Impossible de récupérer cette fiche pour le moment. Réessayez ou saisissez-la manuellement.");
       setFailed(true);
@@ -7534,7 +7461,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
         </div>
 
         {/* Champs éditables */}
-        <Field label="Nom du jeu"><TextInput value={preview.name || ""} onChange={(e) => updatePreview({ name: e.target.value })} /></Field>
+        <Field label="Nom du jeu" hint="Le nom choisi dans la recherche est conservé. BGG étant un site américain, vérifiez qu'il s'agit bien du titre de l'édition française."><TextInput value={preview.name || ""} onChange={(e) => updatePreview({ name: e.target.value })} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
           <Field label="Année"><TextInput type="number" value={preview.year || ""} onChange={(e) => updatePreview({ year: Number(e.target.value) || "" })} /></Field>
           <Field label="Joueurs min"><TextInput type="number" value={preview.min || ""} onChange={(e) => updatePreview({ min: Number(e.target.value) || "" })} /></Field>
@@ -7610,14 +7537,22 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           </Field>
         )}
 
-        <Btn full size="lg" variant="teal" onClick={() => {
+        {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, marginBottom: 12, lineHeight: 1.5 }}>{err}</div>}
+        <Btn full size="lg" variant="teal" disabled={saving} onClick={async () => {
+          if (saving) return; // anti double-clic : une création est déjà en cours
           if (!forUpcoming && ownership === "other" && forUserIds.length === 0) { setErr("Sélectionnez au moins un membre, ou choisissez « Je le possède »."); return; }
-          onDone({
-            ...preview,
-            selfOwns: forUpcoming ? true : (ownership === "self" || ownership === "both"),
-            forUserIds: forUpcoming ? [] : ((ownership === "other" || ownership === "both") ? forUserIds : []),
-          });
-        }}><Plus size={18} /> {forUpcoming ? "Ajouter aux jeux à venir" : "Ajouter à ma ludothèque"}</Btn>
+          setErr("");
+          setSaving(true);
+          try {
+            // On attend la fin complète de la création (upload image + insertion)
+            // avant de déverrouiller : c'est ce qui empêche les doublons.
+            await onDone({
+              ...preview,
+              selfOwns: forUpcoming ? true : (ownership === "self" || ownership === "both"),
+              forUserIds: forUpcoming ? [] : ((ownership === "other" || ownership === "both") ? forUserIds : []),
+            });
+          } finally { setSaving(false); }
+        }}>{saving ? <Loader2 size={18} className="aladj-spin" /> : <Plus size={18} />} {saving ? "Ajout en cours..." : (forUpcoming ? "Ajouter aux jeux à venir" : "Ajouter à ma ludothèque")}</Btn>
       </div>
     );
   }
@@ -7684,7 +7619,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
       )}
       <div style={{ display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
         {results.map((r) => (
-          <button key={r.id} onClick={() => pick(r.id)} disabled={importing} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, border: "1px solid #ece2d0", background: "#fff", cursor: "pointer", textAlign: "left" }}>
+          <button key={r.id} onClick={() => pick(r)} disabled={importing} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, border: "1px solid #ece2d0", background: "#fff", cursor: "pointer", textAlign: "left" }}>
             <span>
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>{r.name}</span>
               {r.year && <span style={{ color: "#b6a78f", fontSize: 13, marginLeft: 8 }}>{r.year}</span>}
@@ -8657,7 +8592,7 @@ function MyTop10Section({ setToast, onOpenGame }) {
 }
 
 function MyPlaysSection({ setToast }) {
-  const { plays, currentUser, games, declinePlayParticipation, setMyPlayResult, confirm } = useApp();
+  const { plays, currentUser, games, declinePlayParticipation, setMyPlayResult } = useApp();
   const mk = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = (key) => {
     const [y, m] = key.split("-").map(Number);
@@ -8818,7 +8753,7 @@ function MyPlaysSection({ setToast }) {
                         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
                         🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
                       </button>
-                      <button onClick={async () => { if (!(await confirm({ title: "Retirer cette partie de votre historique ?", message: "Les autres joueurs de la partie ne sont pas affectés.", confirmLabel: "Retirer" }))) return; await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
+                      <button onClick={async () => { if (window.confirm("Retirer cette partie de votre historique ? Les autres joueurs de la partie ne sont pas affectés.")) await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
                     </div>
                   );
                 })}
@@ -8933,7 +8868,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, confirm } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
@@ -9281,7 +9216,7 @@ function MyLudoPage({ setToast, setPage }) {
                   </span>
                   <div style={{ display: "flex", gap: 6 }}>
                     <Btn size="sm" variant="teal" onClick={async () => { await confirmOwnership(g.id); setToast(`« ${g.name} » confirmé dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
-                    <Btn size="sm" variant="danger" onClick={async () => { if (!(await confirm({ title: "Refuser cette possession ?", message: "Le jeu ne sera pas ajouté à votre ludothèque." }))) return; await declineOwnership(g.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
+                    <Btn size="sm" variant="danger" onClick={async () => { await declineOwnership(g.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
                   </div>
                 </div>
               );
@@ -9296,7 +9231,7 @@ function MyLudoPage({ setToast, setPage }) {
                 </span>
                 <div style={{ display: "flex", gap: 6 }}>
                   <Btn size="sm" variant="teal" onClick={async () => { const r = await confirmExtensionOwnership(ext.id); if (r?.error) { setToast("Erreur : " + r.error); return; } setToast(`« ${ext.name} » confirmée dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
-                  <Btn size="sm" variant="danger" onClick={async () => { if (!(await confirm({ title: "Refuser cette possession ?", message: "L'extension ne sera pas ajoutée à votre ludothèque." }))) return; await removeExtensionOwner(ext.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
+                  <Btn size="sm" variant="danger" onClick={async () => { await removeExtensionOwner(ext.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
                 </div>
               </div>
             ))}
