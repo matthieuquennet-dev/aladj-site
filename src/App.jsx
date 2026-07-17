@@ -667,7 +667,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -767,7 +767,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -930,7 +930,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1344,6 +1344,8 @@ function AppProvider({ children }) {
     if (patch.bggUrl !== undefined) fields.bgg_url = patch.bggUrl.trim();
     if (patch.okkazeoUrl !== undefined) fields.okkazeo_url = patch.okkazeoUrl.trim();
     if (patch.favMechanics !== undefined) fields.fav_mechanics = (patch.favMechanics || []).slice(0, 6);
+    if (patch.hatedMechanics !== undefined) fields.hated_mechanics = patch.hatedMechanics || []; // pas de limite
+
     if (patch.favColors !== undefined) fields.fav_colors = (patch.favColors || []).slice(0, 3);
     if (patch.featuredBadges !== undefined) fields.featured_badges = (patch.featuredBadges || []).slice(0, 3);
     if (patch.topGames !== undefined) fields.top_games = (patch.topGames || []).slice(0, 10);
@@ -2740,6 +2742,7 @@ function ProfileEditModal({ onClose }) {
     name: currentUser?.name || "", avatar: currentUser?.avatar || "", city: currentUser?.city || "",
     bio: currentUser?.bio || "", bggUrl: currentUser?.bggUrl || "", okkazeoUrl: currentUser?.okkazeoUrl || "",
     favMechanics: currentUser?.favMechanics || [],
+    hatedMechanics: currentUser?.hatedMechanics || [],
     favColors: currentUser?.favColors || [],
     birthDay: currentUser?.birthDay || "",
     birthMonth: currentUser?.birthMonth || "",
@@ -2751,7 +2754,14 @@ function ProfileEditModal({ onClose }) {
   const toggleMech = (m) => setF((s) => {
     if (s.favMechanics.includes(m)) return { ...s, favMechanics: s.favMechanics.filter((x) => x !== m) };
     if (s.favMechanics.length >= 6) return s; // max 6
-    return { ...s, favMechanics: [...s.favMechanics, m] };
+    // Une mécanique ne peut pas être à la fois préférée et détestée : on la retire des détestées si besoin.
+    return { ...s, favMechanics: [...s.favMechanics, m], hatedMechanics: (s.hatedMechanics || []).filter((x) => x !== m) };
+  });
+  // Mécaniques détestées : aucune limite de nombre. Exclusivité avec les préférées.
+  const toggleHatedMech = (m) => setF((s) => {
+    const cur = s.hatedMechanics || [];
+    if (cur.includes(m)) return { ...s, hatedMechanics: cur.filter((x) => x !== m) };
+    return { ...s, hatedMechanics: [...cur, m], favMechanics: s.favMechanics.filter((x) => x !== m) };
   });
   // Couleurs préférées : clic = ajoute en fin (top suivant) ; re-clic = retire (les suivantes remontent). Max 3.
   const toggleColor = (k) => setF((s) => {
@@ -2816,6 +2826,15 @@ function ProfileEditModal({ onClose }) {
             const active = f.favMechanics.includes(m);
             const disabled = !active && f.favMechanics.length >= 6;
             return <button key={m} type="button" onClick={() => toggleMech(m)} disabled={disabled} style={{ padding: "6px 12px", borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : (disabled ? "#cdbfa8" : "#8a7c6a"), opacity: disabled ? .6 : 1 }}>{m}</button>;
+          })}
+        </div>
+      </Field>
+
+      <Field label={`Mécaniques détestées${(f.hatedMechanics || []).length ? ` (${f.hatedMechanics.length})` : ""}`} hint="Les types de jeux auxquels vous ne voulez ABSOLUMENT PAS jouer. Le composeur de tablée ne proposera jamais un jeu comportant l'une de ces mécaniques à une tablée dont vous faites partie. Aucune limite de nombre.">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+          {MECHANIC_SUGGESTIONS.map((m) => {
+            const active = (f.hatedMechanics || []).includes(m);
+            return <button key={m} type="button" onClick={() => toggleHatedMech(m)} style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.red : "#e6dcc9"}`, background: active ? C.red : "#fff", color: active ? "#fff" : "#8a7c6a" }}>{active ? "🚫 " : ""}{m}</button>;
           })}
         </div>
       </Field>
@@ -3166,6 +3185,7 @@ function GuidePage() {
           q: "Compléter mon profil (et mes couleurs de jeu préférées)",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Menu → <b>Mon profil</b> : photo, ville, présentation, mécaniques préférées, votre <b>anniversaire</b> (jour et mois suffisent, l'année est facultative — il apparaîtra 🎂 dans le calendrier des moments) et vos <b>couleurs de jeu préférées</b> : cliquez-en jusqu'à 3, dans l'ordre de préférence.</p>
+            <p style={{ margin: "0 0 8px" }}>Vous pouvez aussi déclarer vos <b>mécaniques détestées</b> (sans limite de nombre) : les types de jeux auxquels vous ne voulez <b>absolument pas</b> jouer. Cette information est utilisée par le composeur de tablée — aucun jeu comportant l'une de ces mécaniques ne sera proposé à une tablée dont vous faites partie.</p>
             <Illu caption="Vos couleurs apparaissent à côté de votre nom dans les moments jeux — fini les négociations pour le pion rouge.">
               <span style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                 <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>L</span>
@@ -3214,6 +3234,13 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Une extension est un contenu qui <b>nécessite absolument le jeu de base</b> pour être joué (nouvelles cartes, plateaux, modules…). Si une boîte se joue seule, ce n'est pas une extension : entrez-la comme un <b>jeu</b> à part entière.</p>
             <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>
+          </>,
+        },
+        {
+          q: "Composer ma tablée (classement sur-mesure)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur la page <b>Ludothèque</b>, le bouton « Composer ma tablée » vous aide à trouver le bon jeu pour les personnes présentes. Sélectionnez les participants : les propositions sont automatiquement limitées aux jeux <b>jouables par toute la tablée</b> (vous pouvez toujours forcer un autre nombre de joueurs), la durée se filtre par <b>tranches</b> (entre 0 et 30 min, entre 31 min et 1 h… jusqu'à « 3 h et plus »), et <b>aucun jeu comportant une mécanique détestée</b> par un participant n'est proposé.</p>
+            <p style={{ margin: 0 }}>Trois sections, affichées 15 jeux à la fois (« Afficher 15 jeux de plus » en bas de chacune) : <b>Envies de découverte</b> (les jeux que la tablée rêve d'essayer), <b>Mieux notés par la tablée</b> (à partir de 3 participants, un jeu doit être noté par au moins 2 d'entre eux) et <b>Exploration ludique</b> — des suggestions qui mélangent les mécaniques favorites des participants, leurs coups de coeur individuels et les goûts des membres au profil proche de la tablée.</p>
           </>,
         },
         {
@@ -3921,6 +3948,12 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
                 <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 10 }}>
                   <span style={{ fontSize: 12, color: "#9c8d79", alignSelf: "center" }}>Aime :</span>
                   {member.favMechanics.map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
+                </div>
+              )}
+              {member.hatedMechanics && member.hatedMechanics.length > 0 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
+                  <span style={{ fontSize: 12, color: "#9c8d79", alignSelf: "center" }}>Ne veut pas jouer :</span>
+                  {member.hatedMechanics.map((m, i) => <Badge key={i} color={C.red}>{m}</Badge>)}
                 </div>
               )}
               <MemberBadgesRow member={member} data={{ plays, events, games, upcoming, beltByGame }} />
@@ -7141,11 +7174,11 @@ function LudothequePage({ onAuth, setToast, setPage }) {
 function CustomRankModal({ onClose, onOpenGame }) {
   const { users, games } = useApp();
   const [chosen, setChosen] = useState([]);
-  const [players, setPlayers] = useState("");
-  const [duration, setDuration] = useState("");
+  const [players, setPlayers] = useState(""); // "" = automatique (taille de la tablée)
+  const [duration, setDuration] = useState(""); // "" = toutes ; "lo-hi" = bornes en minutes ; "181" = 3 h et plus
   const [mechFilter, setMechFilter] = useState([]); // mécaniques sélectionnées (multi)
-  const [mode, setMode] = useState("consensus"); // "consensus" (valeurs sûres) | "discovery" (découverte)
-  const [limit, setLimit] = useState(40); // nombre de propositions affichées par section
+  const STEP = 15; // nombre de jeux ajoutés à chaque clic sur « Afficher plus »
+  const [limits, setLimits] = useState({ discover: STEP, regular: STEP, explore: STEP });
   const toggle = (id) => setChosen((c) => c.includes(id) ? c.filter((x) => x !== id) : [...c, id]);
   const toggleMech = (m) => setMechFilter((c) => c.includes(m) ? c.filter((x) => x !== m) : [...c, m]);
 
@@ -7156,33 +7189,50 @@ function CustomRankModal({ onClose, onOpenGame }) {
     return [...s].sort((a, b) => a.localeCompare(b, "fr"));
   }, [games]);
 
+  // Mécaniques détestées par au moins un membre de la tablée : aucun jeu qui en
+  // comporte une ne sera proposé, quelle que soit la section.
+  const hatedMechs = useMemo(() => {
+    const s = new Set();
+    users.filter((u) => chosen.includes(u.id)).forEach((u) => (u.hatedMechanics || []).forEach((m) => s.add(m)));
+    return s;
+  }, [users, chosen]);
+
+  // Nombre de joueurs effectif : choix manuel prioritaire, sinon la taille de la tablée.
+  const effPlayers = players ? Number(players) : chosen.length;
+
   // Helpers de filtrage communs aux trois sections
   const matchPlayers = (g) => {
-    if (!players) return true;
-    const want = Number(players);
+    if (!effPlayers) return true;
     const min = Number(g.min) || 1;
     const max = g.max ? Number(g.max) : Infinity;
-    return players === "7" ? max >= 7 : (want >= min && want <= max);
+    if (players === "7") return max >= 7;
+    // Le jeu doit pouvoir accueillir toute la tablée (min ≤ N ≤ max).
+    return effPlayers >= min && effPlayers <= max;
   };
   const matchDuration = (g) => {
     if (!duration) return true;
     const t = Number(g.time) || 0;
-    return duration === "121" ? t > 120 : (t > 0 && t <= Number(duration));
+    if (t <= 0) return false; // durée inconnue : exclu quand une borne est choisie
+    if (duration === "181") return t > 180;
+    const [lo, hi] = duration.split("-").map(Number);
+    return t >= lo && t <= hi;
   };
   const matchMech = (g) => mechFilter.length === 0 || mechFilter.every((m) => (g.mechanics || []).includes(m));
-  const passFilters = (g) => matchPlayers(g) && matchDuration(g) && matchMech(g);
+  const noHatedMech = (g) => hatedMechs.size === 0 || !(g.mechanics || []).some((m) => hatedMechs.has(m));
+  const passFilters = (g) => matchPlayers(g) && matchDuration(g) && matchMech(g) && noHatedMech(g);
 
-  // Calcul des trois sections : envies de découverte, notés par la tablée, autres jeux disponibles
-  const { discoverGames, regularGames, otherGames } = useMemo(() => {
-    if (chosen.length === 0) return { discoverGames: [], regularGames: [], otherGames: [] };
+  // Calcul des trois sections : envies de découverte, mieux notés par la tablée, exploration ludique
+  const { discoverGames, regularGames, exploreGames } = useMemo(() => {
+    if (chosen.length === 0) return { discoverGames: [], regularGames: [], exploreGames: [] };
     const chosenSet = new Set(chosen);
+    const chosenUsers = users.filter((u) => chosenSet.has(u.id));
 
     // moyenne des notes de la tablée pour un jeu (0 si aucune note)
     const tableAvg = (g) => {
       const vals = Object.entries(g.ratings || {}).filter(([uid]) => chosenSet.has(uid)).map(([, v]) => v);
       return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
     };
-    const tableCount = (g) => Object.keys(g.ratings || {}).filter((uid) => chosenSet.has(uid)).length;
+    const tableRatings = (g) => Object.entries(g.ratings || {}).filter(([uid]) => chosenSet.has(uid));
 
     // --- Section 1 : envies de découverte de la tablée ---
     let discover = games
@@ -7199,45 +7249,108 @@ function CustomRankModal({ onClose, onOpenGame }) {
       if (pa !== pb) return pa - pb;
       return a.name.localeCompare(b.name, "fr");
     });
-
-    // --- Section 2 : jeux notés par la tablée ---
-    let regular = rankGames(games, chosen, true).filter((g) => g._count > 0 && passFilters(g));
     const discoverIds = new Set(discover.map((g) => g.id));
+
+    // --- Section 2 : mieux notés par la tablée ---
+    // À partir de 3 participants, un jeu doit être noté par au moins 2 d'entre eux.
+    const minVotes = chosen.length >= 3 ? 2 : 1;
+    let regular = rankGames(games, chosen, true).filter((g) => g._count >= minVotes && passFilters(g));
     regular = regular.filter((g) => !discoverIds.has(g.id));
 
-    // --- Section 3 : autres jeux disponibles (non notés par la tablée) ---
-    // Classés par note générale de l'association (résout le manque de votes de la tablée).
+    // --- Section 3 : exploration ludique ---
+    // Mélange de trois signaux : mécaniques favorites des participants (profils),
+    // coups de coeur solo (jeu très bien noté par un seul participant),
+    // et goûts des membres non participants dont le profil est proche de la tablée.
     const usedIds = new Set([...discoverIds, ...regular.map((g) => g.id)]);
-    let others = games
-      .filter((g) => !usedIds.has(g.id) && passFilters(g) && tableCount(g) === 0)
-      .map((g) => { const st = gameStats(g); return { ...g, _globalAvg: st.avg, _globalCount: st.count }; });
-    others.sort((a, b) => {
-      // mode "découverte" : on privilégie les jeux jamais joués par l'asso
-      if (mode === "discovery") {
-        const pa = a.playCount || 0, pb = b.playCount || 0;
-        if ((pa === 0) !== (pb === 0)) return pa === 0 ? -1 : 1;
-      }
+
+    // (a) mécaniques favorites : pondérées par le nombre de participants qui les aiment
+    const favCount = {};
+    chosenUsers.forEach((u) => (u.favMechanics || []).forEach((m) => { favCount[m] = (favCount[m] || 0) + 1; }));
+
+    // (b) proximité des non-participants avec la tablée, d'après l'écart de leurs notes communes.
+    // Un membre est jugé « proche de la tablée » s'il partage des notes avec au moins
+    // la majorité des participants et que ses notes ressemblent aux leurs.
+    const ratingsByUser = {};
+    games.forEach((g) => Object.entries(g.ratings || {}).forEach(([uid, v]) => { (ratingsByUser[uid] ||= {})[g.id] = v; }));
+    const majority = Math.ceil(chosen.length / 2);
+    const tableSim = {}; // uid non participant -> proximité 0..1
+    Object.entries(ratingsByUser).forEach(([uid, mine]) => {
+      if (chosenSet.has(uid)) return;
+      let simSum = 0, simN = 0;
+      chosen.forEach((pid) => {
+        const theirs = ratingsByUser[pid] || {};
+        let d = 0, n = 0;
+        Object.entries(mine).forEach(([gid, v]) => { if (theirs[gid] != null) { d += Math.abs(theirs[gid] - v); n++; } });
+        if (n > 0) { simSum += 1 - (d / n) / 5; simN++; }
+      });
+      if (simN >= majority) tableSim[uid] = simSum / simN;
+    });
+
+    let explore = games
+      .filter((g) => !usedIds.has(g.id) && passFilters(g))
+      .map((g) => {
+        const tr = tableRatings(g);
+        const solo = tr.length === 1 ? Number(tr[0][1]) : 0;
+        // Un jeu mal noté (≤ 2) par un participant n'a rien à faire dans l'exploration.
+        if (solo > 0 && solo <= 2) return null;
+        const soloRater = tr.length === 1 ? (users.find((u) => u.id === tr[0][0])?.name || "") : "";
+        const soloScore = solo >= 4 ? solo / 5 : 0; // seul un « très bien noté » compte
+
+        // mécaniques favorites de la tablée présentes sur ce jeu
+        const mechPts = (g.mechanics || []).reduce((s, m) => s + (favCount[m] || 0), 0);
+        const mechScore = Math.min(1, mechPts / Math.max(1, chosen.length));
+
+        // profils proches (non participants) ayant noté ce jeu
+        let wSum = 0, wTot = 0;
+        Object.entries(g.ratings || {}).forEach(([uid, v]) => {
+          const sim = tableSim[uid];
+          if (sim != null && sim > 0.5) { wSum += sim * v; wTot += sim; }
+        });
+        const peerScore = wTot > 0 ? (wSum / wTot) / 5 : 0;
+
+        const st = gameStats(g);
+        const globalScore = st.count > 0 ? st.avg / 5 : 0;
+
+        const score = 0.35 * mechScore + 0.3 * soloScore + 0.25 * peerScore + 0.1 * globalScore;
+        if (score <= 0) return null; // aucun signal : on n'encombre pas la section
+
+        // raison principale affichée (la composante pondérée la plus forte)
+        const parts = [
+          [0.3 * soloScore, soloRater ? `Coup de coeur de ${soloRater} (${String(solo).replace(".", ",")}/5)` : ""],
+          [0.35 * mechScore, "Mécaniques appréciées par la tablée"],
+          [0.25 * peerScore, "Apprécié par des profils proches de la tablée"],
+          [0.1 * globalScore, "Bien noté par l'association"],
+        ].filter(([v, label]) => v > 0 && label);
+        parts.sort((a, b) => b[0] - a[0]);
+        const reason = parts.length ? parts[0][1] : "";
+
+        return { ...g, _score: score, _reason: reason, _globalAvg: st.avg, _globalCount: st.count };
+      })
+      .filter(Boolean);
+    explore.sort((a, b) => {
+      if (b._score !== a._score) return b._score - a._score;
       if (b._globalAvg !== a._globalAvg) return b._globalAvg - a._globalAvg;
-      if (b._globalCount !== a._globalCount) return b._globalCount - a._globalCount;
       return a.name.localeCompare(b.name, "fr");
     });
 
-    // mode "découverte" : on remonte les envies en priorité ; mode "consensus" : les notés
-    if (mode === "discovery") {
-      // en découverte, on ne change pas l'ordre des sections mais on pourrait pondérer ;
-      // ici on garde la structure claire en 3 sections.
-    }
+    return { discoverGames: discover, regularGames: regular, exploreGames: explore };
+  }, [games, users, chosen, players, duration, mechFilter, hatedMechs]);
 
-    return { discoverGames: discover, regularGames: regular, otherGames: others };
-  }, [games, chosen, players, duration, mechFilter, mode]);
+  // Réinitialise les limites d'affichage quand les critères changent
+  useEffect(() => { setLimits({ discover: STEP, regular: STEP, explore: STEP }); }, [chosen, players, duration, mechFilter]);
 
-  // Réinitialise la limite d'affichage quand les critères changent
-  useEffect(() => { setLimit(40); }, [chosen, players, duration, mechFilter, mode]);
+  // Bouton « Afficher plus » commun aux trois sections
+  const MoreBtn = ({ total, shown, onMore }) => total > shown ? (
+    <button onClick={onMore} style={{
+      marginTop: 8, width: "100%", padding: "9px 16px", borderRadius: 11, border: `1.5px dashed ${C.teal}`, background: "rgba(30,138,138,.05)",
+      color: C.teal, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5,
+    }}>Afficher {Math.min(STEP, total - shown)} jeu{Math.min(STEP, total - shown) > 1 ? "x" : ""} de plus ({total - shown} restant{total - shown > 1 ? "s" : ""})</button>
+  ) : null;
 
   return (
     <Modal open onClose={onClose} title="Classement pour votre tablée" width={620}>
       <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 16px", lineHeight: 1.5 }}>
-        Sélectionnez les membres présents : le classement ne tient compte que de <b>leurs</b> notes. Idéal pour choisir un jeu qui mettra tout le monde d'accord.
+        Sélectionnez les membres présents : les propositions sont automatiquement filtrées pour un jeu jouable par <b>toute la tablée</b>, et les mécaniques détestées par un participant sont exclues.
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
         {users.map((u) => {
@@ -7255,9 +7368,9 @@ function CustomRankModal({ onClose, onOpenGame }) {
       </div>
 
       {/* filtres joueurs + durée */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
         <select value={players} onChange={(e) => setPlayers(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-          <option value="">Nombre de joueurs : tous</option>
+          <option value="">{chosen.length > 0 ? `Joueurs : auto (${chosen.length} — la tablée)` : "Nombre de joueurs : tous"}</option>
           <option value="1">1 joueur</option>
           <option value="2">2 joueurs</option>
           <option value="3">3 joueurs</option>
@@ -7268,26 +7381,21 @@ function CustomRankModal({ onClose, onOpenGame }) {
         </select>
         <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
           <option value="">Durée : toutes</option>
-          <option value="30">≤ 30 min</option>
-          <option value="45">≤ 45 min</option>
-          <option value="60">≤ 1 h</option>
-          <option value="90">≤ 1 h 30</option>
-          <option value="120">≤ 2 h</option>
-          <option value="121">{"> 2 h"}</option>
+          <option value="0-30">Entre 0 et 30 min</option>
+          <option value="31-60">Entre 31 min et 1 h</option>
+          <option value="61-90">Entre 1 h et 1 h 30</option>
+          <option value="91-120">Entre 1 h 30 et 2 h</option>
+          <option value="121-180">Entre 2 h et 3 h</option>
+          <option value="181">3 h et plus</option>
         </select>
-        {chosen.length > 1 && <button onClick={() => setPlayers(String(Math.min(chosen.length, 7)))} style={{ background: "rgba(30,138,138,.1)", border: "none", borderRadius: 10, padding: "0 14px", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>Pour {chosen.length} joueurs</button>}
       </div>
 
-      {/* Bascule mode : valeurs sûres (consensus) vs découverte */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, background: "#f0e8d8", borderRadius: 11, padding: 4, width: "fit-content" }}>
-        {[["consensus", "🛡️ Valeurs sûres"], ["discovery", "✨ Découverte"]].map(([val, label]) => (
-          <button key={val} onClick={() => setMode(val)} style={{
-            padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
-            background: mode === val ? "#fff" : "transparent", color: mode === val ? C.navy : "#9c8d79",
-            boxShadow: mode === val ? "0 1px 4px rgba(0,0,0,.1)" : "none",
-          }}>{label}</button>
-        ))}
-      </div>
+      {/* Rappel des mécaniques exclues par la tablée */}
+      {hatedMechs.size > 0 && (
+        <div style={{ background: "rgba(181,40,58,.07)", border: "1px solid rgba(181,40,58,.2)", borderRadius: 11, padding: "9px 13px", marginBottom: 16, fontSize: 12.5, color: C.red, lineHeight: 1.5 }}>
+          🚫 <b>Mécaniques exclues</b> (détestées par au moins un participant) : {[...hatedMechs].sort((a, b) => a.localeCompare(b, "fr")).join(", ")}
+        </div>
+      )}
 
       {/* Filtre mécaniques (multi-sélection) */}
       {allMechanics.length > 0 && (
@@ -7312,7 +7420,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
 
       {chosen.length === 0 ? (
         <EmptyHint icon={Users} text="Sélectionnez au moins un membre." />
-      ) : (discoverGames.length === 0 && regularGames.length === 0 && otherGames.length === 0) ? (
+      ) : (discoverGames.length === 0 && regularGames.length === 0 && exploreGames.length === 0) ? (
         <EmptyHint icon={Star} text="Aucun jeu ne correspond à ces filtres." />
       ) : (
         <div style={{ display: "grid", gap: 18 }}>
@@ -7325,7 +7433,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux qu'au moins un membre de la tablée souhaite découvrir — l'occasion parfaite !</p>
               <div style={{ display: "grid", gap: 8 }}>
-                {discoverGames.slice(0, limit).map((g, i) => {
+                {discoverGames.slice(0, limits.discover).map((g, i) => {
                   const wanterNames = g._wanters.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean).join(", ");
                   return (
                     <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(181,40,58,.1)" : "rgba(181,40,58,.04)", border: `1px solid ${i === 0 ? "rgba(181,40,58,.3)" : "rgba(181,40,58,.15)"}`, borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
@@ -7343,6 +7451,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
                   );
                 })}
               </div>
+              <MoreBtn total={discoverGames.length} shown={limits.discover} onMore={() => setLimits((l) => ({ ...l, discover: l.discover + STEP }))} />
             </div>
           )}
 
@@ -7353,9 +7462,9 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 <Star size={16} fill={C.amber} color={C.amber} />
                 <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Mieux notés par la tablée ({regularGames.length})</h4>
               </div>
-              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>{chosen.length} membre(s) · à note égale, les jeux les moins joués remontent.</p>
+              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>{chosen.length >= 3 ? "Jeux notés par au moins 2 participants" : `${chosen.length} membre(s)`} · à note égale, les jeux les moins joués remontent.</p>
               <div style={{ display: "grid", gap: 8 }}>
-                {regularGames.slice(0, limit).map((g, i) => (
+                {regularGames.slice(0, limits.regular).map((g, i) => (
                   <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -7371,23 +7480,25 @@ function CustomRankModal({ onClose, onOpenGame }) {
                   </button>
                 ))}
               </div>
+              <MoreBtn total={regularGames.length} shown={limits.regular} onMore={() => setLimits((l) => ({ ...l, regular: l.regular + STEP }))} />
             </div>
           )}
 
-          {/* Section 3 : autres jeux disponibles (non notés par la tablée) */}
-          {otherGames.length > 0 && (
+          {/* Section 3 : exploration ludique */}
+          {exploreGames.length > 0 && (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <Library size={16} color={C.teal} />
-                <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Autres jeux disponibles ({otherGames.length})</h4>
+                <Sparkles size={16} color={C.teal} />
+                <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Exploration ludique ({exploreGames.length})</h4>
               </div>
-              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux compatibles que la tablée n'a pas encore notés — classés par note de l'association.</p>
+              <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Suggestions basées sur les mécaniques favorites des participants, leurs coups de coeur individuels et les goûts des membres au profil proche de la tablée.</p>
               <div style={{ display: "grid", gap: 8 }}>
-                {otherGames.slice(0, limit).map((g, i) => (
+                {exploreGames.slice(0, limits.explore).map((g, i) => (
                   <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(30,138,138,.05)", border: "1px solid rgba(30,138,138,.12)", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: "#b6a78f", width: 26 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>{g.name}</span>
+                      {g._reason && <span style={{ display: "block", fontSize: 12, color: C.teal, fontWeight: 700 }}>{g._reason}</span>}
                       <span style={{ fontSize: 12, color: "#9c8d79" }}>
                         {g._globalCount > 0 ? `${g._globalCount} vote(s) dans l'asso` : "pas encore noté"} · {g.min || "?"}{g.max && g.max !== g.min ? `-${g.max}` : ""} j.{g.time ? ` · ${g.time} min` : ""}
                         {" · "}<span style={{ color: (g.playCount || 0) === 0 ? C.teal : "#9c8d79", fontWeight: (g.playCount || 0) === 0 ? 700 : 400 }}>{(g.playCount || 0) === 0 ? "jamais joué" : `joué ${g.playCount} fois`}</span>
@@ -7401,15 +7512,8 @@ function CustomRankModal({ onClose, onOpenGame }) {
                   </button>
                 ))}
               </div>
+              <MoreBtn total={exploreGames.length} shown={limits.explore} onMore={() => setLimits((l) => ({ ...l, explore: l.explore + STEP }))} />
             </div>
-          )}
-
-          {/* Bouton "Voir plus" si au moins une section dépasse la limite affichée */}
-          {(discoverGames.length > limit || regularGames.length > limit || otherGames.length > limit) && (
-            <button onClick={() => setLimit((l) => l + 40)} style={{
-              justifySelf: "center", padding: "10px 24px", borderRadius: 12, border: `2px solid ${C.teal}`, background: "#fff", color: C.teal,
-              cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14,
-            }}>Voir plus de jeux</button>
           )}
         </div>
       )}
