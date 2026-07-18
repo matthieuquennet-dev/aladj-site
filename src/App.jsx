@@ -3358,6 +3358,10 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Chaque partie a un <b>code</b> affiché à l'écran : les autres joueurs le saisissent dans le champ « code » de la page d'accueil (ou via le lien partagé) pour rejoindre depuis leur propre téléphone et suivre leur temps eux-mêmes. Tout le monde voit les mêmes chronos, en direct.</p>,
         },
         {
+          q: "Compter les points pendant la partie",
+          a: <p style={{ margin: 0 }}>Fini le papier-crayon : sur la ligne de chaque joueur, une pastille <b>score</b> (à 0 au départ) ouvre un clavier type calculatrice. Saisissez directement le score puis validez avec le <b>bouton vert</b>, ou appuyez d'abord sur <b>+</b> ou <b>−</b> pour ajouter ou retrancher des points au score en cours. Les scores sont partagés en direct entre tous les téléphones et repartent à zéro à chaque « Nouvelle partie ».</p>,
+        },
+        {
           q: "Les trois phases : mise en place, jeu, rangement",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le chrono distingue trois temps, pour des statistiques honnêtes :</p>
@@ -9132,7 +9136,7 @@ function MyPlaysSection({ setToast }) {
                         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
                         🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
                       </button>
-                      <button onClick={async () => { if (await askConfirm({ title: "Retirer cette partie ?", message: "Cette partie sera retirée de votre historique. Les autres joueurs de la partie ne sont pas affectés.", confirmLabel: "Retirer" })) await declinePlayParticipation(pl.id); }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
+                      <button onClick={async () => { if (await askConfirm({ title: "Retirer cette partie ?", message: "Cette partie sera retirée de votre historique. Les autres joueurs de la partie ne sont pas affectés.", confirmLabel: "Retirer" })) { const r = await declinePlayParticipation(pl.id); if (r?.error && setToast) setToast("Impossible de retirer la partie : " + r.error); } }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
                     </div>
                   );
                 })}
