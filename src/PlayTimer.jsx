@@ -824,7 +824,8 @@ const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onA
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)', touchAction: 'manipulation',
     userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
   };
-  // pointerdown : la touche reagit des que le doigt se pose, sans attendre le relachement
+  // Touches de SAISIE : reaction au pointerdown (doigt pose), sans attendre le relachement.
+  // Elles ne ferment jamais le pave, donc le click qui suit est absorbe par le pave lui-meme.
   const K = ({ label, on, st, aria }) => (
     <button
       onPointerDown={(e) => { e.preventDefault(); on(); }}
@@ -872,8 +873,13 @@ const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onA
           <K label="C" on={clearAll} aria="Tout effacer" st={{ color: `${C.navy}99` }} />
           <K label="0" on={() => press('0')} />
           <K label="00" on={() => press('00')} st={{ fontSize: 18 }} />
-          <K label="✓" on={() => onApply(preview)} aria="Valider le score"
-            st={{ background: '#2FA24F', color: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.15)' }} />
+          {/* Touche de FERMETURE : declenchee au click (relachement). Fermer des le
+              pointerdown provoquait un click fantome sur l'interface situee derriere
+              (pastille de score), qui rouvrait le pave aussitot. */}
+          <button
+            onClick={() => onApply(preview)}
+            aria-label="Valider le score"
+            style={{ ...keyBase, background: '#2FA24F', color: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.15)' }}>✓</button>
         </div>
 
         <button onClick={onClose} style={{ ...btnGhost, width: '100%', marginTop: 12, textAlign: 'center' }}>Annuler</button>
