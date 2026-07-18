@@ -24,7 +24,7 @@
 //  activé dans Supabase (pour les invités sur leur propre téléphone).
 // =====================================================================
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const C = {
   navy: '#1A3A5C', teal: '#1E8A8A', amber: '#E8A317', red: '#B5283A',
@@ -214,9 +214,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // ---- horloge live (uniquement en partie) ---------------------------
   useEffect(() => {
     if (phase !== 'running' && phase !== 'lobby') return;
+    if (scoreFor) return; // saisie de score en cours : on fige l'horloge pour des appuis instantanes
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
-  }, [phase]);
+  }, [phase, scoreFor]);
 
   // ---- bascule de phase pilotée par le statut de session -------------
   useEffect(() => {
@@ -601,7 +602,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {scoreFor && (() => {
           const sp = players.find((p) => p.id === scoreFor);
           return sp ? (
-            <ScorePad player={sp} onClose={() => setScoreFor(null)}
+            <ScorePad key={sp.id} name={sp.name} initialScore={sp.score || 0}
+              onClose={() => setScoreFor(null)}
               onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
           ) : null;
         })()}
@@ -803,10 +805,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 }
 
 // ---- pave de saisie du score (clavier type calculatrice) -------------
-function ScorePad({ player, onClose, onApply }) {
+const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onApply }) {
   const [entry, setEntry] = useState('');
   const [op, setOp] = useState(null); // null = saisie directe | '+' | '-'
-  const cur = player.score || 0;
+  const cur = initialScore || 0;
   const n = entry === '' ? null : (parseInt(entry, 10) || 0);
   const preview = op
     ? (n == null ? cur : (op === '+' ? cur + n : cur - n))
@@ -820,9 +822,14 @@ function ScorePad({ player, onClose, onApply }) {
     border: 'none', borderRadius: 14, padding: '15px 0', fontFamily: TITLE, fontWeight: 600,
     fontSize: 22, cursor: 'pointer', background: C.white, color: C.navy,
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)', touchAction: 'manipulation',
+    userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
   };
+  // pointerdown : la touche reagit des que le doigt se pose, sans attendre le relachement
   const K = ({ label, on, st, aria }) => (
-    <button onClick={on} aria-label={aria || String(label)} style={{ ...keyBase, ...st }}>{label}</button>
+    <button
+      onPointerDown={(e) => { e.preventDefault(); on(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); on(); } }}
+      aria-label={aria || String(label)} style={{ ...keyBase, ...st }}>{label}</button>
   );
 
   return (
@@ -830,7 +837,7 @@ function ScorePad({ player, onClose, onApply }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 380 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy }}>{player.name}</div>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy }}>{name}</div>
           <div style={{ fontSize: 13, color: `${C.navy}99`, fontWeight: 700 }}>Score actuel : {cur}</div>
         </div>
         <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 10 }}>
@@ -873,7 +880,7 @@ function ScorePad({ player, onClose, onApply }) {
       </div>
     </div>
   );
-}
+});
 
 // ---- petits composants & styles -------------------------------------
 function Centered({ children }) {
