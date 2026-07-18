@@ -81,6 +81,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // ui running
   const [hostView, setHostView] = useState(false);
+  const [scoreFor, setScoreFor] = useState(null); // id du joueur dont on edite le score
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
@@ -119,7 +120,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const refetchPlayers = useCallback(async (sessionId) => {
     const { data } = await supabase
       .from('play_session_players')
-      .select('id,profile_id,guest_name,auth_user_id')
+      .select('id,profile_id,guest_name,auth_user_id,score')
       .eq('session_id', sessionId)
       .order('sort_order', { ascending: true, nullsFirst: false })
       .order('joined_at', { ascending: true });
@@ -354,7 +355,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const openNewGame = () => { setNewGameWinners([]); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
-  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
+  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -378,6 +379,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
+  };
+
+  // ---- score en direct (partage entre tous les telephones) -----------
+  const setPlayerScore = async (playerId, score) => {
+    setPlayers((ps) => ps.map((p) => (p.id === playerId ? { ...p, score } : p))); // optimiste
+    await rpc('set_player_score', { p_session_id: sid, p_player_id: playerId, p_score: score });
   };
 
   // ---- temps affichés ------------------------------------------------
@@ -591,6 +598,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
     return shell(
       <div>
+        {scoreFor && (() => {
+          const sp = players.find((p) => p.id === scoreFor);
+          return sp ? (
+            <ScorePad player={sp} onClose={() => setScoreFor(null)}
+              onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
+          ) : null;
+        })()}
         {newGamePrompt && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
@@ -605,6 +619,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                         border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
                       <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
                       <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                      {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
                       <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
                     </button>
                   );
@@ -686,6 +701,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
                     {!p.auth_user_id && <div style={{ fontSize: 11, color: `${C.navy}88` }}>sans tel</div>}
                   </div>
+                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
+                    style={{ border: `1.5px solid ${C.amber}`, background: '#FDF4E0', color: '#8a6a1f', borderRadius: 999,
+                      padding: '5px 11px', fontFamily: TITLE, fontWeight: 600, fontSize: 15, cursor: 'pointer', flexShrink: 0 }}>
+                    {p.score || 0} pt{Math.abs(p.score || 0) > 1 ? 's' : ''}
+                  </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }} onClick={(e) => e.stopPropagation()}>
                     <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, true); }} disabled={i === 0}
                       style={{ ...orderBtn, opacity: i === 0 ? 0.3 : 1 }} aria-label="Monter dans l'ordre">▲</button>
@@ -743,6 +763,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
                   <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
                   <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                  {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
                   <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
                 </button>
               );
@@ -779,6 +800,79 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }
 
   return null;
+}
+
+// ---- pave de saisie du score (clavier type calculatrice) -------------
+function ScorePad({ player, onClose, onApply }) {
+  const [entry, setEntry] = useState('');
+  const [op, setOp] = useState(null); // null = saisie directe | '+' | '-'
+  const cur = player.score || 0;
+  const n = entry === '' ? null : (parseInt(entry, 10) || 0);
+  const preview = op
+    ? (n == null ? cur : (op === '+' ? cur + n : cur - n))
+    : (n == null ? cur : n);
+  const press = (d) => setEntry((e) => (e + d).replace(/^0+(?=\d)/, '').slice(0, 6));
+  const back = () => setEntry((e) => e.slice(0, -1));
+  const clearAll = () => { setEntry(''); setOp(null); };
+  const pickOp = (o) => setOp((prev) => (prev === o ? null : o));
+
+  const keyBase = {
+    border: 'none', borderRadius: 14, padding: '15px 0', fontFamily: TITLE, fontWeight: 600,
+    fontSize: 22, cursor: 'pointer', background: C.white, color: C.navy,
+    boxShadow: '0 1px 4px rgba(0,0,0,0.08)', touchAction: 'manipulation',
+  };
+  const K = ({ label, on, st, aria }) => (
+    <button onClick={on} aria-label={aria || String(label)} style={{ ...keyBase, ...st }}>{label}</button>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 380 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy }}>{player.name}</div>
+          <div style={{ fontSize: 13, color: `${C.navy}99`, fontWeight: 700 }}>Score actuel : {cur}</div>
+        </div>
+        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 10 }}>
+          Saisis un score puis valide, ou appuie sur + / − pour ajouter ou retrancher des points.
+        </div>
+
+        {/* Ecran de la calculatrice */}
+        <div style={{ background: C.white, borderRadius: 14, padding: '12px 14px', marginBottom: 12,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.06)' }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, color: op ? (op === '+' ? C.teal : C.red) : C.navy }}>
+            {op ? (op === '+' ? '+ ' : '− ') : ''}{entry || (op ? '…' : String(cur))}
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: `${C.navy}99` }}>→ {preview} pt{Math.abs(preview) > 1 ? 's' : ''}</div>
+        </div>
+
+        {/* Clavier */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <K label="7" on={() => press('7')} />
+          <K label="8" on={() => press('8')} />
+          <K label="9" on={() => press('9')} />
+          <K label="+" on={() => pickOp('+')} aria="Ajouter des points"
+            st={{ background: op === '+' ? C.teal : `${C.teal}1a`, color: op === '+' ? C.white : C.teal }} />
+          <K label="4" on={() => press('4')} />
+          <K label="5" on={() => press('5')} />
+          <K label="6" on={() => press('6')} />
+          <K label="−" on={() => pickOp('-')} aria="Retrancher des points"
+            st={{ background: op === '-' ? C.red : `${C.red}1a`, color: op === '-' ? C.white : C.red }} />
+          <K label="1" on={() => press('1')} />
+          <K label="2" on={() => press('2')} />
+          <K label="3" on={() => press('3')} />
+          <K label="⌫" on={back} aria="Effacer le dernier chiffre" st={{ fontSize: 19 }} />
+          <K label="C" on={clearAll} aria="Tout effacer" st={{ color: `${C.navy}99` }} />
+          <K label="0" on={() => press('0')} />
+          <K label="00" on={() => press('00')} st={{ fontSize: 18 }} />
+          <K label="✓" on={() => onApply(preview)} aria="Valider le score"
+            st={{ background: '#2FA24F', color: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.15)' }} />
+        </div>
+
+        <button onClick={onClose} style={{ ...btnGhost, width: '100%', marginTop: 12, textAlign: 'center' }}>Annuler</button>
+      </div>
+    </div>
+  );
 }
 
 // ---- petits composants & styles -------------------------------------
