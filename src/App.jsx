@@ -8,7 +8,7 @@ import {
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
-import PlayTimer from "./PlayTimer";
+import PlayTimer, { ScorePad } from "./PlayTimer";
 
 /* =============================================================================
    ALADJ — À l'assaut des jeux  ·  version connectée à Supabase
@@ -597,6 +597,20 @@ function ScoreDirectionField({ value, onChange }) {
       </div>
     </Field>
   );
+}
+
+// Le pave de saisie du chrono, reutilise pour les parties saisies a la main.
+// On intercepte Escape en phase de capture : sinon la touche fermerait aussi
+// la fenetre d'enregistrement placee dessous.
+function ScorePadOverlay({ name, initialScore, onClose, onApply }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  return <ScorePad name={name} initialScore={initialScore} onClose={onClose} onApply={onApply} />;
 }
 
 // Tableau des scores d'une partie : nom du joueur + points, classe selon
@@ -7514,6 +7528,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [showBoth, setShowBoth] = useState(false); // afficher moyenne + ma note simultanément sur les cartes
   const [sort, setSort] = useState("note");
   const [view, setView] = useState("grid"); // "grid" | "list"
+  // Le tri « Mes meilleures notes » compare forcement ma note a celle de l'association :
+  // les deux notes sont alors affichees d'office sur les vignettes.
+  const bothAuto = !!currentUser && sort === "myNote";
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showCustomRank, setShowCustomRank] = useState(false);
@@ -7674,8 +7691,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
             </button>
             {currentUser && view === "grid" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, padding: "0 4px" }} title="Afficher la note moyenne et votre note en même temps">
-                <input type="checkbox" checked={showBoth} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: "pointer" }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy, padding: "0 4px" }}
+                title={bothAuto ? "Le tri « Mes meilleures notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
+                <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
                 Voir les 2 notes
               </label>
             )}
@@ -7711,7 +7729,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {filtered.slice(0, visibleCount).map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth} />)}
+              {filtered.slice(0, visibleCount).map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth || bothAuto} />)}
             </div>
           )}
           {filtered.length > visibleCount && (
@@ -9850,10 +9868,11 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [scoreDir, setScoreDir] = useState("high");
   // Passe à true dès qu'on coche un trophée à la main : on cesse alors le calcul auto.
   const [winnersTouched, setWinnersTouched] = useState(false);
+  const [scorePadFor, setScorePadFor] = useState(null); // joueur dont on saisit le score
   useEffect(() => {
     if (open) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
-      setWinnersTouched(false);
+      setWinnersTouched(false); setScorePadFor(null);
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
       setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
@@ -9953,13 +9972,21 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
           <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
         </label>
         <div style={{ display: "grid", gap: 8 }}>
-          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— note les points si tu les as, sinon appuie sur 🏆</span></span>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— touche «&nbsp;pts&nbsp;» pour le pavé de score, sinon appuie sur 🏆</span></span>
           {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
           {parts.map((p) => (
             <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
               <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.userId ? "" : " · invité"}</span>
-              <input type="number" inputMode="numeric" value={p.score ?? ""} onChange={(e) => setScore(p.key, e.target.value)} placeholder="pts" title={`Score de ${p.name} (facultatif)`}
-                style={{ width: 68, flexShrink: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, textAlign: "right", background: "#fff", color: C.navy, boxSizing: "border-box" }} />
+              <span style={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${hasScore(p) ? C.amber : "#e6dcc9"}`, background: hasScore(p) ? "#FDF4E0" : "#fff" }}>
+                <button type="button" onClick={() => setScorePadFor(p.key)} title={`Noter le score de ${p.name} (facultatif)`}
+                  style={{ border: "none", background: "transparent", padding: "6px 9px", minWidth: 44, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: hasScore(p) ? "#8a6a1f" : "#b6a78f" }}>
+                  {hasScore(p) ? Number(p.score) : "pts"}
+                </button>
+                {hasScore(p) && (
+                  <button type="button" onClick={() => setScore(p.key, "")} title="Effacer le score"
+                    style={{ border: "none", background: "transparent", padding: "0 6px 0 0", cursor: "pointer", color: "#b08a3a", display: "grid", placeItems: "center" }}><X size={12} /></button>
+                )}
+              </span>
               <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, flexShrink: 0, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
               <button onClick={() => removeP(p.key)} title="Retirer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><X size={16} /></button>
             </div>
@@ -10000,6 +10027,14 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
           <Btn variant="primary" onClick={save} disabled={busy}>{busy ? "Enregistrement…" : "Enregistrer"}</Btn>
         </div>
       </div>
+      {scorePadFor && (() => {
+        const p = parts.find((x) => x.key === scorePadFor);
+        return p ? (
+          <ScorePadOverlay key={p.key} name={p.name} initialScore={Number(p.score) || 0}
+            onClose={() => setScorePadFor(null)}
+            onApply={(v) => { setScore(p.key, String(v)); setScorePadFor(null); }} />
+        ) : null;
+      })()}
     </Modal>
   );
 }
@@ -10018,6 +10053,9 @@ function MyLudoPage({ setToast, setPage }) {
   const [wantFilter, setWantFilter] = useState("");
   const [sort, setSort] = useState("alpha");
   const [view, setView] = useState("grid"); // "grid" | "list"
+  // Le tri « Mes meilleures notes » compare forcement ma note a celle de l'association :
+  // les deux notes sont alors affichees d'office sur les vignettes.
+  const bothAuto = !!currentUser && sort === "myNote";
   const [showBoth, setShowBoth] = useState(false); // afficher moyenne + ma note simultanément sur les cartes
 
   // Possessions en attente : jeux où je suis listé comme propriétaire mais avec confirmed=false.
@@ -10486,8 +10524,9 @@ function MyLudoPage({ setToast, setPage }) {
               {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
             </button>
             {view === "grid" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, padding: "0 4px" }} title="Afficher la note moyenne et votre note en même temps">
-                <input type="checkbox" checked={showBoth} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: "pointer" }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy, padding: "0 4px" }}
+                title={bothAuto ? "Le tri « Mes meilleures notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
+                <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
                 Voir les 2 notes
               </label>
             )}
@@ -10525,7 +10564,7 @@ function MyLudoPage({ setToast, setPage }) {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} showBoth={showBoth} ownerBadge={familyOwnerLabel(g)} />)}
+              {mine.map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} myGame globalShare={currentUser.shareLibrary !== false} onToggleShare={(val) => toggleGameShared(g.id, val)} showBoth={showBoth || bothAuto} ownerBadge={familyOwnerLabel(g)} />)}
             </div>
           )}
         </>
