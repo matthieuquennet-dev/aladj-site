@@ -4,7 +4,8 @@ import {
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
-  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle
+  Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer from "./PlayTimer";
@@ -126,6 +127,9 @@ const C = {
 };
 
 
+// Adresse e-mail de l'association
+const ASSO_EMAIL = "aladj50200@gmail.com";
+
 // Groupes Signal de l'association (lien d'invitation + description)
 const SIGNAL_GROUPS = [
   { name: "Organisation jeux", color: "#1E8A8A", icon: Calendar,
@@ -202,6 +206,7 @@ const DEFAULT_MECHANIC_SUGGESTIONS = [
   "Stop ou encore", "Combos", "Négociation", "Stratégie", "Familial", "Ambiance",
   "Rôles cachés", "Enquête", "Jeu en équipe", "Placement", "Gestion", "Roll'n'write",
   "Flip'n'write", "Jeu de plis", "Jeu de défausse", "Jeu de cartes", "JCC (jeu de cartes à collectionner)",
+  "Enfants",
   "JCE (jeu de cartes évolutif)", "Party game", "Escape game", "Legacy", "Gestion de main",
   "Majorité", "Course", "Exploration", "Construction de moteur", "Tuiles à connecter",
   "Paris", "Mise", "Asymétrique", "Temps réel", "Adresse / dextérité", "Quiz / culture",
@@ -211,6 +216,36 @@ const DEFAULT_MECHANIC_SUGGESTIONS = [
 // pour convertir automatiquement les mecaniques lors des imports BGG.
 let MECHANIC_SUGGESTIONS = DEFAULT_MECHANIC_SUGGESTIONS;
 let MECH_DB_ALIASES = {};
+
+/* ---------- Mecaniques particulieres (composeur de tablee) ---------- */
+// Normalise une mecanique pour comparaison : minuscules, sans accents.
+const normMech = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+// Un jeu est « pour enfants » s'il porte la mecanique « Enfants ».
+const isKidsGame = (g) => (g?.mechanics || []).some((m) => normMech(m).startsWith("enfant"));
+// Jeux « one shot » : une fois joues, l'interet retombe (l'histoire est connue).
+const ONE_SHOT_MECHANICS = ["Enquête", "Escape game", "Legacy"];
+const ONE_SHOT_SET = new Set(ONE_SHOT_MECHANICS.map(normMech));
+const isOneShotGame = (g) => (g?.mechanics || []).some((m) => ONE_SHOT_SET.has(normMech(m)));
+
+/* ---------- Comptes enfants ---------- */
+// Age limite : le jour de ses 14 ans, la tetine disparait automatiquement.
+const CHILD_AGE_LIMIT = 14;
+// Age d'un membre si sa date de naissance COMPLETE est renseignee, sinon null.
+function memberAge(u) {
+  if (!u || !u.birthYear || !u.birthMonth || !u.birthDay) return null;
+  const now = new Date();
+  let age = now.getFullYear() - Number(u.birthYear);
+  const m = now.getMonth() + 1, d = now.getDate();
+  if (m < Number(u.birthMonth) || (m === Number(u.birthMonth) && d < Number(u.birthDay))) age -= 1;
+  return age;
+}
+// Un compte est « enfant » si la case est cochee ET qu'il n'a pas encore 14 ans
+// (si aucune date de naissance complete n'est connue, la case fait foi).
+function isChildAccount(u) {
+  if (!u || !u.isChild) return false;
+  const age = memberAge(u);
+  return age == null || age < CHILD_AGE_LIMIT;
+}
 
 /* =============================================================================
    STORAGE — Upload des images vers Supabase Storage
@@ -498,6 +533,28 @@ function MemberBadgesRow({ member, data }) {
   );
 }
 
+// Tetine : marque visuelle des comptes enfants (pendant de la couronne des decisionnaires).
+function PacifierIcon({ size = 13, color = C.purple }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flexShrink: 0, display: "block" }}>
+      <circle cx="12" cy="4.4" r="3.1" stroke={color} strokeWidth="2.2" />
+      <ellipse cx="12" cy="12.3" rx="7.6" ry="4.4" fill={color} />
+      <path d="M12 16.2c2.3 0 3.8 1.5 3.8 3.3S14.3 22.8 12 22.8 8.2 21.3 8.2 19.5 9.7 16.2 12 16.2Z" fill={color} />
+    </svg>
+  );
+}
+
+// Tetine affichee a cote du nom d'un membre enfant (listes, commentaires, soirees...)
+function ChildPacifierFor({ id, size = 13 }) {
+  const { childIds } = useApp();
+  if (!id || !childIds || !childIds.has(id)) return null;
+  return (
+    <span title={`Compte enfant (moins de ${CHILD_AGE_LIMIT} ans)`} style={{ display: "inline-flex", flexShrink: 0 }}>
+      <PacifierIcon size={size} />
+    </span>
+  );
+}
+
 function DeciderCrownFor({ id, size = 13 }) {
   const { deciderIds } = useApp();
   if (!id || !deciderIds || !deciderIds.has(id)) return null;
@@ -590,13 +647,15 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     playCount: playCountByGame[row.id] || 0,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
+    // "high" = le plus grand score l'emporte, "low" = le plus petit, null = non renseigne
+    scoreDirection: row.score_direction || null,
   };
 }
 function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
-    deadline: row.deadline || null,
+    deadline: row.deadline || null, isPrivate: row.is_private === true,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     // un membre invité (event_guests.member_id) qui s'est aussi inscrit comme participant
     // n'est ni affiché ni compté deux fois : on le retire de la liste des invités
@@ -667,8 +726,8 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year").order("name"),
-        fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url", ["id"]),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
+        fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
         fetchAllRows("event_players", "*", ["event_id", "user_id"]),
@@ -720,7 +779,8 @@ function AppProvider({ children }) {
         id: gp.id, gameId: gp.game_id, playedAt: gp.played_at, occurrence: gp.occurrence || 1,
         sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by, durationSeconds: gp.duration_seconds || null,
         participants: (partsByPlay[gp.id] || []).map((pp) => ({
-          userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner,
+          userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner, confirmed: pp.confirmed !== false,
+          score: pp.score == null ? null : Number(pp.score),
           name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
         })),
       }));
@@ -767,7 +827,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -888,6 +948,7 @@ function AppProvider({ children }) {
       sessionId: gp.session_id, eventId: gp.event_id, recordedBy: gp.recorded_by, durationSeconds: gp.duration_seconds || null,
       participants: (partsByPlay[gp.id] || []).map((pp) => ({
         userId: pp.user_id, guestName: pp.guest_name, isWinner: pp.is_winner, confirmed: pp.confirmed !== false,
+        score: pp.score == null ? null : Number(pp.score),
         name: pp.user_id ? (nameById[pp.user_id] || "Membre") : (pp.guest_name || "Invité"),
       })),
     })));
@@ -930,7 +991,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, isChild: data.is_child === true, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1387,6 +1448,7 @@ function AppProvider({ children }) {
     const { data, error } = await supabase.from("events").insert({
       event_date: d.date, event_time: d.time, place: d.place, place_id: d.placeId || null, min_players: d.min, max_players: d.max,
       notes: d.notes || "", online: d.online || false, host_id: currentUser.id, deadline: d.deadline || null,
+      is_private: !!d.isPrivate,
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
@@ -1412,6 +1474,7 @@ function AppProvider({ children }) {
     const { error } = await supabase.from("events").update({
       event_date: patch.date, event_time: patch.time, place: patch.place, place_id: patch.placeId || null,
       min_players: patch.min, max_players: patch.max, notes: patch.notes || "", online: patch.online || false, deadline: patch.deadline || null,
+      is_private: !!patch.isPrivate,
     }).eq("id", id);
     if (error) return { error: error.message };
     await loadData();
@@ -1798,6 +1861,31 @@ function AppProvider({ children }) {
     await loadData();
   }, [currentUser, events, loadData]);
 
+  // Retirer une inscription d'un moment jeux.
+  // Autorisé pour : le créateur du moment, le participant lui-même, un administrateur.
+  // (la règle SQL correspondante — policy ep_delete_host_admin — doit être appliquée
+  //  pour que le créateur et les admins puissent supprimer la ligne d'un autre membre)
+  const removePlayer = useCallback(async (eventId, userId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const ev = events.find((e) => e.id === eventId);
+    const allowed = userId === currentUser.id || currentUser.admin === true || (ev && ev.hostId === currentUser.id);
+    if (!allowed) return { error: "Seuls le créateur du moment, le participant lui-même ou un administrateur peuvent retirer une inscription." };
+    // .select() pour confirmer l'écriture : un delete bloqué par RLS ne renvoie pas
+    // d'erreur mais ne touche aucune ligne — on le détecte ici.
+    const { data, error } = await supabase.from("event_players").delete().eq("event_id", eventId).eq("user_id", userId).select("user_id");
+    if (error) return { error: error.message };
+    if (!data || data.length === 0) return { error: "Retrait impossible : droits insuffisants côté base de données." };
+    if (userId !== currentUser.id) {
+      await notifyUsers([userId], {
+        type: "event_invite",
+        message: `${currentUser.name} vous a retiré du moment jeux du ${formatDateFr(ev?.date || "")}`,
+        linkKind: "event", linkId: eventId,
+      });
+    }
+    await loadData();
+    return {};
+  }, [currentUser, events, loadData, notifyUsers]);
+
   const removeEvent = useCallback(async (id) => { await supabase.from("events").delete().eq("id", id); await loadData(); }, [loadData]);
 
   // Nombre de "moments jeux" À VENIR créés depuis ma dernière visite de la page
@@ -1951,6 +2039,7 @@ function AppProvider({ children }) {
     const seen = currentUser.momentsSeenAt ? new Date(currentUser.momentsSeenAt).getTime() : 0;
     return (events || []).filter((e) => {
       if (!e.date || e.hostId === currentUser.id) return false;
+      if (!canViewEvent(e, currentUser)) return false;
       const d = new Date(e.date);
       if (isNaN(d.getTime())) return false;
       return d >= today && (e.createdAt || 0) > seen;
@@ -2066,7 +2155,7 @@ function AppProvider({ children }) {
     household, householdByUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
-    addEvent, updateEvent, toggleJoin, removeEvent, addPlayedGame, removePlayedGame,
+    addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
     addGuest, removeGuest, confirmEventInvite, declineEventInvite, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
     addPlace, updatePlace,
@@ -2095,6 +2184,28 @@ function isEventVisible(e) {
   if (now < limit) return true; // limite pas encore atteinte
   const totalPlayers = (e.players?.length || 0) + (e.guests?.length || 0);
   return totalPlayers >= e.min; // après la limite : visible seulement si quorum atteint
+}
+
+// ---- Moments jeux PRIVÉS ----
+// Un membre est « convié » à un moment : il l'a créé, il y est inscrit,
+// ou il figure parmi les invités nommés (invitation en attente comprise).
+function isEventInvited(e, u) {
+  if (!e || !u) return false;
+  if (e.hostId === u.id) return true;
+  if ((e.players || []).some((p) => p.id === u.id)) return true;
+  return (e.guests || []).some((g) => g.memberId === u.id);
+}
+// Qui peut voir un moment : tout le monde s'il est public ;
+// seulement les conviés et les administrateurs s'il est privé.
+function canViewEvent(e, u) {
+  if (!e || !e.isPrivate) return true;
+  if (!u) return false;
+  return isEventInvited(e, u) || u.admin === true;
+}
+// Un moment privé s'affiche en grisé pour un administrateur qui n'y est pas convié :
+// il le voit et peut agir dessus, mais il est visuellement mis à part.
+function isEventDimmed(e, u) {
+  return !!(e && e.isPrivate && u && u.admin === true && !isEventInvited(e, u));
 }
 
 // Un moment est « annulé » quand sa date limite de validation est passée
@@ -2883,31 +2994,46 @@ function AuthModal({ mode, onClose, setToast }) {
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
   const [welcome, setWelcome] = useState(null); // { name } → affiche l'écran de bienvenue + consigne de présentation
+  // Écran d'engagement affiché AVANT toute création de compte : "email" ou "google"
+  // selon la méthode d'inscription choisie.
+  const [pledge, setPledge] = useState(null);
+  const [pledgeOk, setPledgeOk] = useState(false);       // case d'engagement cochée
+  const [pledgeWay, setPledgeWay] = useState("signal");  // "signal" | "mail"
   useEffect(() => setTab(mode), [mode]);
 
+  // Connexion Google : directe si on se connecte, précédée de l'engagement si on s'inscrit.
+  const runGoogle = async () => {
+    setErr("");
+    const res = await loginWithGoogle();
+    if (res?.error) { setPledge(null); setErr(res.error); }
+  };
+
+  // Création effective du compte, une fois l'engagement validé.
+  const doRegister = async () => {
+    setErr(""); setBusy(true);
+    const res = await register(form);
+    setBusy(false);
+    if (res.error) { setPledge(null); setErr(res.error); return; }
+    setPledge(null);
+    setWelcome({ name: res.user.name, needsConfirm: !!res.needsConfirm, way: pledgeWay });
+  };
+
   const submit = async () => {
-    setErr(""); setInfo(""); setBusy(true);
-    let res;
-    if (tab === "login") res = await login({ email: form.email, pwd: form.pwd });
-    else {
-      if (!form.name.trim()) { setErr("Indiquez votre nom ou pseudo."); setBusy(false); return; }
-      if (form.pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); setBusy(false); return; }
-      if (form.pwd !== form.pwd2) { setErr("Les deux mots de passe ne correspondent pas."); setBusy(false); return; }
-      res = await register(form);
+    setErr(""); setInfo("");
+    if (tab === "register") {
+      // On valide le formulaire, puis on passe par l'écran d'engagement (Signal / présentation)
+      // avant de créer réellement le compte.
+      if (!form.name.trim()) { setErr("Indiquez votre nom ou pseudo."); return; }
+      if (!form.email.trim()) { setErr("Indiquez votre adresse e-mail."); return; }
+      if (form.pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
+      if (form.pwd !== form.pwd2) { setErr("Les deux mots de passe ne correspondent pas."); return; }
+      setPledgeOk(false); setPledgeWay("signal"); setPledge("email");
+      return;
     }
+    setBusy(true);
+    const res = await login({ email: form.email, pwd: form.pwd });
     setBusy(false);
     if (res.error) { setErr(res.error); return; }
-    if (res.needsConfirm) {
-      // Confirmation e-mail requise : on affiche l'écran de bienvenue avec la consigne de présentation,
-      // en précisant aussi qu'il faut confirmer son adresse.
-      setWelcome({ name: res.user.name, needsConfirm: true });
-      return;
-    }
-    if (tab === "register") {
-      // Inscription réussie et connecté directement → écran de bienvenue avec consigne de présentation.
-      setWelcome({ name: res.user.name, needsConfirm: false });
-      return;
-    }
     onClose();
     setToast(`Bienvenue ${res.user.name} !`);
   };
@@ -2945,6 +3071,90 @@ function AuthModal({ mode, onClose, setToast }) {
     );
   }
 
+  // Écran d'engagement : dernière étape avant la création du compte.
+  // Rappelle que l'association vit surtout sur Signal et fait choisir
+  // la façon de se présenter (Signal ou e-mail).
+  if (pledge) {
+    return (
+      <Modal open onClose={onClose} title="Avant de créer votre compte" width={540}>
+        <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "rgba(30,138,138,.1)", border: `1.5px solid ${C.teal}44`, borderRadius: 14, padding: "14px 16px", marginBottom: 16 }}>
+          <MessageCircle size={22} color={C.teal} style={{ flexShrink: 0, marginTop: 1 }} />
+          <p style={{ margin: 0, fontSize: 14, color: "#5e5346", lineHeight: 1.6 }}>
+            Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b> : c'est là que les moments jeux se calent, que les places de dernière minute se prennent et que l'on discute au quotidien. S'y inscrire <b>n'est pas obligatoire</b>, mais c'est <b>de loin le plus pratique</b> — sans cela, vous risquez de passer à côté de beaucoup de choses.
+          </p>
+        </div>
+
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15, marginBottom: 8 }}>1. Rejoignez au moins une conversation</div>
+        <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+          {SIGNAL_GROUPS.map((gp) => {
+            const Ico = gp.icon;
+            return (
+              <a key={gp.name} href={gp.url} target="_blank" rel="noopener noreferrer"
+                style={{ display: "flex", alignItems: "center", gap: 11, textDecoration: "none", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 12, padding: "10px 13px" }}>
+                <span style={{ width: 32, height: 32, borderRadius: 9, background: `${gp.color}1f`, display: "grid", placeItems: "center", flexShrink: 0 }}><Ico size={16} color={gp.color} /></span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14 }}>{gp.name}</span>
+                  <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.4 }}>{gp.desc}</span>
+                </span>
+                <ExternalLink size={15} color="#b6a78f" style={{ flexShrink: 0 }} />
+              </a>
+            );
+          })}
+        </div>
+
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15, marginBottom: 8 }}>2. Présentez-vous</div>
+        <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}55`, borderRadius: 13, padding: "13px 15px", marginBottom: 14 }}>
+          <p style={{ margin: "0 0 8px", fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
+            Quelques mots suffisent, pour que l'on sache qui vous êtes :
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, color: "#5e5346", lineHeight: 1.75 }}>
+            <li>qui vous êtes (prénom, d'où vous venez) ;</li>
+            <li>si vous êtes <b>joueur régulier</b>, <b>vacancier régulier dans la région</b> ou <b>vacancier de passage</b> ;</li>
+            <li>vos <b>moments idéaux pour jouer</b> (jours, horaires) ;</li>
+            <li>et, si vous voulez, les jeux que vous aimez.</li>
+          </ul>
+        </div>
+
+        <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+          {[
+            { v: "signal", t: "Je me présente sur Signal", d: "Le plus simple : rejoignez « Organisation jeux » et dites-nous bonjour." },
+            { v: "mail",   t: "Je préfère envoyer un e-mail", d: `Écrivez-nous à ${ASSO_EMAIL} — nous vous répondrons en vous redonnant les liens Signal.` },
+          ].map((opt) => {
+            const active = pledgeWay === opt.v;
+            return (
+              <button key={opt.v} type="button" onClick={() => setPledgeWay(opt.v)}
+                style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "11px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", border: `2px solid ${active ? C.teal : "#e6dcc9"}`, background: active ? "rgba(30,138,138,.07)" : "#fff" }}>
+                <span style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${active ? C.teal : "#c5b69c"}`, marginTop: 2, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                  {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.teal }} />}
+                </span>
+                <span>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{opt.t}</span>
+                  <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 2, lineHeight: 1.45 }}>{opt.d}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 11, padding: "12px 14px", borderRadius: 12, background: pledgeOk ? "rgba(30,138,138,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${pledgeOk ? C.teal : "transparent"}`, marginBottom: 16, cursor: "pointer" }}>
+          <input type="checkbox" checked={pledgeOk} onChange={(ev) => setPledgeOk(ev.target.checked)} style={{ width: 19, height: 19, accentColor: C.teal, marginTop: 1, flexShrink: 0 }} />
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, lineHeight: 1.5 }}>
+            En m'inscrivant, je m'engage à me présenter à l'association — soit en rejoignant une conversation Signal et en m'y présentant, soit en envoyant un e-mail de présentation.
+          </span>
+        </label>
+
+        {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="soft" size="lg" onClick={() => { setPledge(null); setErr(""); }} style={{ flex: 1 }}>Retour</Btn>
+          <Btn variant="amber" size="lg" disabled={!pledgeOk || busy} onClick={() => (pledge === "google" ? runGoogle() : doRegister())} style={{ flex: 2 }}>
+            {busy ? <Loader2 size={18} className="aladj-spin" /> : <><Sparkles size={18} /> {pledge === "google" ? "Continuer avec Google" : "Créer mon compte"}</>}
+          </Btn>
+        </div>
+      </Modal>
+    );
+  }
+
   // Écran de bienvenue après inscription : rappelle de se présenter à l'association.
   if (welcome) {
     return (
@@ -2961,14 +3171,45 @@ function AuthModal({ mode, onClose, setToast }) {
               Pensez d'abord à confirmer votre adresse via le mail que nous venons de vous envoyer, puis connectez-vous.
             </p>
           )}
-          <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 14, padding: "16px 18px", margin: "0 0 20px", textAlign: "left" }}>
+          <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}`, borderRadius: 14, padding: "16px 18px", margin: "0 0 16px", textAlign: "left" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <Info size={18} color={C.amber} style={{ flexShrink: 0, marginTop: 2 }} />
               <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: 0 }}>
-                <b>N'oubliez pas de vous présenter&nbsp;!</b> Faites-vous connaître auprès de l'association, soit par e-mail à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 600 }}>aladj50200@gmail.com</a>, soit dans la conversation Signal «&nbsp;Organisation jeux&nbsp;». Cela nous permet de faire connaissance et de vous accueillir comme il se doit.
+                <b>Dernière étape : présentez-vous&nbsp;!</b> Dites-nous qui vous êtes, si vous êtes joueur régulier, vacancier régulier dans la région ou de passage, et vos moments idéaux pour jouer.
               </p>
             </div>
           </div>
+
+          {welcome.way === "mail" ? (
+            <div style={{ textAlign: "left", marginBottom: 20 }}>
+              <a href={`mailto:${ASSO_EMAIL}?subject=${encodeURIComponent("Présentation - nouveau membre ALADJ")}&body=${encodeURIComponent(["Bonjour,", "", "Je viens de creer mon compte sur aladj.fr et je me presente :", "", "- Qui je suis : ", "- Je suis plutot : joueur regulier / vacancier regulier dans la region / vacancier de passage", "- Mes moments ideaux pour jouer (jours, horaires) : ", "- Les jeux que j'aime : ", "", "A bientot autour d'une table !"].join("\n"))}`}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: C.teal, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14.5, padding: "12px 18px", borderRadius: 12, textDecoration: "none" }}>
+                <Mail size={17} /> Écrire mon message de présentation
+              </a>
+              <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "9px 2px 0", lineHeight: 1.55 }}>
+                Le message est déjà pré-rempli, il ne vous reste qu'à compléter. Nous vous répondrons en vous redonnant les liens des conversations Signal — c'est là que tout s'organise.
+              </p>
+            </div>
+          ) : (
+            <div style={{ textAlign: "left", marginBottom: 20 }}>
+              <div style={{ display: "grid", gap: 7 }}>
+                {SIGNAL_GROUPS.map((gp) => {
+                  const Ico = gp.icon;
+                  return (
+                    <a key={gp.name} href={gp.url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 11, padding: "9px 12px" }}>
+                      <span style={{ width: 28, height: 28, borderRadius: 8, background: `${gp.color}1f`, display: "grid", placeItems: "center", flexShrink: 0 }}><Ico size={15} color={gp.color} /></span>
+                      <span style={{ flex: 1, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5 }}>{gp.name}</span>
+                      <ExternalLink size={14} color="#b6a78f" />
+                    </a>
+                  );
+                })}
+              </div>
+              <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "9px 2px 0", lineHeight: 1.55 }}>
+                Rejoignez au moins «&nbsp;Organisation jeux&nbsp;» et présentez-vous. Vous préférez l'e-mail&nbsp;? Écrivez à <a href={`mailto:${ASSO_EMAIL}`} style={{ color: C.teal, fontWeight: 600 }}>{ASSO_EMAIL}</a>.
+              </p>
+            </div>
+          )}
           <Btn full variant="teal" size="lg" onClick={() => { onClose(); setToast(`Bienvenue ${welcome.name} !`); }}>
             <Check size={17} /> J'ai compris
           </Btn>
@@ -2991,7 +3232,7 @@ function AuthModal({ mode, onClose, setToast }) {
       {info && <div style={{ background: "rgba(30,138,138,.12)", color: C.teal, padding: "12px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14, lineHeight: 1.5 }}>{info}</div>}
 
       {/* Connexion Google */}
-      <button onClick={async () => { setErr(""); const res = await loginWithGoogle(); if (res?.error) setErr(res.error); }}
+      <button onClick={() => { setErr(""); if (tab === "register") { setPledgeOk(false); setPledgeWay("signal"); setPledge("google"); return; } runGoogle(); }}
         style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "12px", borderRadius: 12, border: "1.5px solid #e0d4bf", background: "#fff", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: C.navy, marginBottom: 16 }}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
@@ -3050,6 +3291,7 @@ function AuthModal({ mode, onClose, setToast }) {
       {tab === "register" && (
         <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "0 0 14px", lineHeight: 1.5 }}>
           Tout le monde s'inscrit comme <b>membre</b> (gratuit). Le statut de <b>membre décisionnaire</b> (cotisation 20 €/an, voix délibérative en AG) s'obtient ensuite depuis Mon espace.
+          <br />Une dernière étape vous rappellera nos conversations <b>Signal</b>, où se passe l'essentiel de la vie de l'association.
         </p>
       )}
 
@@ -3159,7 +3401,9 @@ function GuidePage() {
         {
           q: "Créer un compte et se connecter",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google). Pensez ensuite à vous présenter à l'association — conversation Signal « Organisation jeux » ou e-mail.</p>
+            <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google).</p>
+            <p style={{ margin: "0 0 8px" }}>Avant la création effective du compte, un <b>écran d'engagement</b> s'affiche. Il rappelle que <b>l'essentiel de la vie de l'association se passe sur Signal</b> : s'y inscrire n'est pas obligatoire, mais c'est de loin le plus pratique pour ne rien rater. Vous y trouvez les liens des trois conversations et vous choisissez comment vous présenter : <b>sur Signal</b> ou <b>par e-mail</b>. Une case à cocher confirme cet engagement.</p>
+            <p style={{ margin: "0 0 8px" }}>Se présenter, c'est dire en quelques mots <b>qui vous êtes</b>, si vous êtes <b>joueur régulier</b>, <b>vacancier régulier dans la région</b> ou <b>vacancier de passage</b>, et vos <b>moments idéaux pour jouer</b>. Si vous choisissez l'e-mail, un message pré-rempli vous est proposé sur l'écran de bienvenue — nous vous répondrons en vous redonnant les liens Signal.</p>
             <p style={{ margin: 0 }}>Mot de passe oublié ? Sur l'écran de connexion, cliquez sur <b style={{ color: C.teal }}>« Mot de passe oublié ? »</b> : vous recevrez un lien par e-mail pour en choisir un nouveau.</p>
           </>,
         },
@@ -3260,7 +3504,29 @@ function GuidePage() {
           q: "Proposer un moment et comprendre le quorum",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Page <b>Moments jeux</b> → « Proposer un moment jeux » (ou cliquez directement un jour libre du calendrier). Choisissez présentiel ou <b>en ligne sur Board Game Arena</b> — les jeux BGA sont gratuits pour tous grâce au compte premium de l'association.</p>
+            <p style={{ margin: "0 0 8px" }}>Une case <b>« Moment jeux privé »</b> (décochée par défaut) permet de réserver le moment aux personnes que vous invitez — voir la question dédiée ci-dessous.</p>
             <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
+          </>,
+        },
+        {
+          q: "Créer un moment jeux privé",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>À la création (ou à la modification) d'un moment jeux, cochez <b>« Moment jeux privé »</b>. Cette case est <b>décochée par défaut</b> et fonctionne aussi bien pour un moment <b>en présentiel</b> que <b>en ligne sur BGA</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Un moment privé n'est visible que par les <b>membres conviés</b> : son créateur, les inscrits, et les invités que vous ajoutez. Il <b>n'apparaît pas</b> dans le calendrier des autres membres, ni sur la page d'accueil, ni dans le <b>flux d'abonnement iCal</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>administrateurs du site</b> le voient malgré tout, <b>en grisé</b> dans le calendrier, et peuvent interagir avec lui comme avec n'importe quel autre moment (modération). Un cadenas 🔒 signale les moments privés.</p>
+            <p style={{ margin: 0 }}>Pensez à <b>ajouter vos invités</b> dès la création : sans invité, vous seriez seul à voir votre moment. Le partage sur Signal n'est logiquement pas proposé après la création d'un moment privé.</p>
+          </>,
+        },
+        {
+          q: "Retirer un participant d'un moment jeux",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans la fiche du moment, une petite croix apparaît à côté du nom des participants que vous avez le droit de retirer. Trois profils peuvent le faire :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>le <b>créateur du moment jeux</b>, pour n'importe quel participant ;</li>
+              <li>le <b>participant lui-même</b> (équivalent du bouton « Me retirer ») ;</li>
+              <li>un <b>administrateur</b> du site.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Une confirmation est toujours demandée. Le membre retiré par quelqu'un d'autre en est <b>informé par une notification</b> et peut se réinscrire librement s'il le souhaite. Pour les <b>invités</b> (non-membres ou invitations en attente), le retrait reste réservé à celui qui les a ajoutés, au créateur et aux administrateurs.</p>
           </>,
         },
         {
@@ -3268,7 +3534,7 @@ function GuidePage() {
           a: <>
             <Illu caption="La légende du calendrier — et le jour actuel, entouré de bleu nuit.">
               <span style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "center" }}>
-                <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color={C.navy} label="Aujourd'hui" outline />
+                <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color="#9A8F7E" label="Privé — vue administrateur" /><Legend color={C.navy} label="Aujourd'hui" outline />
               </span>
             </Illu>
             <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un. Un 🎂 signale l'anniversaire d'un membre — et la fiche d'un moment ce jour-là le rappelle fièrement.</p>
@@ -3438,13 +3704,13 @@ function HomePage({ setPage, onAuth }) {
   };
   const upcoming = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    return [...events].filter((e) => e.date >= today && isEventVisible(e)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
-  }, [events]);
+    return [...events].filter((e) => e.date >= today && isEventVisible(e) && canViewEvent(e, currentUser)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 3);
+  }, [events, currentUser]);
   // nombre de moments à venir (pour le compteur d'accueil)
   const upcomingCount = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    return events.filter((e) => e.date >= today && isEventVisible(e)).length;
-  }, [events]);
+    return events.filter((e) => e.date >= today && isEventVisible(e) && canViewEvent(e, currentUser)).length;
+  }, [events, currentUser]);
 
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
@@ -4095,6 +4361,7 @@ function EventCardMini({ e, onOpen }) {
   const { currentUser } = useApp();
   const filled = e.players.length + (e.guests?.length || 0);
   const reached = filled >= e.min;
+  const dimmed = isEventDimmed(e, currentUser);
   // Couleurs cohérentes avec le calendrier : en ligne (BGA) => violet/ambre, présentiel => teal/rouge
   const accent = e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red);
   const headerGrad = e.online
@@ -4112,7 +4379,12 @@ function EventCardMini({ e, onOpen }) {
         </div>
         <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Confirmée</> : "En attente"}</Badge>
       </div>
-      <div style={{ padding: 20 }}>
+      {e.isPrivate && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 20px", background: dimmed ? "rgba(120,110,95,.14)" : "rgba(107,58,122,.1)", fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: dimmed ? "#6b6250" : C.purple }}>
+          <Lock size={13} /> {dimmed ? "Moment privé — vous le voyez en tant qu'administrateur" : "Moment privé — sur invitation"}
+        </div>
+      )}
+      <div style={{ padding: 20, opacity: dimmed ? 0.72 : 1 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", color: C.navy, fontWeight: 600, fontFamily: "'Fredoka',sans-serif", marginBottom: 10 }}>
           {e.online ? <Globe size={16} color={accent} /> : <MapPin size={16} color={accent} />} {currentUser ? e.place : <i style={{ color: "#9c8d79", fontWeight: 500 }}>Lieu réservé aux membres connectés</i>}
         </div>
@@ -4179,13 +4451,16 @@ function EventsPage({ onAuth, setToast }) {
   const [calSub, setCalSub] = useState(false); // fenêtre « s'abonner au calendrier »
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
+  // Les moments privés ne sont visibles que par les membres conviés (et, en grisé, par les admins).
+  const visibleEvents = useMemo(() => events.filter((e) => canViewEvent(e, currentUser)), [events, currentUser]);
+
   const sorted = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     // Les moments annulés (quorum non atteint) restent visibles, en noir.
-    return [...events].filter((e) => e.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-  }, [events]);
+    return [...visibleEvents].filter((e) => e.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }, [visibleEvents]);
 
-  const selectedEvent = events.find((e) => e.id === selected);
+  const selectedEvent = visibleEvents.find((e) => e.id === selected);
   // (le rendu du modal d'abonnement est ajouté en bas de page)
 
   // grille calendrier
@@ -4198,10 +4473,10 @@ function EventsPage({ onAuth, setToast }) {
     for (let i = 0; i < startDay; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
       const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      cells.push({ d, iso, events: events.filter((e) => e.date === iso) });
+      cells.push({ d, iso, events: visibleEvents.filter((e) => e.date === iso) });
     }
     return cells;
-  }, [monthCursor, events]);
+  }, [monthCursor, visibleEvents]);
 
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 80px" }}>
@@ -4257,8 +4532,10 @@ function EventsPage({ onAuth, setToast }) {
                 })()}
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
-                  const pillBg = isEventExpired(e) ? "#2B2B2B" : (e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red));
-                  return <span key={e.id} style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: pillBg, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.time}</span>;
+                  const dimmed = isEventDimmed(e, currentUser);
+                  const pillBg = dimmed ? "#9A8F7E" : (isEventExpired(e) ? "#2B2B2B" : (e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red)));
+                  return <span key={e.id} title={e.isPrivate ? (dimmed ? "Moment privé (vue administrateur)" : "Moment privé — sur invitation") : undefined}
+                    style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: pillBg, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.isPrivate ? "🔒" : ""}{e.time}</span>;
                 })}
                 {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
               </button>
@@ -4266,7 +4543,7 @@ function EventsPage({ onAuth, setToast }) {
           })}
         </div>
         <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color={C.navy} label="Aujourd'hui" outline />
+          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" />{currentUser?.admin && <Legend color="#9A8F7E" label="Privé — vue administrateur" />}<Legend color={C.navy} label="Aujourd'hui" outline />
           <button onClick={() => setCalSub(true)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, padding: "2px 4px" }}>
             <CalendarPlus size={15} /> S'abonner au calendrier
           </button>
@@ -4280,7 +4557,7 @@ function EventsPage({ onAuth, setToast }) {
         {sorted.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setSelected(e.id)} />)}
       </div>
 
-      {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); setJustCreated(d); return {}; }} />}
+      {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); if (!d.isPrivate) setJustCreated(d); return {}; }} />}
       {justCreated && <ShareEventModal event={justCreated} onClose={() => setJustCreated(null)} />}
       {dayPicker && (
         <Modal open onClose={() => setDayPicker(null)} title="Plusieurs moments jeux ce jour">
@@ -4391,7 +4668,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, isPrivate: false, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -4418,7 +4695,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     const res = await onCreate({
       date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online,
       min: minN, max: maxN, notes: f.notes.trim(),
-      joinSelf: f.joinSelf, deadline, invites,
+      joinSelf: f.joinSelf, isPrivate: f.isPrivate, deadline, invites,
     });
     setBusy(false);
     if (res?.error) setErr(res.error);
@@ -4478,6 +4755,24 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Je m'inscris à ce moment jeux</span>
       </label>
 
+      {/* moment jeux privé */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.isPrivate ? "rgba(107,58,122,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.isPrivate ? C.purple : "transparent"}`, marginBottom: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.isPrivate} onChange={(e) => setF({ ...f, isPrivate: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          <Lock size={14} style={{ verticalAlign: "-2px", marginRight: 5, color: f.isPrivate ? C.purple : "#9c8d79" }} />
+          Moment jeux privé
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 3 }}>
+            Seuls les membres que vous invitez le verront dans le calendrier. Il n'apparaîtra pas dans le calendrier public ni dans le flux d'abonnement iCal. Les administrateurs du site le voient en grisé. Valable aussi bien en présentiel qu'en ligne (BGA).
+          </span>
+        </span>
+      </label>
+      {f.isPrivate && invites.length === 0 && (
+        <div style={{ background: "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 13px", marginBottom: 14, fontSize: 12.5, color: "#9a7b2a", lineHeight: 1.5 }}>
+          <AlertTriangle size={14} style={{ verticalAlign: "-2px", marginRight: 5 }} />
+          Pensez à ajouter vos invités ci-dessous : sans invité, vous serez seul à voir ce moment.
+        </div>
+      )}
+
       {/* invités dès la création */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: invites.length ? 10 : 0 }}>
@@ -4521,7 +4816,8 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
 
 /* ---- Modale détail soirée (fond plein rouge/vert) ---- */
 function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
-  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent, openChrono, askConfirm } = useApp();
+  const { currentUser, users, places, addGuest, removeGuest, addComment, updateComment, removeComment, updateEvent, removePlayer, openChrono, askConfirm } = useApp();
+  const [actionErr, setActionErr] = useState("");
   const linkedPlace = e.placeId ? places.find((p) => p.id === e.placeId) : null;
   const [showPlace, setShowPlace] = useState(false);
   const totalCount = e.players.length + (e.guests?.length || 0);
@@ -4559,7 +4855,10 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}><X size={18} /></button>
-          <Badge color="#fff" soft={false}>{expired ? "⛔ Annulé — quorum non atteint" : reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
+          <span style={{ display: "inline-flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+            <Badge color="#fff" soft={false}>{expired ? "⛔ Annulé — quorum non atteint" : reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
+            {e.isPrivate && <Badge color="#fff" soft={false}><Lock size={12} /> Moment privé</Badge>}
+          </span>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           {(() => {
             const bd = birthdayMembersOn(e.date, users);
@@ -4589,6 +4888,15 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
 
         <div style={{ padding: 26 }}>
+          {e.isPrivate && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, lineHeight: 1.5, color: C.navy }}>
+              <Lock size={17} color={C.purple} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                <b>Moment jeux privé.</b> Il n'est visible que par les membres conviés et n'apparaît ni dans le calendrier public ni dans le flux d'abonnement iCal.
+                {isEventDimmed(e, currentUser) && <> <b style={{ color: C.purple }}>Vous le voyez en tant qu'administrateur du site</b> — vous n'y êtes pas convié.</>}
+              </span>
+            </div>
+          )}
           {e.online && (
             <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
               style={{ display: "flex", alignItems: "center", gap: 11, textDecoration: "none", background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "13px 15px", marginBottom: 16 }}>
@@ -4623,13 +4931,34 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           {/* participants inscrits + invités */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
             {totalCount === 0 && <span style={{ color: "#a89a86", fontSize: 14 }}>Personne inscrit pour l'instant.</span>}
-            {e.players.map((p) => (
-              <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
-                <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} />
-                <ColorPrefs colors={(users.find((u) => u.id === p.id) || {}).favColors} />
-              </span>
-            ))}
+            {e.players.map((p) => {
+              // Peuvent retirer une inscription : le participant lui-même, le créateur du moment, un administrateur.
+              const canRemovePlayer = !!currentUser && !expired && (p.id === currentUser.id || currentUser.id === e.hostId || currentUser.admin === true);
+              const isSelf = !!currentUser && p.id === currentUser.id;
+              return (
+                <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
+                  <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} />
+                  <ColorPrefs colors={(users.find((u) => u.id === p.id) || {}).favColors} />
+                  {canRemovePlayer && (
+                    <button onClick={async () => {
+                      setActionErr("");
+                      const ok = await askConfirm({
+                        title: isSelf ? "Vous retirer de ce moment jeux ?" : `Retirer ${p.name} ?`,
+                        message: isSelf
+                          ? "Vous ne serez plus inscrit à ce moment jeux. Vous pourrez vous réinscrire à tout moment."
+                          : `${p.name} ne sera plus inscrit à ce moment jeux et en sera informé par une notification. Il pourra se réinscrire lui-même.`,
+                        confirmLabel: "Retirer",
+                      });
+                      if (!ok) return;
+                      const res = await removePlayer(e.id, p.id);
+                      if (res?.error) setActionErr(res.error);
+                    }} title={isSelf ? "Me retirer de ce moment jeux" : `Retirer ${p.name} de ce moment jeux`}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#2a8f8f", display: "grid", placeItems: "center" }}><X size={14} /></button>
+                  )}
+                </span>
+              );
+            })}
             {(e.guests || []).map((g) => {
               const canRemoveGuest = currentUser && (g.addedBy === currentUser.id || canManage);
               const memberPending = !!g.memberId; // membre invité, en attente de sa confirmation
@@ -4646,6 +4975,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               );
             })}
           </div>
+
+          {actionErr && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 13px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{actionErr}</div>}
 
           {/* ajouter un invité (participants + créateur) */}
           {isParticipant && (
@@ -4856,7 +5187,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
 function EditEventModal({ e, onClose, onSave }) {
   const [f, setF] = useState({
     date: e.date, time: e.time, place: e.place, placeId: e.placeId || null, online: !!e.online, min: e.min, max: e.max || "",
-    notes: e.notes || "",
+    notes: e.notes || "", isPrivate: !!e.isPrivate,
     useDeadline: !!e.deadline,
     deadlineDate: e.deadline ? new Date(e.deadline).toISOString().slice(0, 10) : e.date,
     deadlineTime: e.deadline ? new Date(e.deadline).toTimeString().slice(0, 5) : "18:00",
@@ -4873,7 +5204,7 @@ function EditEventModal({ e, onClose, onSave }) {
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
     setBusy(true);
-    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), deadline });
+    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), isPrivate: f.isPrivate, deadline });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
@@ -4907,6 +5238,16 @@ function EditEventModal({ e, onClose, onSave }) {
         <Field label="Joueurs min."><TextInput type="number" min={1} value={f.min} onChange={(ev) => setF({ ...f, min: ev.target.value })} /></Field>
         <Field label="Joueurs max." hint="Vide = illimité"><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="illimité" /></Field>
       </div>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.isPrivate ? "rgba(107,58,122,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.isPrivate ? C.purple : "transparent"}`, marginBottom: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.isPrivate} onChange={(ev) => setF({ ...f, isPrivate: ev.target.checked })} style={{ width: 18, height: 18, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          <Lock size={14} style={{ verticalAlign: "-2px", marginRight: 5, color: f.isPrivate ? C.purple : "#9c8d79" }} />
+          Moment jeux privé
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 3 }}>
+            Visible uniquement par les membres conviés (créateur, inscrits, invités). Les administrateurs le voient en grisé.
+          </span>
+        </span>
+      </label>
       <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(232,163,23,.1)", marginBottom: f.useDeadline ? 12 : 14, cursor: "pointer" }}>
         <input type="checkbox" checked={f.useDeadline} onChange={(ev) => setF({ ...f, useDeadline: ev.target.checked })} style={{ width: 18, height: 18, accentColor: C.amber }} />
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>Date limite de validation</span>
