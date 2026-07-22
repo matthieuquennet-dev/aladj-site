@@ -1413,6 +1413,7 @@ function AppProvider({ children }) {
     if (patch.birthDay !== undefined) fields.birth_day = patch.birthDay ? Number(patch.birthDay) : null;
     if (patch.birthMonth !== undefined) fields.birth_month = patch.birthMonth ? Number(patch.birthMonth) : null;
     if (patch.birthYear !== undefined) fields.birth_year = patch.birthYear ? Number(patch.birthYear) : null;
+    if (patch.isChild !== undefined) fields.is_child = !!patch.isChild;
     const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
     if (error) return { error: error.message };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
@@ -1895,6 +1896,13 @@ function AppProvider({ children }) {
     [users]
   );
 
+  // Comptes enfants encore concernés par la tétine (elle disparaît à 14 ans
+  // si la date de naissance complète est renseignée).
+  const childIds = useMemo(
+    () => new Set((users || []).filter((u) => isChildAccount(u)).map((u) => u.id)),
+    [users]
+  );
+
   const userById = useMemo(() => {
     const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
   }, [users]);
@@ -2145,7 +2153,7 @@ function AppProvider({ children }) {
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, deleteUser, adminAddMembershipDays, adminRevokeMembership, memberEmails, bannedNotice, setBannedNotice,
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
-    momentsUnseen, markMomentsSeen, deciderIds,
+    momentsUnseen, markMomentsSeen, deciderIds, childIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
     eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
@@ -2858,6 +2866,7 @@ function ProfileEditModal({ onClose }) {
     birthDay: currentUser?.birthDay || "",
     birthMonth: currentUser?.birthMonth || "",
     birthYear: currentUser?.birthYear || "",
+    isChild: currentUser?.isChild === true,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -2921,6 +2930,20 @@ function ProfileEditModal({ onClose }) {
           <TextInput type="number" value={f.birthYear} onChange={(e) => setF({ ...f, birthYear: e.target.value })} placeholder="Année (facult.)" />
         </div>
       </Field>
+
+      {/* compte enfant */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 11, padding: "12px 14px", borderRadius: 12, background: f.isChild ? "rgba(107,58,122,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.isChild ? C.purple : "transparent"}`, marginBottom: 16, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.isChild} onChange={(e) => setF({ ...f, isChild: e.target.checked })} style={{ width: 19, height: 19, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PacifierIcon size={15} /> Compte enfant (moins de {CHILD_AGE_LIMIT} ans)</span>
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.55, marginTop: 4 }}>
+            Une tétine apparaîtra à côté du nom, partout sur le site. Les enfants peuvent avoir un compte et participer aux <b>moments jeux privés</b>, mais pas aux moments jeux de l'association ouverts à tous (présentiel comme BGA) avant {CHILD_AGE_LIMIT} ans.
+            {f.birthDay && f.birthMonth && f.birthYear
+              ? " Votre date de naissance étant renseignée, la tétine disparaîtra automatiquement le jour de vos " + CHILD_AGE_LIMIT + " ans."
+              : " Renseignez la date de naissance complète ci-dessus pour que la tétine disparaisse automatiquement le jour des " + CHILD_AGE_LIMIT + " ans."}
+          </span>
+        </span>
+      </label>
 
       <Field label={`Présentation (${f.bio.length}/500)`} hint="Quelques mots sur vous, vos goûts de jeu...">
         <textarea value={f.bio} onChange={(e) => setF({ ...f, bio: e.target.value.slice(0, 500) })} rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="Joueur passionné depuis..." />
@@ -3412,6 +3435,21 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an (valeur 29,99 €), fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
         },
         {
+          q: "Les comptes enfants (la tétine)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Les <b>enfants peuvent tout à fait avoir un compte</b> sur aladj.fr. Dans <b>Mon profil</b>, une case <b>« Compte enfant (moins de {CHILD_AGE_LIMIT} ans) »</b> fait apparaître une <b>tétine</b> à côté du nom, partout sur le site — trombinoscope, fiche membre, moments jeux, commentaires, composeur de tablée. C'est le pendant de la couronne des membres décisionnaires.</p>
+            <Illu caption="La tétine accompagne le nom du membre, comme la couronne pour les décisionnaires.">
+              <span style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
+                <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>T</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>Timéo</span>
+                <PacifierIcon size={13} />
+              </span>
+            </Illu>
+            <p style={{ margin: "8px 0" }}>Si la <b>date de naissance complète</b> (jour, mois et année) est renseignée dans le profil, la tétine <b>disparaît automatiquement le jour des {CHILD_AGE_LIMIT} ans</b> — rien à faire. Sans année de naissance, elle reste tant que la case est cochée.</p>
+            <p style={{ margin: 0 }}>Ce qu'un compte enfant peut faire : tout consulter, noter des jeux, tenir sa ludothèque, et <b>participer aux moments jeux privés</b> auxquels il est invité. Ce qu'il ne peut pas faire avant {CHILD_AGE_LIMIT} ans : <b>s'inscrire aux moments jeux de l'association ouverts à tous</b>, en présentiel comme sur Board Game Arena — le bouton d'inscription est alors remplacé par « Réservé aux {CHILD_AGE_LIMIT} ans et plus ».</p>
+          </>,
+        },
+        {
           q: "Installer le site comme une application sur mon téléphone",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le site s'installe comme une vraie appli, avec son icône : sur <b>iPhone</b>, ouvrez aladj.fr dans Safari → bouton Partager → <b>« Sur l'écran d'accueil »</b>. Sur <b>Android</b>, Chrome propose « Installer l'application » (ou menu ⋮ → Ajouter à l'écran d'accueil).</p>
@@ -3481,6 +3519,15 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Tablée : jeux pour enfants et jeux « one shot »",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le composeur de tablée écarte automatiquement deux familles de jeux, avec une zone dédiée pour reprendre la main.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Les jeux pour enfants</b> (ceux qui portent la mécanique <b>« Enfants »</b>). Entre adultes, ils sont <b>masqués par défaut</b>. Trois boutons permettent de choisir : <b>« Masqués »</b>, <b>« Enfants + tous les autres »</b> pour les réintégrer aux propositions, ou <b>« Uniquement les jeux enfants »</b> pour n'afficher qu'eux.</p>
+            <p style={{ margin: "0 0 8px" }}>Dès qu'un <b>compte enfant</b> (tétine) fait partie de la tablée, le réglage bascule tout seul sur <b>« Uniquement les jeux enfants »</b>, et le nom des enfants présents s'affiche. Vous restez libre d'élargir aux autres jeux, ou même de ne plus tenir compte des jeux pour enfants du tout.</p>
+            <p style={{ margin: 0 }}><b>Les jeux « one shot »</b> — mécaniques <b>Enquête</b>, <b>Escape game</b> et <b>Legacy</b> — sont eux aussi <b>retirés par défaut</b> : une fois l'histoire connue, l'intérêt d'y rejouer retombe. Une case à cocher les fait réapparaître dans les trois sections de propositions.</p>
+          </>,
+        },
+        {
           q: "Composer ma tablée (classement sur-mesure)",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur la page <b>Ludothèque</b>, le bouton « Composer ma tablée » vous aide à trouver le bon jeu pour les personnes présentes. Sélectionnez les participants : les propositions sont automatiquement limitées aux jeux <b>jouables par toute la tablée</b> (vous pouvez toujours forcer un autre nombre de joueurs), la durée se filtre par <b>tranches</b> (entre 0 et 30 min, entre 31 min et 1 h… jusqu'à « 3 h et plus »), et <b>aucun jeu comportant une mécanique détestée</b> par un participant n'est proposé.</p>
@@ -3514,7 +3561,8 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>À la création (ou à la modification) d'un moment jeux, cochez <b>« Moment jeux privé »</b>. Cette case est <b>décochée par défaut</b> et fonctionne aussi bien pour un moment <b>en présentiel</b> que <b>en ligne sur BGA</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Un moment privé n'est visible que par les <b>membres conviés</b> : son créateur, les inscrits, et les invités que vous ajoutez. Il <b>n'apparaît pas</b> dans le calendrier des autres membres, ni sur la page d'accueil, ni dans le <b>flux d'abonnement iCal</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Les <b>administrateurs du site</b> le voient malgré tout, <b>en grisé</b> dans le calendrier, et peuvent interagir avec lui comme avec n'importe quel autre moment (modération). Un cadenas 🔒 signale les moments privés.</p>
-            <p style={{ margin: 0 }}>Pensez à <b>ajouter vos invités</b> dès la création : sans invité, vous seriez seul à voir votre moment. Le partage sur Signal n'est logiquement pas proposé après la création d'un moment privé.</p>
+            <p style={{ margin: "0 0 8px" }}>Pensez à <b>ajouter vos invités</b> dès la création : sans invité, vous seriez seul à voir votre moment. Le partage sur Signal n'est logiquement pas proposé après la création d'un moment privé.</p>
+            <p style={{ margin: 0 }}>À noter : les <b>comptes enfants</b> (tétine) peuvent participer aux moments jeux <b>privés</b> auxquels ils sont conviés — c'est justement le cadre prévu pour eux avant {CHILD_AGE_LIMIT} ans.</p>
           </>,
         },
         {
@@ -3888,6 +3936,7 @@ function HomePage({ setPage, onAuth }) {
 
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 14, marginTop: 26, maxWidth: 720, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. L'association est ouverte aux adultes de 18 ans et plus ; les jeunes de 14 ans et plus sont les bienvenus s'ils sont joueurs et accompagnés d'un adulte. Une pièce d'identité peut être demandée à l'entrée des moments jeux.
+          <br /><span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "-2px" }}><PacifierIcon size={13} /></span> Les <b>enfants de moins de 14 ans peuvent tout à fait avoir un compte</b> sur le site (une tétine signale alors leur profil) et participer aux <b>moments jeux privés</b>. En revanche, ils ne peuvent pas participer aux moments jeux de l'association ouverts à tous, en présentiel comme sur Board Game Arena.
         </p>
       </section>
 
@@ -4080,6 +4129,7 @@ function MembersModal({ onClose, onPickMember }) {
       <div style={{ display: "flex", gap: 14, marginBottom: 16, fontSize: 12.5, color: "#8a7c6a", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.amber }} /> Décisionnaire</span>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 12, height: 12, borderRadius: 4, background: C.teal }} /> Non décisionnaire</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><PacifierIcon size={12} /> Compte enfant</span>
         {isAdmin && <span style={{ display: "flex", alignItems: "center", gap: 6, color: C.purple, fontWeight: 700 }}><ShieldCheck size={13} /> Vue administrateur</span>}
       </div>
       <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
@@ -4105,15 +4155,21 @@ function MembersModal({ onClose, onPickMember }) {
                       <Crown size={10} color="#fff" />
                     </span>
                   )}
+                  {isChildAccount(m) && (
+                    <span style={{ position: "absolute", bottom: -6, right: -6, background: "#fff", borderRadius: "50%", width: 19, height: 19, display: "grid", placeItems: "center", border: `2px solid ${C.purple}`, boxShadow: "0 1px 3px rgba(0,0,0,.2)" }} title={`Compte enfant (moins de ${CHILD_AGE_LIMIT} ans)`}>
+                      <PacifierIcon size={11} />
+                    </span>
+                  )}
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>
                     {m.name}
+                    {isChildAccount(m) && <PacifierIcon size={13} />}
                     <FeaturedBadgesInline member={m} size={17} />
                     {m.admin && <ShieldCheck size={13} color={C.purple} />}
                     {m.banned && <span style={{ fontSize: 10.5, background: C.red, color: "#fff", borderRadius: 5, padding: "1px 6px", fontWeight: 700 }}>BANNI</span>}
                   </span>
-                  <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}</span>
+                  <span style={{ display: "block", fontSize: 12, color }}>{m.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}{isChildAccount(m) ? " · compte enfant" : ""}</span>
                   {isAdmin && email && <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79", marginTop: 1 }}>{email}</span>}
                 </span>
               </button>
@@ -4200,12 +4256,22 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
                   <Crown size={14} color="#fff" />
                 </span>
               )}
+              {isChildAccount(member) && (
+                <span style={{ position: "absolute", bottom: -8, right: -8, background: "#fff", borderRadius: "50%", width: 27, height: 27, display: "grid", placeItems: "center", border: `2.5px solid ${C.purple}`, boxShadow: "0 2px 5px rgba(0,0,0,.2)" }} title={`Compte enfant (moins de ${CHILD_AGE_LIMIT} ans)`}>
+                  <PacifierIcon size={15} />
+                </span>
+              )}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13, color: member.role === "decideur" ? C.amber : C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
                   {member.role === "decideur" ? "Membre décisionnaire" : "Membre non décisionnaire"}
                 </span>
+                {isChildAccount(member) && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", color: C.purple, background: "rgba(107,58,122,.12)", borderRadius: 999, padding: "3px 10px" }}>
+                    <PacifierIcon size={12} /> Compte enfant
+                  </span>
+                )}
                 {member.city && <span style={{ fontSize: 13, color: "#8a7c6a", display: "inline-flex", alignItems: "center", gap: 3 }}><MapPin size={13} /> {member.city}</span>}
               </div>
               {/* liens externes */}
@@ -4825,6 +4891,10 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
   const expired = isEventExpired(e);
   const full = e.max ? totalCount >= e.max : false;
   const isIn = currentUser && e.players.some((p) => p.id === currentUser.id);
+  // Avant 14 ans, un compte enfant ne peut pas s'inscrire aux moments jeux
+  // de l'association ouverts à tous (présentiel comme BGA). Les moments privés,
+  // eux, lui restent accessibles.
+  const childBlocked = !!currentUser && isChildAccount(currentUser) && !e.isPrivate && !isIn;
   const isParticipant = currentUser && (isIn || e.hostId === currentUser.id);
   const canManage = currentUser && (currentUser.id === e.hostId || currentUser.admin);
 
@@ -4938,7 +5008,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               return (
                 <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
                   <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} />
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} /><ChildPacifierFor id={p.id} size={12} />
                   <ColorPrefs colors={(users.find((u) => u.id === p.id) || {}).favColors} />
                   {canRemovePlayer && (
                     <button onClick={async () => {
@@ -4998,10 +5068,18 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               {canManage && <Btn full size="lg" variant="soft" onClick={() => setShowEdit(true)}><Edit3 size={17} /> Modifier le moment (prolonger le délai)</Btn>}
             </div>
           )}
+          {childBlocked && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "11px 14px", marginBottom: 14, fontSize: 13.5, lineHeight: 1.5, color: C.navy }}>
+              <span style={{ flexShrink: 0, marginTop: 1 }}><PacifierIcon size={17} /></span>
+              <span>
+                Ce moment jeux est <b>ouvert à tous</b> : les comptes enfants ne peuvent pas s'y inscrire avant {CHILD_AGE_LIMIT} ans. Les <b>moments jeux privés</b>, eux, restent accessibles — demandez à un membre de vous y inviter.
+              </span>
+            </div>
+          )}
           {currentUser && !expired ? (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
-              <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={!isIn && full} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
-                {isIn ? <><X size={17} /> Me retirer</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
+              <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={childBlocked || (!isIn && full)} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
+                {isIn ? <><X size={17} /> Me retirer</> : childBlocked ? "Réservé aux 14 ans et plus" : full ? "Complet" : <><Check size={17} /> Je participe</>}
               </Btn>
               {canManage && <Btn variant="soft" size="lg" onClick={() => setShowEdit(true)}><Edit3 size={17} /></Btn>}
               {canManage && <Btn variant="danger" size="lg" onClick={async () => { if (await askConfirm({ title: "Supprimer ce moment jeux ?", message: "Le moment, ses inscriptions et ses commentaires seront supprimés pour tous les membres. Action définitive.", confirmLabel: "Supprimer" })) onRemove(e.id); }}><Trash2 size={17} /></Btn>}
@@ -5030,7 +5108,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                 return (
                   <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /></span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /><ChildPacifierFor id={c.authorId} size={13} /></span>
                       {mine && editingId !== c.id && (
                         <span style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
@@ -5920,7 +5998,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
               {owners.map((o) => (
                 <span key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: o.id === currentUser?.id ? "rgba(30,138,138,.12)" : "rgba(26,58,92,.05)", borderRadius: 999, padding: "4px 11px", fontSize: 13, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: o.id === currentUser?.id ? C.teal : C.navy }}>
                   <span style={{ width: 20, height: 20, borderRadius: 6, background: o.id === currentUser?.id ? C.teal : C.navy, color: "#fff", display: "grid", placeItems: "center", fontSize: 11 }}>{o.name[0].toUpperCase()}</span>
-                  {o.name}{o.id === currentUser?.id ? " (vous)" : ""}<DeciderCrownFor id={o.id} size={12} />
+                  {o.name}{o.id === currentUser?.id ? " (vous)" : ""}<DeciderCrownFor id={o.id} size={12} /><ChildPacifierFor id={o.id} size={12} />
                 </span>
               ))}
             </div>
@@ -6431,7 +6509,7 @@ function GameComments({ g, onAuth, onClose }) {
           return (
             <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: "10px 14px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /></span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine ? C.teal : C.navy, fontSize: 13.5 }}>{c.authorName}{mine ? " (vous)" : ""}</span><DeciderCrownFor id={c.authorId} size={13} /><ChildPacifierFor id={c.authorId} size={13} /></span>
                 {mine && editingId !== c.id && (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => { setEditingId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
@@ -6972,7 +7050,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
             return (
               <div key={c.id} style={{ background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "10px 14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{c.authorName}</span><DeciderCrownFor id={c.authorId} size={12} /></span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{c.authorName}</span><DeciderCrownFor id={c.authorId} size={12} /><ChildPacifierFor id={c.authorId} size={12} /></span>
                   {mine && !isEdit && (
                     <span style={{ display: "flex", gap: 5 }}>
                       <button onClick={() => { setEditId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79" }}><Edit3 size={13} /></button>
@@ -7522,6 +7600,10 @@ function CustomRankModal({ onClose, onOpenGame }) {
   const [players, setPlayers] = useState(""); // "" = automatique (taille de la tablée)
   const [duration, setDuration] = useState(""); // "" = toutes ; "lo-hi" = bornes en minutes ; "181" = 3 h et plus
   const [mechFilter, setMechFilter] = useState([]); // mécaniques sélectionnées (multi)
+  // Jeux pour enfants : "exclude" = masqués | "include" = enfants + tous les autres | "only" = uniquement enfants
+  const [kidsMode, setKidsMode] = useState("exclude");
+  // Jeux « one shot » (enquête, escape game, legacy) : masqués par défaut
+  const [showOneShot, setShowOneShot] = useState(false);
   const STEP = 15; // nombre de jeux ajoutés à chaque clic sur « Afficher plus »
   const [limits, setLimits] = useState({ discover: STEP, regular: STEP, explore: STEP });
   const toggle = (id) => setChosen((c) => c.includes(id) ? c.filter((x) => x !== id) : [...c, id]);
@@ -7541,6 +7623,19 @@ function CustomRankModal({ onClose, onOpenGame }) {
     users.filter((u) => chosen.includes(u.id)).forEach((u) => (u.hatedMechanics || []).forEach((m) => s.add(m)));
     return s;
   }, [users, chosen]);
+
+  // Enfants présents dans la tablée (comptes « tétine »).
+  const childrenAtTable = useMemo(
+    () => users.filter((u) => chosen.includes(u.id) && isChildAccount(u)),
+    [users, chosen]
+  );
+  const tableHasChild = childrenAtTable.length > 0;
+
+  // Le mode par défaut suit la composition de la tablée :
+  // - un enfant présent  → on ne propose que les jeux pour enfants ;
+  // - que des adultes    → les jeux pour enfants sont masqués.
+  // (le choix manuel reste possible, il est simplement réinitialisé si la tablée change)
+  useEffect(() => { setKidsMode(tableHasChild ? "only" : "exclude"); }, [tableHasChild]);
 
   // Nombre de joueurs effectif : choix manuel prioritaire, sinon la taille de la tablée.
   const effPlayers = players ? Number(players) : chosen.length;
@@ -7564,7 +7659,11 @@ function CustomRankModal({ onClose, onOpenGame }) {
   };
   const matchMech = (g) => mechFilter.length === 0 || mechFilter.every((m) => (g.mechanics || []).includes(m));
   const noHatedMech = (g) => hatedMechs.size === 0 || !(g.mechanics || []).some((m) => hatedMechs.has(m));
-  const passFilters = (g) => matchPlayers(g) && matchDuration(g) && matchMech(g) && noHatedMech(g);
+  // Jeux pour enfants selon le mode choisi
+  const matchKids = (g) => (kidsMode === "only" ? isKidsGame(g) : kidsMode === "exclude" ? !isKidsGame(g) : true);
+  // Jeux « one shot » : écartés tant que la case n'est pas cochée
+  const matchOneShot = (g) => showOneShot || !isOneShotGame(g);
+  const passFilters = (g) => matchPlayers(g) && matchDuration(g) && matchMech(g) && noHatedMech(g) && matchKids(g) && matchOneShot(g);
 
   // Calcul des trois sections : envies de découverte, mieux notés par la tablée, exploration ludique
   const { discoverGames, regularGames, exploreGames } = useMemo(() => {
@@ -7679,10 +7778,14 @@ function CustomRankModal({ onClose, onOpenGame }) {
     });
 
     return { discoverGames: discover, regularGames: regular, exploreGames: explore };
-  }, [games, users, chosen, players, duration, mechFilter, hatedMechs]);
+  }, [games, users, chosen, players, duration, mechFilter, hatedMechs, kidsMode, showOneShot]);
 
   // Réinitialise les limites d'affichage quand les critères changent
-  useEffect(() => { setLimits({ discover: STEP, regular: STEP, explore: STEP }); }, [chosen, players, duration, mechFilter]);
+  useEffect(() => { setLimits({ discover: STEP, regular: STEP, explore: STEP }); }, [chosen, players, duration, mechFilter, kidsMode, showOneShot]);
+
+  // Comptages indicatifs pour la zone « jeux enfants / one shot »
+  const kidsTotal = useMemo(() => games.filter(isKidsGame).length, [games]);
+  const oneShotTotal = useMemo(() => games.filter(isOneShotGame).length, [games]);
 
   // Bouton « Afficher plus » commun aux trois sections
   const MoreBtn = ({ total, shown, onMore }) => total > shown ? (
@@ -7707,6 +7810,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
               fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, transition: "all .12s",
             }}>
               {active && <Check size={15} />} {u.name}
+              {isChildAccount(u) && <PacifierIcon size={13} color={active ? "#fff" : C.purple} />}
             </button>
           );
         })}
@@ -7742,6 +7846,45 @@ function CustomRankModal({ onClose, onOpenGame }) {
         </div>
       )}
 
+      {/* Zone dédiée : jeux pour enfants + jeux one shot */}
+      <div style={{ background: tableHasChild ? "rgba(107,58,122,.07)" : "rgba(26,58,92,.04)", border: `1.5px solid ${tableHasChild ? C.purple + "44" : "#ece2d0"}`, borderRadius: 14, padding: "13px 15px", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <PacifierIcon size={16} />
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14 }}>Jeux pour enfants</span>
+          <span style={{ fontSize: 12, color: "#9c8d79" }}>({kidsTotal} dans la ludothèque)</span>
+        </div>
+        <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5 }}>
+          {tableHasChild
+            ? <>👶 <b style={{ color: C.purple }}>{childrenAtTable.map((u) => u.name).join(", ")}</b> {childrenAtTable.length > 1 ? "sont" : "est"} à la tablée : seuls les jeux pour enfants sont proposés. Vous pouvez élargir ci-dessous.</>
+            : <>Entre adultes, les jeux pour enfants sont <b>masqués automatiquement</b>. Cliquez ci-dessous pour les réintégrer aux propositions, ou pour n'afficher qu'eux.</>}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+          {[
+            { v: "exclude", t: tableHasChild ? "Sans les jeux enfants" : "Masqués (par défaut)" },
+            { v: "include", t: "Enfants + tous les autres" },
+            { v: "only",    t: "Uniquement les jeux enfants" },
+          ].map((opt) => {
+            const active = kidsMode === opt.v;
+            return (
+              <button key={opt.v} type="button" onClick={() => setKidsMode(opt.v)} style={{
+                padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5,
+                border: `2px solid ${active ? C.purple : "#e6dcc9"}`, background: active ? C.purple : "#fff", color: active ? "#fff" : "#8a7c6a",
+              }}>{active && <Check size={12} style={{ verticalAlign: "-1px", marginRight: 4 }} />}{opt.t}</button>
+            );
+          })}
+        </div>
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 13, paddingTop: 12, borderTop: "1px solid rgba(26,58,92,.09)", cursor: "pointer" }}>
+          <input type="checkbox" checked={showOneShot} onChange={(e) => setShowOneShot(e.target.checked)} style={{ width: 17, height: 17, accentColor: C.amber, marginTop: 2, flexShrink: 0 }} />
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>
+            Inclure les jeux «&nbsp;one shot&nbsp;» <span style={{ fontSize: 12, color: "#9c8d79", fontWeight: 400 }}>({oneShotTotal} jeu{oneShotTotal > 1 ? "x" : ""})</span>
+            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 2 }}>
+              {ONE_SHOT_MECHANICS.join(", ")} — masqués par défaut : une fois l'histoire connue, l'intérêt d'y rejouer retombe.
+            </span>
+          </span>
+        </label>
+      </div>
+
       {/* Filtre mécaniques (multi-sélection) */}
       {allMechanics.length > 0 && (
         <div style={{ marginBottom: 18 }}>
@@ -7766,7 +7909,9 @@ function CustomRankModal({ onClose, onOpenGame }) {
       {chosen.length === 0 ? (
         <EmptyHint icon={Users} text="Sélectionnez au moins un membre." />
       ) : (discoverGames.length === 0 && regularGames.length === 0 && exploreGames.length === 0) ? (
-        <EmptyHint icon={Star} text="Aucun jeu ne correspond à ces filtres." />
+        <EmptyHint icon={Star} text={kidsMode === "only"
+          ? "Aucun jeu pour enfants ne correspond à ces filtres. Élargissez avec « Enfants + tous les autres »."
+          : "Aucun jeu ne correspond à ces filtres."} />
       ) : (
         <div style={{ display: "grid", gap: 18 }}>
           {/* Section 1 : envies de découverte de la tablée */}
