@@ -79,12 +79,17 @@ export default async function handler(req, res) {
   since.setMonth(since.getMonth() - 2);
   const sinceStr = since.toISOString().slice(0, 10);
 
-  const { data: events, error } = await supabase
+  // Ce flux est partage (un seul jeton pour toute l'association) : les moments
+  // jeux PRIVES en sont donc exclus. Ils restent visibles sur le site pour les
+  // seuls membres convies. NB : la cle service_role ignore la RLS, le filtre
+  // ci-dessous est donc indispensable.
+  const { data: allEvents, error } = await supabase
     .from('events')
-    .select('id,event_date,event_time,place,online,notes,min_players,max_players')
+    .select('id,event_date,event_time,place,online,notes,min_players,max_players,is_private')
     .gte('event_date', sinceStr)
     .order('event_date', { ascending: true });
   if (error) { res.status(500).send('Erreur de lecture'); return; }
+  const events = (allEvents || []).filter((e) => e.is_private !== true);
 
   const ids = (events || []).map((e) => e.id);
   const counts = {};
