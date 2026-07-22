@@ -3871,6 +3871,15 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Utilisez « Mot de passe oublié ? » sur l'écran de connexion. Si vous vous étiez inscrit avec Google, reconnectez-vous avec le bouton Google. En dernier recours, écrivez à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 700 }}>aladj50200@gmail.com</a>.</p>,
         },
         {
+          q: "La sauvegarde des données (administrateurs)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
+            <p style={{ margin: "0 0 8px" }}>Seules les <b>images</b> n'y figurent pas : elles sont stockées sur un hébergement séparé et ne risquent rien lors d'une manipulation en base.</p>
+            <p style={{ margin: "0 0 8px" }}>À la fin de l'export, un <b>récapitulatif</b> affiche le nombre de lignes récupérées table par table. Une table à <b>0 ligne</b> n'est pas forcément un problème — certaines sont légitimement vides — mais c'est le point à surveiller : cela peut aussi signifier qu'une règle de sécurité a bloqué la lecture <i>sans renvoyer d'erreur</i>. Le bouton <b>« Copier la requête de vérification »</b> fournit une requête à coller dans l'éditeur SQL de Supabase pour comparer avec les nombres réels.</p>
+            <p style={{ margin: 0 }}>À faire <b>régulièrement</b> et systématiquement <b>avant toute opération sensible</b> sur la base. Le fichier se conserve tel quel ; sa réinjection éventuelle passerait par l'éditeur SQL.</p>
+          </>,
+        },
+        {
           q: "J'ai une idée d'amélioration",
           a: <p style={{ margin: 0 }}>Le site évolue en continu grâce aux retours des membres. Partagez vos idées sur la conversation Signal « Blabla » ou par e-mail — les bonnes idées finissent ici !</p>,
         },
@@ -9022,33 +9031,129 @@ function MyBadgesSection({ setToast }) {
 
 /* ---- Sauvegarde admin : télécharge toutes les données en JSON ----
    Filet de sécurité en cas de fausse manipulation : un fichier daté, à conserver
-   (le ré-import se ferait via l'éditeur SQL si besoin). ---- */
+   (le ré-import se ferait via l'éditeur SQL si besoin).
+
+   La liste ci-dessous couvre L'INTÉGRALITÉ des tables du schéma public. Ne sont
+   volontairement pas incluses :
+     • les vues (v_game_play_durations, v_game_phase_time…) — elles se
+       recalculent toutes seules à partir des tables ;
+     • les images — elles vivent sur Cloudflare R2, en dehors de la base, et ne
+       risquent donc rien lors d'une manipulation SQL.
+
+   Chaque table est accompagnée d'une CASCADE de colonnes de tri : on essaie le
+   premier jeu, et si la requête échoue (colonne absente), on passe au suivant,
+   puis sans tri du tout. Une table dont le schéma évolue ne peut donc pas faire
+   échouer silencieusement la sauvegarde. ---- */
+const BACKUP_TABLES = [
+  // Membres, foyers
+  ["profiles", [["id"]]],
+  ["households", [["id"]]],
+  ["household_members", [["id"], ["household_id"]]],
+  ["household_invites", [["id"], ["created_at"]]],
+  // Ludothèque
+  ["games", [["id"]]],
+  ["game_owners", [["game_id", "owner_id"]]],
+  ["extensions", [["id"]]],
+  ["extension_owners", [["id"]]],
+  ["ratings", [["game_id", "user_id"]]],
+  ["game_weights", [["game_id", "owner_id"]]],
+  ["game_discoveries", [["game_id", "user_id"]]],
+  ["game_comments", [["created_at", "id"]]],
+  ["loans", [["id"], ["created_at"]]],
+  ["mechanic_suggestions", [["id"], ["name"]]],
+  // Moments jeux
+  ["events", [["id"]]],
+  ["event_players", [["event_id", "user_id"]]],
+  ["event_guests", [["id"], ["event_id"]]],
+  ["event_games", [["id"]]],
+  ["event_comments", [["created_at", "id"]]],
+  ["event_play_dismissed", [["id"], ["created_at"]]],
+  ["places", [["id"]]],
+  // Veille
+  ["upcoming_games", [["id"]]],
+  ["upcoming_comments", [["created_at", "id"]]],
+  ["upcoming_hype", [["id"], ["game_id"]]],
+  ["upcoming_intent", [["id"], ["game_id"]]],
+  // Parties enregistrées et scores
+  ["game_plays", [["played_at", "id"]]],
+  ["game_play_participants", [["id"]]],
+  // Chronomètre
+  ["play_sessions", [["id"]]],
+  ["play_session_players", [["id"]]],
+  ["play_session_games", [["id"]]],
+  ["play_turns", [["id"]]],
+  // Divers
+  ["notifications", [["id"], ["created_at"]]],
+  ["push_subscriptions", [["id"], ["created_at"]]],
+  ["reco_dismissed", [["id"], ["created_at"]]],
+];
+
+/* Requête à coller dans l'éditeur SQL de Supabase pour comparer le nombre de
+   lignes réel (hors RLS, rôle postgres) avec ce que la sauvegarde a rapatrié.
+   Un écart signale une lecture bloquée par une policy. 100 % ASCII. */
+const BACKUP_CHECK_SQL = "SELECT table_name,\n" +
+  "       (xpath('/row/cnt/text()',\n" +
+  "        query_to_xml('SELECT count(*) AS cnt FROM public.'||quote_ident(table_name),\n" +
+  "        false, true, '')))[1]::text::int AS nb_lignes\n" +
+  "FROM information_schema.tables\n" +
+  "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'\n" +
+  "ORDER BY 1;";
+
+/* Rapatrie une table entière, en essayant successivement chaque jeu de colonnes
+   de tri, puis sans tri. Pagination par lots de 1000. */
+async function backupFetchTable(table, orderSets) {
+  const size = 1000;
+  const sets = [...(orderSets || []), []];
+  let lastErr = null;
+  for (let s = 0; s < sets.length; s++) {
+    const cols = sets[s];
+    const all = [];
+    let ok = true;
+    let from = 0;
+    for (let guard = 0; guard < 200; guard++) {
+      let q = supabase.from(table).select("*");
+      cols.forEach((c) => { q = q.order(c, { ascending: true }); });
+      const { data, error } = await q.range(from, from + size - 1);
+      if (error) { lastErr = error; ok = false; break; }
+      if (!data || data.length === 0) break;
+      all.push(...data);
+      if (data.length < size) break;
+      from += size;
+    }
+    if (ok) return { rows: all, error: null };
+  }
+  return { rows: [], error: (lastErr && lastErr.message) || "erreur inconnue" };
+}
+
 function AdminBackupSection() {
   const { currentUser } = useApp();
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState("");
+  const [report, setReport] = useState(null);
+  const [copied, setCopied] = useState(false);
   if (!currentUser?.admin) return null;
-  const TABLES = [
-    ["profiles", ["id"]], ["games", ["id"]], ["game_owners", ["game_id", "owner_id"]],
-    ["extensions", ["id"]], ["extension_owners", ["id"]], ["ratings", ["game_id", "user_id"]],
-    ["game_weights", ["game_id", "owner_id"]], ["game_discoveries", ["game_id", "user_id"]],
-    ["game_comments", ["created_at", "id"]], ["events", ["id"]], ["event_players", ["event_id", "user_id"]],
-    ["event_games", ["id"]], ["event_comments", ["created_at", "id"]], ["places", ["id"]],
-    ["upcoming_games", ["id"]], ["upcoming_comments", ["created_at", "id"]],
-    ["game_plays", ["played_at", "id"]], ["game_play_participants", ["id"]],
-  ];
+
   const download = async () => {
-    setBusy(true);
-    const out = {}; const errors = [];
-    for (let i = 0; i < TABLES.length; i++) {
-      const [t, order] = TABLES[i];
-      setProg(`${i + 1}/${TABLES.length} — ${t}`);
-      try {
-        const { data, error } = await fetchAllRows(t, "*", order);
-        if (error) errors.push(t); else out[t] = data || [];
-      } catch (e) { errors.push(t); }
+    setBusy(true); setReport(null);
+    const out = {}; const errors = []; const summary = [];
+    for (let i = 0; i < BACKUP_TABLES.length; i++) {
+      const [t, orderSets] = BACKUP_TABLES[i];
+      setProg(`${i + 1}/${BACKUP_TABLES.length} — ${t}`);
+      let res;
+      try { res = await backupFetchTable(t, orderSets); }
+      catch (e) { res = { rows: [], error: String((e && e.message) || e) }; }
+      if (res.error) { errors.push(t); summary.push({ table: t, rows: 0, error: res.error }); }
+      else { out[t] = res.rows; summary.push({ table: t, rows: res.rows.length, error: null }); }
     }
-    const payload = { site: "aladj.fr", exportedAt: new Date().toISOString(), errors, tables: out };
+    const total = summary.reduce((s, r) => s + r.rows, 0);
+    const payload = {
+      site: "aladj.fr",
+      exportedAt: new Date().toISOString(),
+      tableCount: BACKUP_TABLES.length,
+      rowCount: total,
+      note: "Images non incluses : elles sont stockees sur Cloudflare R2, hors base.",
+      summary, errors, tables: out,
+    };
     const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -9056,7 +9161,19 @@ function AdminBackupSection() {
     a.click();
     URL.revokeObjectURL(a.href);
     setBusy(false); setProg("");
+    setReport({ summary, errors, total });
   };
+
+  const copySql = async () => {
+    try {
+      await navigator.clipboard.writeText(BACKUP_CHECK_SQL);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch (e) { /* presse-papier indisponible : rien de grave */ }
+  };
+
+  const empties = report ? report.summary.filter((r) => !r.error && r.rows === 0).length : 0;
+
   return (
     <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: "1px solid #ece2d0", marginBottom: 22 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -9064,11 +9181,53 @@ function AdminBackupSection() {
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 17, margin: 0, color: C.navy }}>Sauvegarde des données (admin)</h3>
       </div>
       <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 12px" }}>
-        Télécharge une copie complète des données du site (jeux, membres, moments, parties…) dans un fichier daté. À faire régulièrement et à conserver précieusement : c'est le filet de sécurité en cas de mauvaise manipulation.
+        Télécharge une copie de <b>toutes les tables du site</b> ({BACKUP_TABLES.length} au total : membres, jeux, notes,
+        prêts, foyers, moments, veille, parties et scores, chronomètre, notifications…) dans un fichier daté.
+        Les <b>images</b> ne sont pas concernées : elles sont stockées à part et ne risquent rien lors d'une manipulation en base.
+        À faire régulièrement, et systématiquement avant toute opération sensible.
       </p>
       <Btn variant="soft" disabled={busy} onClick={download}>
         {busy ? <><Loader2 size={15} className="aladj-spin" /> {prog}</> : <>💾 Télécharger une sauvegarde (JSON)</>}
       </Btn>
+
+      {report && (
+        <div style={{ marginTop: 18, borderTop: "1px solid #ece2d0", paddingTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, fontWeight: 700, color: report.errors.length ? C.red : C.navy, marginBottom: 4 }}>
+            {report.errors.length
+              ? <><AlertTriangle size={16} color={C.red} /> {report.errors.length} table{report.errors.length > 1 ? "s" : ""} en échec</>
+              : <><Check size={16} color={C.teal} /> {report.summary.length} tables sauvegardées — {report.total.toLocaleString("fr-FR")} lignes</>}
+          </div>
+          {empties > 0 && (
+            <p style={{ fontSize: 12.5, color: "#8a7a63", margin: "0 0 10px", lineHeight: 1.5 }}>
+              {empties} table{empties > 1 ? "s sont vides" : " est vide"}. Ce n'est pas forcément anormal, mais c'est le
+              symptôme à surveiller : une règle de sécurité peut bloquer la lecture <i>sans renvoyer d'erreur</i>.
+              Comparez avec les nombres réels grâce à la requête ci-dessous.
+            </p>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(178px,1fr))", gap: 5, marginBottom: 12 }}>
+            {report.summary.map((r) => {
+              const col = r.error ? C.red : (r.rows === 0 ? C.amber : C.teal);
+              return (
+                <div key={r.table} title={r.error || ""} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+                  background: "#fff", border: `1px solid ${r.error ? "#f0cdd3" : (r.rows === 0 ? "#f2e2bd" : "#e7e0d2")}`,
+                  borderRadius: 9, padding: "5px 9px", fontSize: 12.5,
+                }}>
+                  <span style={{ color: "#5e5346", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.table}</span>
+                  <b style={{ color: col, whiteSpace: "nowrap" }}>{r.error ? "échec" : r.rows.toLocaleString("fr-FR")}</b>
+                </div>
+              );
+            })}
+          </div>
+          <Btn variant="ghost" size="sm" onClick={copySql}>
+            {copied ? <><Check size={14} /> Requête copiée</> : <><Copy size={14} /> Copier la requête de vérification</>}
+          </Btn>
+          <p style={{ fontSize: 12, color: "#8a7a63", margin: "8px 0 0", lineHeight: 1.5 }}>
+            À coller dans l'éditeur SQL de Supabase : elle affiche le nombre de lignes réel de chaque table,
+            à comparer avec les nombres ci-dessus.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
