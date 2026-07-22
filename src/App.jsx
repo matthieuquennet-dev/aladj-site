@@ -227,6 +227,23 @@ const ONE_SHOT_MECHANICS = ["Enquête", "Escape game", "Legacy"];
 const ONE_SHOT_SET = new Set(ONE_SHOT_MECHANICS.map(normMech));
 const isOneShotGame = (g) => (g?.mechanics || []).some((m) => ONE_SHOT_SET.has(normMech(m)));
 
+/* ---------- Scores des parties ---------- */
+// Sens du score d'un jeu : "high" = le plus grand l'emporte, "low" = le plus petit.
+const scoreDirOf = (g) => (g?.scoreDirection === "low" ? "low" : "high");
+const SCORE_DIR_LABEL = { high: "le plus grand score l'emporte", low: "le plus petit score l'emporte" };
+// Moyenne arrondie au dixieme, formatee a la francaise.
+const fmtPts = (n) => (Math.round(n * 10) / 10).toLocaleString("fr-FR");
+// Classement des participants d'une partie selon le sens du score.
+function rankParticipants(parts, dir) {
+  return [...(parts || [])].sort((a, b) => {
+    const sa = a.score, sb = b.score;
+    if (sa == null && sb == null) return (a.name || "").localeCompare(b.name || "", "fr");
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    return dir === "low" ? sa - sb : sb - sa;
+  });
+}
+
 /* ---------- Comptes enfants ---------- */
 // Age limite : le jour de ses 14 ans, la tetine disparait automatiquement.
 const CHILD_AGE_LIMIT = 14;
@@ -552,6 +569,65 @@ function ChildPacifierFor({ id, size = 13 }) {
     <span title={`Compte enfant (moins de ${CHILD_AGE_LIMIT} ans)`} style={{ display: "inline-flex", flexShrink: 0 }}>
       <PacifierIcon size={size} />
     </span>
+  );
+}
+
+// Choix du sens du score sur une fiche de jeu (creation / modification).
+// C'est la meme information que celle utilisee par le chrono.
+function ScoreDirectionField({ value, onChange }) {
+  const opts = [
+    { v: "high", t: "Le plus grand score l'emporte", ico: TrendingUp },
+    { v: "low", t: "Le plus petit score l'emporte", ico: TrendingDown },
+    { v: "", t: "Non applicable (coopératif...)", ico: EyeOffIcon },
+  ];
+  return (
+    <Field label="Sens du score" hint="Sert au chrono : le vainqueur est déduit automatiquement des points saisis. Modifiable à tout moment, y compris depuis le chrono.">
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {opts.map((o) => {
+          const on = (value || "") === o.v;
+          const Ico = o.ico;
+          return (
+            <button key={o.v || "none"} type="button" onClick={() => onChange(o.v)} style={{
+              display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 999, cursor: "pointer",
+              fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+              border: `2px solid ${on ? C.teal : "#e6dcc9"}`, background: on ? C.teal : "#fff", color: on ? "#fff" : "#8a7c6a",
+            }}><Ico size={14} /> {o.t}</button>
+          );
+        })}
+      </div>
+    </Field>
+  );
+}
+
+// Tableau des scores d'une partie : nom du joueur + points, classe selon
+// le sens du score, trophee sur le ou les vainqueurs.
+function PlayScoreBoard({ play, game, compact }) {
+  const dir = scoreDirOf(game);
+  const parts = (play?.participants || []).filter((pt) => pt.confirmed !== false);
+  if (!parts.some((pt) => pt.score != null)) return null;
+  const ranked = rankParticipants(parts, dir);
+  return (
+    <div style={{ background: "rgba(26,58,92,.035)", borderRadius: 12, padding: compact ? "8px 10px" : "10px 12px", marginTop: 8 }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: .5, fontWeight: 700, color: "#9c8d79", marginBottom: 7 }}>
+        Scores · {SCORE_DIR_LABEL[dir]}
+      </div>
+      <div style={{ display: "grid", gap: 4 }}>
+        {ranked.map((pt, i) => (
+          <div key={(pt.userId || pt.guestName || "x") + i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+            <span style={{ width: 17, textAlign: "right", color: "#b6a78f", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{pt.score == null ? "–" : i + 1}</span>
+            <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 5, color: C.navy, fontWeight: pt.isWinner ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {pt.name}
+              {pt.userId && <ChildPacifierFor id={pt.userId} size={11} />}
+              {!pt.userId && <span style={{ fontSize: 11, color: "#b6a78f" }}>(invité)</span>}
+            </span>
+            {pt.isWinner && <Trophy size={13} color={C.amber} style={{ flexShrink: 0 }} />}
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: pt.isWinner ? C.amber : C.navy, fontSize: 13.5, flexShrink: 0 }}>
+              {pt.score == null ? "—" : `${pt.score.toLocaleString("fr-FR")} pt${Math.abs(pt.score) > 1 ? "s" : ""}`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1148,6 +1224,7 @@ function AppProvider({ children }) {
       new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
       source: d.source || "manuel", owner_id: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
+      score_direction: d.scoreDirection || null,
     }).select().single();
     if (error) return { error: error.message };
 
@@ -1332,6 +1409,7 @@ function AppProvider({ children }) {
     };
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
     if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
+    if (patch.scoreDirection !== undefined) fields.score_direction = patch.scoreDirection || null;
     await supabase.from("games").update(fields).eq("id", id);
     await loadData();
   }, [loadData]);
@@ -3516,6 +3594,28 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Une extension est un contenu qui <b>nécessite absolument le jeu de base</b> pour être joué (nouvelles cartes, plateaux, modules…). Si une boîte se joue seule, ce n'est pas une extension : entrez-la comme un <b>jeu</b> à part entière.</p>
             <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>
+          </>,
+        },
+        {
+          q: "Les scores : les noter, les enregistrer, les retrouver",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Pendant une partie chronométrée, chaque joueur a une <b>pastille de score</b> : touchez-la pour ouvrir le pavé de saisie. Les scores sont <b>partagés en direct</b> entre tous les téléphones de la tablée.</p>
+            <p style={{ margin: "0 0 8px" }}>À la fin de la partie, si des points ont été saisis, le chrono demande <b>quel score l'emporte</b> : « le plus grand » ou « le plus petit ». Le <b>vainqueur est alors déduit automatiquement</b> — et vous pouvez toujours le corriger à la main, par exemple en cas d'égalité départagée autrement.</p>
+            <p style={{ margin: "0 0 8px" }}>Ce réglage est <b>mémorisé sur la fiche du jeu</b> : la prochaine partie le retrouvera déjà pré-sélectionné. Le modifier depuis le chrono met la fiche à jour, et inversement — vous pouvez aussi le définir directement à la <b>création ou la modification d'une fiche de jeu</b> (« Sens du score »), y compris « Non applicable » pour un jeu coopératif.</p>
+            <p style={{ margin: 0 }}>Les scores sont <b>conservés</b>, y compris pour les parties enchaînées avec « Nouvelle partie ». On les retrouve ensuite en cliquant sur une partie : dans <b>Mon espace → Mes parties</b>, et sur la fiche du jeu via « Voir le détail des parties ». Le classement s'affiche avec le nom de chaque joueur, ses points et le trophée du vainqueur.</p>
+          </>,
+        },
+        {
+          q: "Moyennes et records de points d'un jeu",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dès qu'au moins un score a été enregistré, un encart <b>« Les points »</b> apparaît sur la fiche du jeu. Il indique :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>la <b>moyenne des points d'une partie</b>, toutes parties et tous joueurs confondus ;</li>
+              <li><b>votre moyenne personnelle</b>, dès que vous avez joué au moins une partie comptabilisée ;</li>
+              <li>le <b>record</b> toutes parties confondues, avec le nom du joueur et la date — le plus haut score si le plus grand l'emporte, le plus bas dans le cas contraire ;</li>
+              <li><b>votre record personnel</b>.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Tant qu'aucune partie n'a de score enregistré, l'encart reste masqué. Les parties écartées par un administrateur et celles que vous avez retirées de votre historique ne comptent pas.</p>
           </>,
         },
         {
@@ -5714,9 +5814,12 @@ function fmtDuration(s) {
   return mm ? `${h} h ${String(mm).padStart(2, "0")}` : `${h} h`;
 }
 
-function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
-  const { askConfirm } = useApp();
+function SessionsModal({ sessions, gameName, game, canDelete, onClose, onDeleted }) {
+  const { askConfirm, plays } = useApp();
   const [busyId, setBusyId] = useState(null);
+  const [openId, setOpenId] = useState(null); // partie dépliée (affichage des scores)
+  // On retrouve les participants (et leurs scores) dans les parties déjà chargées.
+  const playById = useMemo(() => { const m = {}; (plays || []).forEach((pl) => { m[pl.id] = pl; }); return m; }, [plays]);
   const del = async (id) => {
     if (!(await askConfirm({ title: "Écarter cette partie ?", message: "Cette partie sera écartée des statistiques. Action définitive.", confirmLabel: "Écarter" }))) return;
     setBusyId(id);
@@ -5731,20 +5834,33 @@ function SessionsModal({ sessions, gameName, canDelete, onClose, onDeleted }) {
         <div style={{ textAlign: "center", padding: 20, color: "#9c8d79" }}>Aucune partie chronométrée pour l'instant.</div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {sessions.map((r) => (
-            <div key={r.play_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: C.paper, border: "1px solid #ece2d0", borderRadius: 12, padding: "11px 14px" }}>
-              <div>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{fmtDuration(r.duration_seconds)} <span style={{ fontWeight: 400, color: "#8a7c6a", fontSize: 13 }}>· {r.player_count} joueur{r.player_count > 1 ? "s" : ""}</span></div>
-                <div style={{ fontSize: 12.5, color: "#8a7c6a" }}>{formatDateFr(new Date(r.played_at).toISOString().slice(0, 10))}</div>
+          {sessions.map((r) => {
+            const pl = playById[r.play_id];
+            const hasScores = !!pl && (pl.participants || []).some((pt) => pt.score != null && pt.confirmed !== false);
+            const open = openId === r.play_id;
+            return (
+              <div key={r.play_id} style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 12, padding: "11px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <button onClick={() => hasScores && setOpenId(open ? null : r.play_id)} disabled={!hasScores}
+                    title={hasScores ? "Voir les scores de cette partie" : undefined}
+                    style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: hasScores ? "pointer" : "default" }}>
+                    <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{fmtDuration(r.duration_seconds)} <span style={{ fontWeight: 400, color: "#8a7c6a", fontSize: 13 }}>· {r.player_count} joueur{r.player_count > 1 ? "s" : ""}</span></div>
+                    <div style={{ fontSize: 12.5, color: "#8a7c6a", display: "flex", alignItems: "center", gap: 6 }}>
+                      {formatDateFr(new Date(r.played_at).toISOString().slice(0, 10))}
+                      {hasScores && <span style={{ color: C.teal, fontWeight: 700 }}>· scores {open ? "▾" : "▸"}</span>}
+                    </div>
+                  </button>
+                  {canDelete && (
+                    <button onClick={() => del(r.play_id)} disabled={busyId === r.play_id}
+                      style={{ background: "rgba(181,40,58,.1)", border: "none", borderRadius: 9, padding: "7px 9px", cursor: "pointer", color: C.red, display: "grid", placeItems: "center" }} title="Écarter cette partie">
+                      {busyId === r.session_id ? <Loader2 size={15} className="aladj-spin" /> : <Trash2 size={15} />}
+                    </button>
+                  )}
+                </div>
+                {open && pl && <PlayScoreBoard play={pl} game={game} compact />}
               </div>
-              {canDelete && (
-                <button onClick={() => del(r.play_id)} disabled={busyId === r.play_id}
-                  style={{ background: "rgba(181,40,58,.1)", border: "none", borderRadius: 9, padding: "7px 9px", cursor: "pointer", color: C.red, display: "grid", placeItems: "center" }} title="Écarter cette partie">
-                  {busyId === r.session_id ? <Loader2 size={15} className="aladj-spin" /> : <Trash2 size={15} />}
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {canDelete && sessions && sessions.length > 0 && (
@@ -5777,6 +5893,37 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [declBusy, setDeclBusy] = useState(false);
   const ownerIdSet = new Set([...confirmedOwners.map((o) => o.id), ...pendingOwners.map((o) => o.id)]);
   const myGamePlays = (currentUser ? (plays || []).filter((pl) => pl.gameId === g.id && pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
+
+  // Statistiques de points : moyenne d'une partie, moyenne personnelle,
+  // record toutes parties confondues et record personnel.
+  // Rien n'est affiché tant qu'aucun score n'a été enregistré.
+  const scoreStats = useMemo(() => {
+    const dir = scoreDirOf(g);
+    const all = [];
+    const mine = [];
+    (plays || []).forEach((pl) => {
+      if (pl.gameId !== g.id) return;
+      (pl.participants || []).forEach((pt) => {
+        if (pt.score == null || pt.confirmed === false) return;
+        const row = { score: pt.score, name: pt.name, playedAt: pl.playedAt };
+        all.push(row);
+        if (currentUser && pt.userId === currentUser.id) mine.push(row);
+      });
+    });
+    if (!all.length) return null;
+    const better = (a, b) => (dir === "low" ? b.score < a.score : b.score > a.score);
+    const best = all.reduce((a, b) => (better(a, b) ? b : a));
+    const myBest = mine.length ? mine.reduce((a, b) => (better(a, b) ? b : a)) : null;
+    return {
+      dir,
+      count: all.length,
+      avg: all.reduce((s, x) => s + x.score, 0) / all.length,
+      best,
+      myCount: mine.length,
+      myAvg: mine.length ? mine.reduce((s, x) => s + x.score, 0) / mine.length : null,
+      myBest,
+    };
+  }, [plays, g.id, g.scoreDirection, currentUser]);
   const myWinCount = currentUser ? myGamePlays.filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner)).length : 0;
   const winPct = myGamePlays.length ? Math.round((myWinCount / myGamePlays.length) * 100) : 0;
   const belt = beltByGame?.[g.id];
@@ -5901,6 +6048,41 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         </div>
       )}
 
+      {/* points marqués : moyennes et records */}
+      {scoreStats && (
+        <div style={{ background: "rgba(107,58,122,.07)", borderRadius: 16, padding: "16px 20px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
+            {scoreStats.dir === "low" ? <TrendingDown size={24} color={C.purple} style={{ flexShrink: 0 }} /> : <TrendingUp size={24} color={C.purple} style={{ flexShrink: 0 }} />}
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: C.navy }}>Les points</div>
+          </div>
+          <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 12 }}>
+            {SCORE_DIR_LABEL[scoreStats.dir].charAt(0).toUpperCase() + SCORE_DIR_LABEL[scoreStats.dir].slice(1)} · sur {scoreStats.count} score{scoreStats.count > 1 ? "s" : ""} enregistré{scoreStats.count > 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+              <span style={{ color: "#6b5d49" }}>Moyenne d'une partie</span>
+              <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, whiteSpace: "nowrap" }}>{fmtPts(scoreStats.avg)} pts</b>
+            </div>
+            {scoreStats.myAvg != null && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                <span style={{ color: "#6b5d49" }}>Ma moyenne <span style={{ color: "#9c8d79", fontSize: 12.5 }}>({scoreStats.myCount} partie{scoreStats.myCount > 1 ? "s" : ""})</span></span>
+                <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.teal, whiteSpace: "nowrap" }}>{fmtPts(scoreStats.myAvg)} pts</b>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, borderTop: "1px solid rgba(107,58,122,.16)", paddingTop: 7, marginTop: 1 }}>
+              <span style={{ color: "#6b5d49" }}>Record <span style={{ color: "#9c8d79", fontSize: 12.5 }}>— {scoreStats.best.name}, {new Date(scoreStats.best.playedAt).toLocaleDateString("fr-FR")}</span></span>
+              <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.amber, whiteSpace: "nowrap" }}>{scoreStats.best.score.toLocaleString("fr-FR")} pts</b>
+            </div>
+            {scoreStats.myBest && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                <span style={{ color: "#6b5d49" }}>Mon record <span style={{ color: "#9c8d79", fontSize: 12.5 }}>— {new Date(scoreStats.myBest.playedAt).toLocaleDateString("fr-FR")}</span></span>
+                <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.teal, whiteSpace: "nowrap" }}>{scoreStats.myBest.score.toLocaleString("fr-FR")} pts</b>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {currentUser && (myGamePlays.length > 0 || belt) && (
         <div style={{ background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
@@ -5924,11 +6106,15 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
               {histOpen && (
                 <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", marginTop: 12, paddingTop: 10, display: "grid", gap: 5 }}>
                   {myGamePlays.map((pl) => {
-                    const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+                    const me = pl.participants.find((pt) => pt.userId === currentUser.id);
+                    const iWon = !!me && me.isWinner;
                     return (
-                      <div key={pl.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+                      <div key={pl.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, fontSize: 13.5 }}>
                         <span style={{ color: "#6b5d49" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</span>
-                        {iWon && <span style={{ color: C.amber, fontWeight: 700 }}>gagne 🏆</span>}
+                        <span style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
+                          {me && me.score != null && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>{me.score.toLocaleString("fr-FR")} pts</span>}
+                          {iWon && <span style={{ color: C.amber, fontWeight: 700 }}>gagne 🏆</span>}
+                        </span>
                       </div>
                     );
                   })}
@@ -6128,7 +6314,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {editing && <EditGameModal g={{ ...g, desc }} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
-      {showSessions && <SessionsModal sessions={sessions} gameName={g.name} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
+      {showSessions && <SessionsModal sessions={sessions} gameName={g.name} game={g} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
 }
@@ -7248,7 +7434,7 @@ function LocationsPage({ setToast }) {
 
 function EditGameModal({ g, onClose, onSave }) {
   const { currentUser, toggleGameShared } = useApp();
-  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "" });
+  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "", scoreDirection: g.scoreDirection || "" });
   const [shared, setShared] = useState(g.shared !== false);
   const isOwner = currentUser && currentUser.id === g.ownerId;
   const previewRental = rentalPrice(Number(f.newPrice));
@@ -7265,6 +7451,7 @@ function EditGameModal({ g, onClose, onSave }) {
         <TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} placeholder="ex. 45" />
       </Field>
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
+      <ScoreDirectionField value={f.scoreDirection} onChange={(v) => setF({ ...f, scoreDirection: v })} />
       <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
       <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
@@ -8312,7 +8499,7 @@ const backLinkStyle = { background: "none", border: "none", color: C.teal, fontF
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
   const { games, upcoming, users, currentUser, addOwner } = useApp();
-  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "" });
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "", scoreDirection: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const [busy, setBusy] = useState(false); // anti double-clic : verrouille le bouton pendant la création
@@ -8430,6 +8617,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
           }} />
         </div>
       </Field>
+      <ScoreDirectionField value={f.scoreDirection} onChange={(v) => setF({ ...f, scoreDirection: v })} />
       <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation & mécaniques"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} placeholder="Décrivez le jeu, son thème, ses mécaniques..." style={{ ...inputStyle, resize: "vertical" }} /></Field>
       <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
@@ -9474,6 +9662,7 @@ function MyPlaysSection({ setToast }) {
   const [yearSel, setYearSel] = useState(() => String(new Date().getFullYear()));
   const [allOpen, setAllOpen] = useState(false);
   const [detailGameId, setDetailGameId] = useState(null);
+  const [openPlayId, setOpenPlayId] = useState(null); // partie dépliée (scores)
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
   const myPlays = useMemo(
     () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
@@ -9614,15 +9803,25 @@ function MyPlaysSection({ setToast }) {
               <div style={{ display: "grid", gap: 7 }}>
                 {detailPlays.map((pl) => {
                   const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
+                  const hasScores = (pl.participants || []).some((pt) => pt.score != null && pt.confirmed !== false);
+                  const open = openPlayId === pl.id;
                   return (
-                    <div key={pl.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
-                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: "#6b5d49" }}>{new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}</div>
+                    <div key={pl.id} style={{ background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 11px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <button onClick={() => hasScores && setOpenPlayId(open ? null : pl.id)} disabled={!hasScores}
+                        title={hasScores ? "Voir les scores de cette partie" : undefined}
+                        style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: hasScores ? "pointer" : "default", fontFamily: "'Nunito',sans-serif", fontSize: 13, color: "#6b5d49" }}>
+                        {new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{pl.sessionId ? " · chronométrée" : ""}
+                        {hasScores && <span style={{ color: C.teal, fontWeight: 700 }}> · scores {open ? "▾" : "▸"}</span>}
+                      </button>
                       <button onClick={async () => { const r = await setMyPlayResult(pl.id, !iWon); if (r?.error && setToast) setToast("Impossible d'enregistrer le résultat : " + r.error); }}
                         title={iWon ? "Vous etes declare vainqueur - cliquer pour retirer" : "Me declarer vainqueur"}
                         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", border: `1.5px solid ${iWon ? C.amber : "#e0d4bf"}`, background: iWon ? C.amber : "#fff", color: iWon ? "#fff" : "#a89a86" }}>
                         🏆 {iWon ? "Vainqueur" : "Vainqueur ?"}
                       </button>
                       <button onClick={async () => { if (await askConfirm({ title: "Retirer cette partie ?", message: "Cette partie sera retirée de votre historique. Les autres joueurs de la partie ne sont pas affectés.", confirmLabel: "Retirer" })) { const r = await declinePlayParticipation(pl.id); if (r?.error && setToast) setToast("Impossible de retirer la partie : " + r.error); } }} title="Retirer de mon historique" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={15} /></button>
+                    </div>
+                    {open && <PlayScoreBoard play={pl} game={gameById[pl.gameId]} compact />}
                     </div>
                   );
                 })}
