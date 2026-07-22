@@ -2009,6 +2009,8 @@ function AppProvider({ children }) {
   const recordManualPlay = useCallback(async (gameId, playedAt, participants) => {
     const payload = (participants || []).map((pp) => ({
       user_id: pp.userId || null, guest_name: pp.guestName || null, is_winner: !!pp.isWinner,
+      // "" ou null = aucun score saisi pour ce joueur (la RPC enregistre NULL)
+      score: pp.score == null || pp.score === "" ? null : Number(pp.score),
     }));
     const { error } = await supabase.rpc("record_manual_play", {
       p_game_id: gameId, p_played_at: playedAt, p_participants: payload,
@@ -3602,7 +3604,8 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Pendant une partie chronométrée, chaque joueur a une <b>pastille de score</b> : touchez-la pour ouvrir le pavé de saisie. Les scores sont <b>partagés en direct</b> entre tous les téléphones de la tablée.</p>
             <p style={{ margin: "0 0 8px" }}>À la fin de la partie, si des points ont été saisis, le chrono demande <b>quel score l'emporte</b> : « le plus grand » ou « le plus petit ». Le <b>vainqueur est alors déduit automatiquement</b> — et vous pouvez toujours le corriger à la main, par exemple en cas d'égalité départagée autrement.</p>
             <p style={{ margin: "0 0 8px" }}>Ce réglage est <b>mémorisé sur la fiche du jeu</b> : la prochaine partie le retrouvera déjà pré-sélectionné. Le modifier depuis le chrono met la fiche à jour, et inversement — vous pouvez aussi le définir directement à la <b>création ou la modification d'une fiche de jeu</b> (« Sens du score »), y compris « Non applicable » pour un jeu coopératif.</p>
-            <p style={{ margin: 0 }}>Les scores sont <b>conservés</b>, y compris pour les parties enchaînées avec « Nouvelle partie ». On les retrouve ensuite en cliquant sur une partie : dans <b>Mon espace → Mes parties</b>, et sur la fiche du jeu via « Voir le détail des parties ». Le classement s'affiche avec le nom de chaque joueur, ses points et le trophée du vainqueur.</p>
+            <p style={{ margin: "0 0 8px" }}>Les scores sont <b>conservés</b>, y compris pour les parties enchaînées avec « Nouvelle partie ». On les retrouve ensuite en cliquant sur une partie : dans <b>Mon espace → Mes parties</b>, et sur la fiche du jeu via « Voir le détail des parties ». Le classement s'affiche avec le nom de chaque joueur, ses points et le trophée du vainqueur.</p>
+            <p style={{ margin: 0 }}>Vous pouvez aussi noter les points d'une partie <b>jouée sans le chrono</b> : dans <b>« Enregistrer une partie jouée »</b>, une case «&nbsp;pts&nbsp;» est proposée à côté de chaque joueur. Elle est <b>facultative</b> — laissez-la vide si vous n'avez pas les scores. Dès qu'un point est saisi, le même choix «&nbsp;le plus grand / le plus petit&nbsp;» apparaît, le vainqueur se coche tout seul et le réglage est mémorisé sur la fiche du jeu.</p>
           </>,
         },
         {
@@ -9835,7 +9838,7 @@ function MyPlaysSection({ setToast }) {
 }
 
 function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
-  const { games, users, currentUser, recordManualPlay } = useApp();
+  const { games, users, currentUser, recordManualPlay, reload } = useApp();
   const [gameId, setGameId] = useState(defaultGameId || "");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [parts, setParts] = useState([]);
@@ -9843,11 +9846,16 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [busy, setBusy] = useState(false);
   const [gameSearch, setGameSearch] = useState("");
   const [gameListOpen, setGameListOpen] = useState(false);
+  // Sens du score, comme dans le chrono : pré-rempli depuis la fiche du jeu.
+  const [scoreDir, setScoreDir] = useState("high");
+  // Passe à true dès qu'on coche un trophée à la main : on cesse alors le calcul auto.
+  const [winnersTouched, setWinnersTouched] = useState(false);
   useEffect(() => {
     if (open) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
+      setWinnersTouched(false);
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
-      setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false }] : []);
+      setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
   }, [open, defaultGameId, currentUser]);
 
@@ -9860,16 +9868,53 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   }, [sortedGames, gameSearch]);
   const available = (users || []).filter((u) => !u.banned && !parts.some((p) => p.userId === u.id));
 
-  const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false }]); };
-  const addGuest = () => { const n = guestName.trim(); if (!n) return; setParts((pr) => [...pr, { key: "g" + Date.now(), userId: null, guestName: n, name: n, isWinner: false }]); setGuestName(""); };
-  const toggleWin = (key) => setParts((pr) => pr.map((p) => (p.key === key ? { ...p, isWinner: !p.isWinner } : p)));
+  const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false, score: "" }]); };
+  const addGuest = () => { const n = guestName.trim(); if (!n) return; setParts((pr) => [...pr, { key: "g" + Date.now(), userId: null, guestName: n, name: n, isWinner: false, score: "" }]); setGuestName(""); };
+  const toggleWin = (key) => { setWinnersTouched(true); setParts((pr) => pr.map((p) => (p.key === key ? { ...p, isWinner: !p.isWinner } : p))); };
+  const setScore = (key, v) => setParts((pr) => pr.map((p) => (p.key === key ? { ...p, score: v } : p)));
   const removeP = (key) => setParts((pr) => pr.filter((p) => p.key !== key));
+
+  // Le sens du score suit la fiche du jeu choisi (par défaut : le plus grand gagne).
+  const selectedGame = useMemo(() => (games || []).find((g) => g.id === gameId) || null, [games, gameId]);
+  useEffect(() => {
+    setScoreDir(selectedGame?.scoreDirection === "low" ? "low" : "high");
+    setWinnersTouched(false);
+  }, [selectedGame?.id, selectedGame?.scoreDirection]); // eslint-disable-line
+
+  const hasScore = (p) => String(p.score ?? "").trim() !== "" && Number.isFinite(Number(p.score));
+  const anyScore = parts.some(hasScore);
+  // Clé stable : évite de recalculer le vainqueur à chaque frappe inutile.
+  const scoreKey = parts.map((p) => `${p.key}:${p.score ?? ""}`).join("|");
+  const autoWinnerKeys = useMemo(() => {
+    const scored = parts.filter(hasScore).map((p) => ({ key: p.key, v: Number(p.score) }));
+    if (!scored.length) return [];
+    const vals = scored.map((x) => x.v);
+    const best = scoreDir === "low" ? Math.min(...vals) : Math.max(...vals);
+    return scored.filter((x) => x.v === best).map((x) => x.key);
+  }, [scoreKey, scoreDir]); // eslint-disable-line
+
+  // Pré-sélection du vainqueur d'après les scores, tant qu'on n'a pas choisi à la main.
+  useEffect(() => {
+    if (!anyScore || winnersTouched) return;
+    setParts((pr) => {
+      const next = pr.map((p) => ({ ...p, isWinner: autoWinnerKeys.includes(p.key) }));
+      return next.some((p, i) => p.isWinner !== pr[i].isWinner) ? next : pr;
+    });
+  }, [autoWinnerKeys, anyScore, winnersTouched]);
+
+  const changeScoreDir = (d) => { setScoreDir(d); setWinnersTouched(false); };
 
   const save = async () => {
     if (!gameId) return setToast("Choisissez un jeu.");
     if (!parts.length) return setToast("Ajoutez au moins un joueur.");
     setBusy(true);
+    // Le sens du score est mémorisé sur la fiche du jeu, comme depuis le chrono.
+    const dirChanged = anyScore && selectedGame && (selectedGame.scoreDirection || null) !== scoreDir;
+    if (dirChanged) {
+      try { await supabase.rpc("set_game_score_direction", { p_game_id: gameId, p_direction: scoreDir }); } catch (e) { /* non bloquant */ }
+    }
     const res = await recordManualPlay(gameId, new Date(date + "T12:00:00").toISOString(), parts);
+    if (dirChanged) await reload();
     setBusy(false);
     if (res?.error) return setToast(res.error);
     setToast("Partie enregistrée !"); onClose();
@@ -9878,7 +9923,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   return (
     <Modal open={open} onClose={onClose} title="Enregistrer une partie" width={540}>
       <div style={{ display: "grid", gap: 15 }}>
-        <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seul le résultat compte.</p>
+        <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seuls le résultat et les points le sont. Les scores sont facultatifs — laisse les cases vides si tu ne les as pas.</p>
         <label style={{ display: "grid", gap: 5 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Jeu</span>
           <div style={{ position: "relative" }}>
@@ -9908,15 +9953,39 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
           <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
         </label>
         <div style={{ display: "grid", gap: 8 }}>
-          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— appuie sur 🏆 pour le(s) vainqueur(s)</span></span>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— note les points si tu les as, sinon appuie sur 🏆</span></span>
           {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
           {parts.map((p) => (
             <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
-              <span style={{ flex: 1, fontWeight: 600, color: C.navy, fontSize: 14 }}>{p.name}{p.userId ? "" : " · invité"}</span>
-              <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.userId ? "" : " · invité"}</span>
+              <input type="number" inputMode="numeric" value={p.score ?? ""} onChange={(e) => setScore(p.key, e.target.value)} placeholder="pts" title={`Score de ${p.name} (facultatif)`}
+                style={{ width: 68, flexShrink: 0, padding: "6px 8px", borderRadius: 8, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, textAlign: "right", background: "#fff", color: C.navy, boxSizing: "border-box" }} />
+              <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, flexShrink: 0, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
               <button onClick={() => removeP(p.key)} title="Retirer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><X size={16} /></button>
             </div>
           ))}
+          {anyScore && (
+            <div style={{ background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}33`, borderRadius: 12, padding: "11px 13px" }}>
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Quel score l'emporte ?</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[{ v: "high", t: "Le plus grand", ico: TrendingUp }, { v: "low", t: "Le plus petit", ico: TrendingDown }].map((o) => {
+                  const on = scoreDir === o.v;
+                  const Ico = o.ico;
+                  return (
+                    <button key={o.v} type="button" onClick={() => changeScoreDir(o.v)} style={{
+                      flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 10px", borderRadius: 10, cursor: "pointer",
+                      fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+                      border: `2px solid ${on ? C.purple : "#e6dcc9"}`, background: on ? C.purple : "#fff", color: on ? "#fff" : "#8a7c6a",
+                    }}><Ico size={14} /> {o.t}</button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 12, color: "#8a7c6a", marginTop: 7, lineHeight: 1.45 }}>
+                Le vainqueur est déduit des points — tu peux le corriger avec 🏆.{winnersTouched ? " (choix manuel en cours)" : ""}
+                {selectedGame && (selectedGame.scoreDirection || null) !== scoreDir && <> Ce choix sera enregistré sur la fiche du jeu.</>}
+              </div>
+            </div>
+          )}
           <select value="" onChange={(e) => { if (e.target.value) addMember(e.target.value); }} style={fieldStyle}>
             <option value="">+ Ajouter un membre…</option>
             {available.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
