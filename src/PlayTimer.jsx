@@ -913,7 +913,9 @@ function ScoreDirPicker({ value, onChange, saved, compact }) {
 }
 
 // ---- pave de saisie du score (clavier type calculatrice) -------------
-const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onApply }) {
+// Exporte : le meme pave est reutilise dans App.jsx pour les parties
+// enregistrees a la main (fenetre "Enregistrer une partie jouee").
+export const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onApply }) {
   const [entry, setEntry] = useState('');
   const [op, setOp] = useState(null); // null = saisie directe | '+' | '-'
   const cur = initialScore || 0;
