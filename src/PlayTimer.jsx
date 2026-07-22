@@ -82,6 +82,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // ui running
   const [hostView, setHostView] = useState(false);
   const [scoreFor, setScoreFor] = useState(null); // id du joueur dont on edite le score
+  // Sens du score : 'high' = le plus grand gagne, 'low' = le plus petit.
+  // Pre-selectionne depuis la fiche du jeu, modifiable a la main.
+  const [scoreDir, setScoreDir] = useState('high');
+  // Passe a true des que l'on coche/decoche un vainqueur : on cesse alors
+  // de recalculer automatiquement le vainqueur a partir des scores.
+  const [winnersTouched, setWinnersTouched] = useState(false);
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
@@ -254,7 +260,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           let gamesData = [];
           if (gIds.length) {
             const { data } = await supabase.from('games')
-              .select('id,name,play_time,image_url').in('id', gIds);
+              .select('id,name,play_time,image_url,score_direction').in('id', gIds);
             gamesData = data || [];
           }
           setEventGames(gamesData);
@@ -278,7 +284,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           setDraft(pre);
         } else if (gameId) {
           const { data: g } = await supabase.from('games')
-            .select('id,name,play_time,image_url').eq('id', gameId).single();
+            .select('id,name,play_time,image_url,score_direction').eq('id', gameId).single();
           setGame(g);
           setBoxMin(g?.play_time ? String(g.play_time) : '');
           setDraft([]);
@@ -345,6 +351,59 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     } catch (err) { setError(err.message || String(err)); }
   };
 
+  // Un joueur qui rejoint via un code n'a pas charge la fiche du jeu :
+  // on la recupere pour connaitre le sens du score.
+  useEffect(() => {
+    if (game || !session?.game_id) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('games')
+        .select('id,name,play_time,image_url,score_direction').eq('id', session.game_id).single();
+      if (!cancelled && data) setGame(data);
+    })();
+    return () => { cancelled = true; };
+  }, [game, session?.game_id]); // eslint-disable-line
+
+  // Le sens du score suit la fiche du jeu (par defaut : le plus grand gagne).
+  useEffect(() => {
+    setScoreDir(game?.score_direction === 'low' ? 'low' : 'high');
+    setWinnersTouched(false);
+  }, [game?.id, game?.score_direction]);
+
+  // Cle stable des scores : evite de recalculer a chaque synchro Realtime.
+  const scoreKey = players.map((p) => `${p.id}:${p.score || 0}`).join('|');
+  const anyScore = players.some((p) => (p.score || 0) !== 0);
+
+  // Vainqueur(s) deduits des scores, selon le sens choisi.
+  const autoWinners = useMemo(() => {
+    if (!anyScore || !players.length) return [];
+    const vals = players.map((p) => p.score || 0);
+    const best = scoreDir === 'low' ? Math.min(...vals) : Math.max(...vals);
+    return players.filter((p) => (p.score || 0) === best).map((p) => p.id);
+  }, [scoreKey, scoreDir, anyScore]); // eslint-disable-line
+
+  const sameIds = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  // Pre-selection automatique du vainqueur en fin de partie, tant que
+  // l'utilisateur n'a pas fait de choix manuel.
+  useEffect(() => {
+    if (phase !== 'done' || winnersTouched) return;
+    setWinnerIds((prev) => (sameIds(prev, autoWinners) ? prev : autoWinners));
+  }, [phase, autoWinners, winnersTouched]);
+
+  // Changer le sens du score : on recalcule le vainqueur et on met a jour
+  // la fiche du jeu (RPC dediee : la RLS de "games" reserve l'ecriture aux
+  // proprietaires, or n'importe quel membre peut lancer un chrono).
+  const changeScoreDir = async (d) => {
+    setScoreDir(d);
+    setWinnersTouched(false);
+    if (!game?.id || !currentUser || game.score_direction === d) return;
+    try {
+      await supabase.rpc('set_game_score_direction', { p_game_id: game.id, p_direction: d });
+      setGame((g) => (g ? { ...g, score_direction: d } : g));
+    } catch (e) { /* le chrono ne doit jamais bloquer sur ce point */ }
+  };
+
   const rpc = async (fn, args) => {
     try { setError(null); const { error: e } = await supabase.rpc(fn, args); if (e) throw e; }
     catch (err) { setError(err.message || String(err)); }
@@ -353,7 +412,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
   const nextRound = () => rpc('next_round', { p_session_id: sid });
-  const openNewGame = () => { setNewGameWinners([]); setNewGamePrompt(true); };
+  const openNewGame = () => { setNewGameWinners(autoWinners); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
   const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
@@ -363,7 +422,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     onExit();
   };
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
-  const toggleWinner = (pid) => setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
+  const toggleWinner = (pid) => { setWinnersTouched(true); setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid])); };
   const saveResultAndExit = async () => {
     setSavingResult(true); setError(null);
     const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
@@ -611,12 +670,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
               <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, marginBottom: 4 }}>Partie terminee</div>
-              <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)</div>
+              <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
+                {anyScore
+                  ? "Qui a gagne cette partie ? Le vainqueur est deduit des scores, corrige-le si besoin."
+                  : "Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)"}
+              </div>
+              {anyScore && (
+                <div style={{ marginBottom: 12 }}>
+                  <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); }} saved={game?.score_direction} compact />
+                </div>
+              )}
               <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
                 {players.map((p, i) => {
                   const won = newGameWinners.includes(p.id);
                   return (
-                    <button key={p.id} onClick={() => toggleNewGameWinner(p.id)}
+                    <button key={p.id} onClick={() => { setWinnersTouched(true); toggleNewGameWinner(p.id); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
                         border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
                       <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
@@ -756,6 +824,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         </Card>
         <Card>
           <Label>Qui a remporté la partie ?</Label>
+          {anyScore && (
+            <div style={{ marginTop: 6, marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #e6dcc9' }}>
+              <ScoreDirPicker value={scoreDir} onChange={changeScoreDir} saved={game?.score_direction} />
+            </div>
+          )}
           <div style={{ display: 'grid', gap: 8, marginTop: 6 }}>
             {players.map((p, i) => {
               const won = winnerIds.includes(p.id);
@@ -771,7 +844,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               );
             })}
           </div>
-          <div style={{ fontSize: 12, color: `${C.navy}99`, marginTop: 8 }}>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</div>
+          <div style={{ fontSize: 12, color: `${C.navy}99`, marginTop: 8 }}>
+            {anyScore
+              ? <>Le vainqueur est déduit des scores ({scoreDir === 'low' ? 'le plus petit' : 'le plus grand'} l'emporte) — tu peux le corriger à la main.{winnersTouched ? ' (choix manuel en cours)' : ''}</>
+              : <>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</>}
+          </div>
         </Card>
         <Card>
           <Label>Temps par joueur</Label>
@@ -802,6 +879,37 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }
 
   return null;
+}
+
+// ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
+function ScoreDirPicker({ value, onChange, saved, compact }) {
+  const opts = [
+    { v: 'high', t: 'Le plus grand score gagne' },
+    { v: 'low', t: 'Le plus petit score gagne' },
+  ];
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {opts.map((o) => {
+          const on = value === o.v;
+          return (
+            <button key={o.v} onClick={() => onChange(o.v)}
+              style={{ flex: 1, padding: compact ? '7px 8px' : '9px 10px', borderRadius: 12, cursor: 'pointer',
+                fontFamily: TITLE, fontWeight: 600, fontSize: compact ? 12.5 : 13.5, lineHeight: 1.25,
+                border: on ? `2px solid ${C.teal}` : '1px solid #e6dcc9',
+                background: on ? '#E8F4F4' : '#fff', color: on ? C.teal : `${C.navy}aa` }}>
+              {o.t}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: `${C.navy}88`, marginTop: 6, lineHeight: 1.45 }}>
+        {saved === value
+          ? 'Enregistre sur la fiche du jeu : ce sera pre-selectionne la prochaine fois.'
+          : 'Ce choix sera enregistre sur la fiche du jeu et pre-selectionne la prochaine fois.'}
+      </div>
+    </div>
+  );
 }
 
 // ---- pave de saisie du score (clavier type calculatrice) -------------
