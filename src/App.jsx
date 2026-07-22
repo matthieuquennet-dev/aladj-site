@@ -3875,7 +3875,7 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
             <p style={{ margin: "0 0 8px" }}>Seules les <b>images</b> n'y figurent pas : elles sont stockées sur un hébergement séparé et ne risquent rien lors d'une manipulation en base.</p>
-            <p style={{ margin: "0 0 8px" }}>À la fin de l'export, un <b>récapitulatif</b> affiche le nombre de lignes récupérées table par table. Une table à <b>0 ligne</b> n'est pas forcément un problème — certaines sont légitimement vides — mais c'est le point à surveiller : cela peut aussi signifier qu'une règle de sécurité a bloqué la lecture <i>sans renvoyer d'erreur</i>. Le bouton <b>« Copier la requête de vérification »</b> fournit une requête à coller dans l'éditeur SQL de Supabase pour comparer avec les nombres réels.</p>
+            <p style={{ margin: "0 0 8px" }}>À la fin de l'export, un <b>récapitulatif</b> affiche le nombre de lignes récupérées table par table, <b>comparé automatiquement au contenu réel de la base</b>. Un bandeau vert confirme que la sauvegarde est complète ; un bandeau rouge signale les tables incomplètes et le nombre de lignes manquantes. Une table légitimement vide s'affiche simplement à zéro, sans alerte.</p>
             <p style={{ margin: 0 }}>À faire <b>régulièrement</b> et systématiquement <b>avant toute opération sensible</b> sur la base. Le fichier se conserve tel quel ; sa réinjection éventuelle passerait par l'éditeur SQL.</p>
           </>,
         },
@@ -9088,9 +9088,9 @@ const BACKUP_TABLES = [
   ["reco_dismissed", [["id"], ["created_at"]]],
 ];
 
-/* Requête à coller dans l'éditeur SQL de Supabase pour comparer le nombre de
-   lignes réel (hors RLS, rôle postgres) avec ce que la sauvegarde a rapatrié.
-   Un écart signale une lecture bloquée par une policy. 100 % ASCII. */
+/* Requête de secours, à coller dans l'éditeur SQL de Supabase, utilisée
+   uniquement si la fonction admin_table_counts() n'est pas encore déployée.
+   100 % ASCII. */
 const BACKUP_CHECK_SQL = "SELECT table_name,\n" +
   "       (xpath('/row/cnt/text()',\n" +
   "        query_to_xml('SELECT count(*) AS cnt FROM public.'||quote_ident(table_name),\n" +
@@ -9099,8 +9099,10 @@ const BACKUP_CHECK_SQL = "SELECT table_name,\n" +
   "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'\n" +
   "ORDER BY 1;";
 
-/* Rapatrie une table entière, en essayant successivement chaque jeu de colonnes
-   de tri, puis sans tri. Pagination par lots de 1000. */
+/* Rapatrie une table entière par lecture directe. ATTENTION : cette voie est
+   soumise aux policies RLS — elle sert uniquement de repli si la fonction
+   admin_backup_table() n'est pas disponible. Elle essaie successivement chaque
+   jeu de colonnes de tri, puis sans tri. Pagination par lots de 1000. */
 async function backupFetchTable(table, orderSets) {
   const size = 1000;
   const sets = [...(orderSets || []), []];
@@ -9135,22 +9137,64 @@ function AdminBackupSection() {
 
   const download = async () => {
     setBusy(true); setReport(null);
+    setProg("inventaire…");
+
+    /* 1) Comptes réels de chaque table, hors RLS. Sert à la fois de référence de
+       contrôle ET de liste des tables : une table ajoutée plus tard au schéma
+       sera donc sauvegardée automatiquement, sans toucher au code. */
+    let counts = null;
+    try {
+      const { data, error } = await supabase.rpc("admin_table_counts");
+      if (!error && data && typeof data === "object") counts = data;
+    } catch (e) { /* fonction non déployée : on continue sans référence */ }
+
+    /* 2) Plan de sauvegarde : les tables connues (avec leur tri éprouvé, utile
+       seulement pour le repli), puis toute table supplémentaire vue en base. */
+    const known = BACKUP_TABLES.map((x) => x[0]);
+    const extra = counts ? Object.keys(counts).filter((t) => !known.includes(t)).sort() : [];
+    const plan = [...BACKUP_TABLES, ...extra.map((t) => [t, [["id"], ["created_at"]]])];
+
     const out = {}; const errors = []; const summary = [];
-    for (let i = 0; i < BACKUP_TABLES.length; i++) {
-      const [t, orderSets] = BACKUP_TABLES[i];
-      setProg(`${i + 1}/${BACKUP_TABLES.length} — ${t}`);
-      let res;
-      try { res = await backupFetchTable(t, orderSets); }
-      catch (e) { res = { rows: [], error: String((e && e.message) || e) }; }
-      if (res.error) { errors.push(t); summary.push({ table: t, rows: 0, error: res.error }); }
-      else { out[t] = res.rows; summary.push({ table: t, rows: res.rows.length, error: null }); }
+    for (let i = 0; i < plan.length; i++) {
+      const [t, orderSets] = plan[i];
+      setProg(`${i + 1}/${plan.length} — ${t}`);
+      let rows = null; let via = null; let err = null;
+
+      // a) Voie administrateur : contenu intégral, insensible aux RLS.
+      try {
+        const { data, error } = await supabase.rpc("admin_backup_table", { p_table: t });
+        if (!error && Array.isArray(data)) { rows = data; via = "admin"; }
+        else if (error) err = error.message;
+      } catch (e) { err = String((e && e.message) || e); }
+
+      // b) Repli : lecture directe, soumise aux RLS (peut être incomplète).
+      if (rows === null) {
+        try {
+          const r = await backupFetchTable(t, orderSets);
+          if (r.error) { err = r.error; } else { rows = r.rows; via = "direct"; err = null; }
+        } catch (e) { err = String((e && e.message) || e); }
+      }
+
+      const expected = counts && counts[t] != null ? Number(counts[t]) : null;
+      if (rows === null) {
+        errors.push(t);
+        summary.push({ table: t, rows: 0, expected, via: null, error: err || "échec" });
+      } else {
+        out[t] = rows;
+        summary.push({ table: t, rows: rows.length, expected, via, error: null });
+      }
     }
+
     const total = summary.reduce((s, r) => s + r.rows, 0);
+    const expectedTotal = summary.reduce((s, r) => s + (r.expected || 0), 0);
+    const partial = summary.filter((r) => !r.error && r.expected != null && r.rows < r.expected);
     const payload = {
       site: "aladj.fr",
       exportedAt: new Date().toISOString(),
-      tableCount: BACKUP_TABLES.length,
+      tableCount: plan.length,
       rowCount: total,
+      expectedRowCount: counts ? expectedTotal : null,
+      complete: Boolean(counts) && errors.length === 0 && partial.length === 0,
       note: "Images non incluses : elles sont stockees sur Cloudflare R2, hors base.",
       summary, errors, tables: out,
     };
@@ -9161,7 +9205,7 @@ function AdminBackupSection() {
     a.click();
     URL.revokeObjectURL(a.href);
     setBusy(false); setProg("");
-    setReport({ summary, errors, total });
+    setReport({ summary, errors, total, expectedTotal, partial, hasCounts: Boolean(counts) });
   };
 
   const copySql = async () => {
@@ -9172,7 +9216,15 @@ function AdminBackupSection() {
     } catch (e) { /* presse-papier indisponible : rien de grave */ }
   };
 
-  const empties = report ? report.summary.filter((r) => !r.error && r.rows === 0).length : 0;
+  /* Statut d'une ligne du rapport : vert = conforme au nombre réel en base,
+     rouge = échec ou lecture incomplète, ambre = pas de référence disponible. */
+  const rowState = (r) => {
+    if (r.error) return "err";
+    if (r.expected == null) return r.rows === 0 ? "warn" : "unknown";
+    return r.rows < r.expected ? "err" : "ok";
+  };
+  const STATE_COLORS = { ok: C.teal, err: C.red, warn: C.amber, unknown: "#8a7a63" };
+  const STATE_BORDERS = { ok: "#d8e8e4", err: "#f0cdd3", warn: "#f2e2bd", unknown: "#e7e0d2" };
 
   return (
     <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: "1px solid #ece2d0", marginBottom: 22 }}>
@@ -9181,9 +9233,10 @@ function AdminBackupSection() {
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 17, margin: 0, color: C.navy }}>Sauvegarde des données (admin)</h3>
       </div>
       <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 12px" }}>
-        Télécharge une copie de <b>toutes les tables du site</b> ({BACKUP_TABLES.length} au total : membres, jeux, notes,
-        prêts, foyers, moments, veille, parties et scores, chronomètre, notifications…) dans un fichier daté.
-        Les <b>images</b> ne sont pas concernées : elles sont stockées à part et ne risquent rien lors d'une manipulation en base.
+        Télécharge une copie de <b>toutes les tables du site</b> (membres, jeux, notes, prêts, foyers, moments,
+        veille, parties et scores, chronomètre, notifications…) dans un fichier daté. Le contenu est ensuite
+        <b> vérifié table par table</b> contre le nombre de lignes réel en base. Les <b>images</b> ne sont pas
+        concernées : elles sont stockées à part et ne risquent rien lors d'une manipulation en base.
         À faire régulièrement, et systématiquement avant toute opération sensible.
       </p>
       <Btn variant="soft" disabled={busy} onClick={download}>
@@ -9192,40 +9245,60 @@ function AdminBackupSection() {
 
       {report && (
         <div style={{ marginTop: 18, borderTop: "1px solid #ece2d0", paddingTop: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, fontWeight: 700, color: report.errors.length ? C.red : C.navy, marginBottom: 4 }}>
-            {report.errors.length
-              ? <><AlertTriangle size={16} color={C.red} /> {report.errors.length} table{report.errors.length > 1 ? "s" : ""} en échec</>
-              : <><Check size={16} color={C.teal} /> {report.summary.length} tables sauvegardées — {report.total.toLocaleString("fr-FR")} lignes</>}
-          </div>
-          {empties > 0 && (
-            <p style={{ fontSize: 12.5, color: "#8a7a63", margin: "0 0 10px", lineHeight: 1.5 }}>
-              {empties} table{empties > 1 ? "s sont vides" : " est vide"}. Ce n'est pas forcément anormal, mais c'est le
-              symptôme à surveiller : une règle de sécurité peut bloquer la lecture <i>sans renvoyer d'erreur</i>.
-              Comparez avec les nombres réels grâce à la requête ci-dessous.
-            </p>
-          )}
+          {(() => {
+            const ko = report.errors.length + report.partial.length;
+            if (!report.hasCounts) return (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: 13.5, color: C.amber, fontWeight: 700, marginBottom: 8 }}>
+                <AlertTriangle size={16} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>Vérification impossible : la fonction de contrôle n'est pas installée en base. Les nombres ci-dessous peuvent être incomplets.</span>
+              </div>
+            );
+            if (ko === 0) return (
+              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 8 }}>
+                <Check size={16} color={C.teal} />
+                Sauvegarde complète — {report.summary.length} tables, {report.total.toLocaleString("fr-FR")} lignes, conforme à la base.
+              </div>
+            );
+            return (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 8 }}>
+                <AlertTriangle size={16} color={C.red} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>
+                  Sauvegarde incomplète : {(report.expectedTotal - report.total).toLocaleString("fr-FR")} ligne(s)
+                  manquante(s) sur {ko} table(s). Le fichier a bien été téléchargé, mais ne vous y fiez pas tel quel.
+                </span>
+              </div>
+            );
+          })()}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(178px,1fr))", gap: 5, marginBottom: 12 }}>
             {report.summary.map((r) => {
-              const col = r.error ? C.red : (r.rows === 0 ? C.amber : C.teal);
+              const st = rowState(r);
               return (
-                <div key={r.table} title={r.error || ""} style={{
+                <div key={r.table} title={r.error || (r.expected != null ? `${r.rows} / ${r.expected} en base` : "")} style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
-                  background: "#fff", border: `1px solid ${r.error ? "#f0cdd3" : (r.rows === 0 ? "#f2e2bd" : "#e7e0d2")}`,
+                  background: "#fff", border: `1px solid ${STATE_BORDERS[st]}`,
                   borderRadius: 9, padding: "5px 9px", fontSize: 12.5,
                 }}>
                   <span style={{ color: "#5e5346", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.table}</span>
-                  <b style={{ color: col, whiteSpace: "nowrap" }}>{r.error ? "échec" : r.rows.toLocaleString("fr-FR")}</b>
+                  <b style={{ color: STATE_COLORS[st], whiteSpace: "nowrap" }}>
+                    {r.error ? "échec" : (st === "err" ? `${r.rows.toLocaleString("fr-FR")}/${r.expected.toLocaleString("fr-FR")}` : r.rows.toLocaleString("fr-FR"))}
+                  </b>
                 </div>
               );
             })}
           </div>
-          <Btn variant="ghost" size="sm" onClick={copySql}>
-            {copied ? <><Check size={14} /> Requête copiée</> : <><Copy size={14} /> Copier la requête de vérification</>}
-          </Btn>
-          <p style={{ fontSize: 12, color: "#8a7a63", margin: "8px 0 0", lineHeight: 1.5 }}>
-            À coller dans l'éditeur SQL de Supabase : elle affiche le nombre de lignes réel de chaque table,
-            à comparer avec les nombres ci-dessus.
-          </p>
+
+          {!report.hasCounts && (
+            <>
+              <Btn variant="ghost" size="sm" onClick={copySql}>
+                {copied ? <><Check size={14} /> Requête copiée</> : <><Copy size={14} /> Copier la requête de vérification</>}
+              </Btn>
+              <p style={{ fontSize: 12, color: "#8a7a63", margin: "8px 0 0", lineHeight: 1.5 }}>
+                À coller dans l'éditeur SQL de Supabase : elle affiche le nombre de lignes réel de chaque table,
+                à comparer avec les nombres ci-dessus.
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>
