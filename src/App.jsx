@@ -5,7 +5,7 @@ import {
   Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
-  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad } from "./PlayTimer";
@@ -1487,8 +1487,16 @@ function AppProvider({ children }) {
   }, [currentUser]);
 
   // Mise à jour du profil du membre connecté
-  const updateProfile = useCallback(async (patch) => {
+  // targetId : identifiant du membre a modifier. Absent = mon propre profil.
+  // Modifier le profil d'un autre membre est reserve aux administrateurs
+  // (la policy RLS "profiles_update" autorise deja auth.uid() = id OR is_admin()).
+  const updateProfile = useCallback(async (patch, targetId) => {
     if (!currentUser) return { error: "Connectez-vous." };
+    const id = targetId || currentUser.id;
+    const isSelf = id === currentUser.id;
+    if (!isSelf && currentUser.admin !== true) {
+      return { error: "Seuls les administrateurs peuvent modifier le profil d'un autre membre." };
+    }
     const fields = {};
     if (patch.name !== undefined) fields.name = patch.name.trim();
     if (patch.avatar !== undefined) fields.avatar_url = await uploadImageToStorage(patch.avatar, "avatars");
@@ -1506,11 +1514,14 @@ function AppProvider({ children }) {
     if (patch.birthMonth !== undefined) fields.birth_month = patch.birthMonth ? Number(patch.birthMonth) : null;
     if (patch.birthYear !== undefined) fields.birth_year = patch.birthYear ? Number(patch.birthYear) : null;
     if (patch.isChild !== undefined) fields.is_child = !!patch.isChild;
-    const { error } = await supabase.from("profiles").update(fields).eq("id", currentUser.id);
+    const { data, error } = await supabase.from("profiles").update(fields).eq("id", id).select("id");
     if (error) return { error: error.message };
+    // Un update bloqué par la RLS ne renvoie pas d'erreur mais ne touche aucune
+    // ligne : on le détecte ici plutôt que de laisser croire à une réussite.
+    if (!data || data.length === 0) return { error: "Modification impossible : droits insuffisants côté base de données." };
     // Pour le state local, on garde le base64 si patch.avatar était en base64 (affichage immédiat avant rechargement)
     // mais en DB c'est désormais l'URL Storage
-    setCurrentUser((u) => u ? { ...u, ...patch, avatar: fields.avatar_url !== undefined ? fields.avatar_url : u.avatar, bio: patch.bio !== undefined ? patch.bio.slice(0, 500) : u.bio } : u);
+    if (isSelf) setCurrentUser((u) => u ? { ...u, ...patch, avatar: fields.avatar_url !== undefined ? fields.avatar_url : u.avatar, bio: patch.bio !== undefined ? patch.bio.slice(0, 500) : u.bio } : u);
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -2949,21 +2960,37 @@ function Navbar({ page, setPage, onAuth }) {
 }
 
 /* ---- Modale : édition de son propre profil ---- */
-function ProfileEditModal({ onClose }) {
+// member : membre a modifier. Absent = mon propre profil.
+// Un administrateur peut ouvrir n'importe quel profil depuis le trombinoscope
+// ou depuis la fiche du membre.
+function ProfileEditModal({ onClose, member }) {
   const { currentUser, updateProfile } = useApp();
+  const target = member || currentUser;
+  const asAdmin = !!member && member.id !== currentUser?.id;
   const [f, setF] = useState({
-    name: currentUser?.name || "", avatar: currentUser?.avatar || "", city: currentUser?.city || "",
-    bio: currentUser?.bio || "", bggUrl: currentUser?.bggUrl || "", okkazeoUrl: currentUser?.okkazeoUrl || "",
-    favMechanics: currentUser?.favMechanics || [],
-    hatedMechanics: currentUser?.hatedMechanics || [],
-    favColors: currentUser?.favColors || [],
-    birthDay: currentUser?.birthDay || "",
-    birthMonth: currentUser?.birthMonth || "",
-    birthYear: currentUser?.birthYear || "",
-    isChild: currentUser?.isChild === true,
+    name: target?.name || "", avatar: target?.avatar || "", city: target?.city || "",
+    bio: target?.bio || "", bggUrl: target?.bggUrl || "", okkazeoUrl: target?.okkazeoUrl || "",
+    favMechanics: target?.favMechanics || [],
+    hatedMechanics: target?.hatedMechanics || [],
+    favColors: target?.favColors || [],
+    birthDay: target?.birthDay || "",
+    birthMonth: target?.birthMonth || "",
+    birthYear: target?.birthYear || "",
+    isChild: target?.isChild === true,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // Cette fenêtre peut être ouverte PAR-DESSUS une autre (trombinoscope, fiche
+  // membre). Sans interception en phase de capture, Échap fermerait aussi les
+  // fenêtres parentes et ferait perdre la saisie en cours.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   const toggleMech = (m) => setF((s) => {
     if (s.favMechanics.includes(m)) return { ...s, favMechanics: s.favMechanics.filter((x) => x !== m) };
@@ -2990,14 +3017,20 @@ function ProfileEditModal({ onClose }) {
     if (!f.name.trim()) { setErr("Le nom ne peut pas être vide."); return; }
     if ((f.birthDay && !f.birthMonth) || (!f.birthDay && f.birthMonth)) { setErr("Pour l'anniversaire, indiquez le jour ET le mois (ou aucun des deux)."); return; }
     setBusy(true);
-    const res = await updateProfile(f);
+    const res = await updateProfile(f, asAdmin ? member.id : undefined);
     setBusy(false);
     if (res?.error) { setErr(res.error); return; }
     onClose();
   };
 
   return (
-    <Modal open onClose={onClose} title="Mon profil" width={560}>
+    <Modal open onClose={onClose} title={asAdmin ? `Profil de ${member.name}` : "Mon profil"} width={560}>
+      {asAdmin && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "rgba(107,58,122,.1)", border: `1.5px solid ${C.purple}44`, borderRadius: 13, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, lineHeight: 1.5, color: C.navy }}>
+          <ShieldCheck size={18} color={C.purple} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span><b>Vue administrateur.</b> Vous modifiez le profil de <b>{member.name}</b>, pas le vôtre. Le membre n'est pas prévenu de la modification — prévenez-le de vive voix ou sur Signal si le changement le concerne directement.</span>
+        </div>
+      )}
       {/* avatar */}
       <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 18 }}>
         <div style={{ width: 72, height: 72, borderRadius: 18, flexShrink: 0, overflow: "hidden", background: C.teal, display: "grid", placeItems: "center" }}>
@@ -3527,6 +3560,18 @@ function GuidePage() {
         {
           q: "Devenir membre décisionnaire",
           a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an (valeur 29,99 €), fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
+        },
+        {
+          q: "Administrateurs : modifier le profil d'un membre",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Les <b>administrateurs</b> peuvent ouvrir et modifier le profil de n'importe quel membre, par exemple pour corriger un nom, cocher un <b>compte enfant</b>, remettre d'aplomb une date de naissance ou retirer une présentation inappropriée.</p>
+            <p style={{ margin: "0 0 8px" }}>Deux accès, au choix :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>depuis le <b>trombinoscope</b> en vue administrateur : le bouton <b>crayon</b>, à côté des actions de gestion ;</li>
+              <li>depuis la <b>fiche du membre</b> : le bouton <b>« Modifier »</b>, à côté de son statut.</li>
+            </ul>
+            <p style={{ margin: 0 }}>La fenêtre est identique à « Mon profil », avec un bandeau violet rappelant de qui il s'agit. <b>Le membre n'est pas prévenu</b> de la modification : prévenez-le de vive voix ou sur Signal si le changement le concerne directement. Les administrateurs ne peuvent pas modifier ainsi le statut décisionnaire, le bannissement ou la suppression d'un compte — ces actions restent séparées, dans le trombinoscope.</p>
+          </>,
         },
         {
           q: "Les comptes enfants (la tétine)",
@@ -4201,6 +4246,7 @@ function MembersModal({ onClose, onPickMember }) {
   const { users, currentUser, memberEmails, banUser, unbanUser, deleteUser, adminAddMembershipDays, adminRevokeMembership } = useApp();
   const isAdmin = currentUser && currentUser.admin;
   const [busyId, setBusyId] = useState(null);
+  const [editMember, setEditMember] = useState(null); // profil ouvert en modification (admin)
   const [confirmBan, setConfirmBan] = useState(null); // id du membre en attente de confirmation de bannissement
   const [confirmDelete, setConfirmDelete] = useState(null); // id du membre en attente de confirmation de suppression
   // Tri : les bannis en bas, puis alphabétique
@@ -4311,6 +4357,7 @@ function MembersModal({ onClose, onPickMember }) {
                     <Btn size="sm" variant={m.role === "decideur" ? "amber" : "soft"} onClick={() => doRole(m)} disabled={busyId === m.id} title="Gérer le statut décisionnaire (jours)">
                       {busyId === m.id ? <Loader2 size={13} className="aladj-spin" /> : <Crown size={13} />}
                     </Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setEditMember(m)} title={`Modifier le profil de ${m.name}`}><Pencil size={13} /></Btn>
                     <Btn size="sm" variant="soft" onClick={() => setConfirmDelete(m.id)} title="Supprimer définitivement"><Trash2 size={13} /></Btn>
                     <Btn size="sm" variant="soft" onClick={() => setConfirmBan(m.id)} title="Bannir ce membre"><Lock size={13} /></Btn>
                   </span>
@@ -4322,8 +4369,9 @@ function MembersModal({ onClose, onPickMember }) {
         })}
       </div>
       <p style={{ fontSize: 12.5, color: "#a89a86", marginTop: 14, textAlign: "center" }}>
-        {isAdmin ? "Cliquez sur un membre pour voir sa ludothèque. Le bannissement bloque l'accès au site sans supprimer ses jeux." : "Cliquez sur un membre pour voir sa ludothèque."}
+        {isAdmin ? "Cliquez sur un membre pour voir sa ludothèque. Le crayon ouvre son profil en modification. Le bannissement bloque l'accès au site sans supprimer ses jeux." : "Cliquez sur un membre pour voir sa ludothèque."}
       </p>
+      {editMember && <ProfileEditModal member={editMember} onClose={() => setEditMember(null)} />}
     </Modal>
   );
 }
@@ -4331,7 +4379,8 @@ function MembersModal({ onClose, onPickMember }) {
 /* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
 function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = () => {} }) {
   const [gameOpen, setGameOpen] = useState(null); // fiche jeu ouverte depuis le top 10
-  const { games, users, plays, events, upcoming, beltByGame, householdByUser } = useApp();
+  const [editOpen, setEditOpen] = useState(false); // modification du profil (administrateurs)
+  const { games, users, plays, events, upcoming, beltByGame, householdByUser, currentUser } = useApp();
   const member = users.find((u) => u.id === memberId);
   // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
   const theirGames = games.filter((g) => (g.ownerIds || []).includes(memberId)).sort((a, b) => {
@@ -4388,6 +4437,12 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", color: C.purple, background: "rgba(107,58,122,.12)", borderRadius: 999, padding: "3px 10px" }}>
                     <PacifierIcon size={12} /> Compte enfant
                   </span>
+                )}
+                {currentUser?.admin && member.id !== currentUser.id && (
+                  <button onClick={() => setEditOpen(true)} title={`Modifier le profil de ${member.name}`}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", color: C.purple, background: "rgba(107,58,122,.12)", border: `1px solid ${C.purple}44`, borderRadius: 999, padding: "3px 10px", cursor: "pointer" }}>
+                    <Pencil size={11} /> Modifier
+                  </button>
                 )}
                 {member.city && <span style={{ fontSize: 13, color: "#8a7c6a", display: "inline-flex", alignItems: "center", gap: 3 }}><MapPin size={13} /> {member.city}</span>}
               </div>
@@ -4494,6 +4549,7 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
           })}
         </div>
       )}
+      {editOpen && member && <ProfileEditModal member={member} onClose={() => setEditOpen(false)} />}
     </Modal>
   );
 }
