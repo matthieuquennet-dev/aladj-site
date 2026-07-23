@@ -625,9 +625,9 @@ function PlayScoreBoard({ play, game, compact }) {
       <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: .5, fontWeight: 700, color: "#9c8d79", marginBottom: 7 }}>
         Scores · {SCORE_DIR_LABEL[dir]}
       </div>
-      <div style={{ display: "grid", gap: 4 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
         {ranked.map((pt, i) => (
-          <div key={(pt.userId || pt.guestName || "x") + i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+          <div key={(pt.userId || pt.guestName || "x") + i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, minWidth: 0 }}>
             <span style={{ width: 17, textAlign: "right", color: "#b6a78f", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{pt.score == null ? "–" : i + 1}</span>
             <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 5, color: C.navy, fontWeight: pt.isWinner ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {pt.name}
@@ -2530,7 +2530,7 @@ function RatingScaleNote() {
           <p style={{ fontSize: 13.5, color: "#5e5346", margin: "10px 0 12px", lineHeight: 1.55 }}>
             Juger la qualité « objective » d'un jeu est difficile, mais on sait facilement si on a envie d'y rejouer. Notre échelle reflète cette envie :
           </p>
-          <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
             {scale.map((s) => (
               <div key={s.v} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ flexShrink: 0, width: 110 }}><Stars value={s.v} readOnly size={14} /></span>
@@ -2802,13 +2802,13 @@ function Modal({ open, onClose, children, title, width = 560 }) {
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
         border: "1px solid #ece2d0", animation: "popIn .25s ease", overflow: "hidden",
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: "1px solid #efe6d6" }}>
-          <h3 style={{ margin: 0, fontFamily: "'Fredoka', sans-serif", color: C.navy, fontSize: 20 }}>{title}</h3>
-          <button onClick={onClose} style={{ background: "rgba(26,58,92,.07)", border: "none", borderRadius: 10, width: 34, height: 34, cursor: "pointer", display: "grid", placeItems: "center", color: C.navy }}>
+        <div className="aladj-modal-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 24px", borderBottom: "1px solid #efe6d6" }}>
+          <h3 style={{ margin: 0, minWidth: 0, overflowWrap: "anywhere", fontFamily: "'Fredoka', sans-serif", color: C.navy, fontSize: 20 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "rgba(26,58,92,.07)", border: "none", borderRadius: 10, width: 34, height: 34, flexShrink: 0, cursor: "pointer", display: "grid", placeItems: "center", color: C.navy }}>
             <X size={18} />
           </button>
         </div>
-        <div style={{ padding: 24 }}>{children}</div>
+        <div className="aladj-modal-body" style={{ padding: 24 }}>{children}</div>
       </div>
     </div>
   );
@@ -2925,7 +2925,7 @@ function Navbar({ page, setPage, onAuth }) {
       </div>
 
       {open && (
-        <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gap: 6, borderTop: "1px solid #ece2d0" }}>
+        <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, borderTop: "1px solid #ece2d0" }}>
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
             const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : 0);
@@ -3235,7 +3235,7 @@ function AuthModal({ mode, onClose, setToast }) {
         </div>
 
         <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15, marginBottom: 8 }}>1. Rejoignez au moins une conversation</div>
-        <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 18 }}>
           {SIGNAL_GROUPS.map((gp) => {
             const Ico = gp.icon;
             return (
@@ -3265,7 +3265,7 @@ function AuthModal({ mode, onClose, setToast }) {
           </ul>
         </div>
 
-        <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 14 }}>
           {[
             { v: "signal", t: "Je me présente sur Signal", d: "Le plus simple : rejoignez « Organisation jeux » et dites-nous bonjour." },
             { v: "mail",   t: "Je préfère envoyer un e-mail", d: `Écrivez-nous à ${ASSO_EMAIL} — nous vous répondrons en vous redonnant les liens Signal.` },
@@ -3342,7 +3342,7 @@ function AuthModal({ mode, onClose, setToast }) {
             </div>
           ) : (
             <div style={{ textAlign: "left", marginBottom: 20 }}>
-              <div style={{ display: "grid", gap: 7 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
                 {SIGNAL_GROUPS.map((gp) => {
                   const Ico = gp.icon;
                   return (
@@ -3902,7 +3902,7 @@ function GuidePage() {
             <span style={{ fontSize: 23 }}>{sec.icon}</span> {sec.title}
           </h2>
           {sec.custom ? sec.custom : (
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {sec.items.map((it) => <FaqItem key={it.q} q={it.q}>{it.a}</FaqItem>)}
             </div>
           )}
@@ -4068,7 +4068,7 @@ function HomePage({ setPage, onAuth }) {
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 28 }}>20 €</span>
               <span style={{ color: "#9c8d79", fontSize: 14 }}> / an</span>
             </div>
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Award size={15} color={C.amber} /></span>
                 <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Voix délibérative</b> en assemblée générale — vous participez aux décisions de l'association.</span>
@@ -4091,7 +4091,7 @@ function HomePage({ setPage, onAuth }) {
             <div style={{ marginTop: 8, marginBottom: 16 }}>
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 28 }}>Gratuit</span>
             </div>
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
                 <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>Pas de voix délibérative en AG (présence possible à titre consultatif).</span>
@@ -4304,7 +4304,7 @@ function MembersModal({ onClose, onPickMember }) {
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><PacifierIcon size={12} /> Compte enfant</span>
         {isAdmin && <span style={{ display: "flex", alignItems: "center", gap: 6, color: C.purple, fontWeight: 700 }}><ShieldCheck size={13} /> Vue administrateur</span>}
       </div>
-      <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
         {sorted.map((m) => {
           const color = m.role === "decideur" ? C.amber : C.teal;
           const email = memberEmails[m.id];
@@ -4581,7 +4581,7 @@ function PlanCard({ color, title, price, period, features, cta, onCta, crown }) 
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 44, color }}>{price}</span>
         <span style={{ color: "#8a7c6a", fontSize: 16 }}>{period}</span>
       </div>
-      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 24px", display: "grid", gap: 11 }}>
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 24px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 11 }}>
         {features.map((f, i) => (
           <li key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", color: "#5e5346", fontSize: 14.5, lineHeight: 1.4 }}>
             <span style={{ marginTop: 1, color }}><Check size={18} /></span> {f}
@@ -4810,7 +4810,7 @@ function EventsPage({ onAuth, setToast }) {
       {dayPicker && (
         <Modal open onClose={() => setDayPicker(null)} title="Plusieurs moments jeux ce jour">
           <p style={{ margin: "0 0 16px", color: C.navy, opacity: .75, fontSize: 14.5 }}>Choisissez celui que vous voulez ouvrir :</p>
-          <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
             {dayPicker.map((ev) => (
               <EventCardMini key={ev.id} e={ev} onOpen={() => { setSelected(ev.id); setDayPicker(null); }} />
             ))}
@@ -5282,7 +5282,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           {/* COMMENTAIRES */}
           <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18 }}>
             <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px" }}>💬 Discussion ({(e.comments || []).length})</h4>
-            <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 14 }}>
               {(e.comments || []).length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun commentaire. Lancez la discussion !</span>}
               {(e.comments || []).map((c) => {
                 const mine = currentUser && c.authorId === currentUser.id;
@@ -5372,7 +5372,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
 
       {/* liste des jeux joués */}
       {played.length > 0 && (
-        <div style={{ display: "grid", gap: 8, marginBottom: adding ? 14 : 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: adding ? 14 : 0 }}>
           {played.map((p) => {
             const mineToRemove = currentUser && (p.addedBy === currentUser.id || canManage);
             const gameStillExists = !!games.find((g) => g.id === p.gameId);
@@ -5415,7 +5415,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
           </Field>
           {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "8px 11px", borderRadius: 8, fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
           {q.trim() && (
-            <div style={{ display: "grid", gap: 5, maxHeight: 240, overflowY: "auto", marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5, maxHeight: 240, overflowY: "auto", marginBottom: 10 }}>
               {suggestions.length === 0 && <span style={{ fontSize: 13, color: "#a89a86", padding: "4px 6px" }}>Aucun jeu correspondant (ou déjà ajouté).</span>}
               {suggestions.map((g) => (
                 <button key={g.id} type="button" onClick={() => submit(g.id)} disabled={busy}
@@ -5802,8 +5802,8 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, own
   const bothNotes = showBoth && currentUser;
 
   return (
-    <div style={{ position: "relative" }}>
-      <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
+    <div style={{ position: "relative", minWidth: 0 }}>
+      <button onClick={onOpen} style={{ width: "100%", minWidth: 0, textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
         onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(18,41,63,.12)"; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
         <div style={{ position: "relative" }}>
@@ -5915,7 +5915,7 @@ function SessionsModal({ sessions, gameName, game, canDelete, onClose, onDeleted
       {!sessions || sessions.length === 0 ? (
         <div style={{ textAlign: "center", padding: 20, color: "#9c8d79" }}>Aucune partie chronométrée pour l'instant.</div>
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
           {sessions.map((r) => {
             const pl = playById[r.play_id];
             const hasScores = !!pl && (pl.participants || []).some((pt) => pt.score != null && pt.confirmed !== false);
@@ -6110,7 +6110,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             <Clock size={24} color={C.teal} style={{ flexShrink: 0 }} />
             <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: C.navy }}>Durée moyenne d'une partie</div>
           </div>
-          <div style={{ display: "grid", gap: 7 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
             {byCount.map((b) => (
               <div key={b.player_count} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 14.5 }}>
                 <span style={{ color: "#6b5d49" }}>{b.player_count} joueur{b.player_count > 1 ? "s" : ""}</span>
@@ -6120,7 +6120,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
           </div>
           <button onClick={() => setShowSessions(true)} style={{ background: "none", border: "none", color: C.teal, fontSize: 12.5, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", padding: "10px 0 0", fontFamily: "'Nunito',sans-serif" }}>Voir le détail des {sessions.length} partie{sessions.length > 1 ? "s" : ""}</button>
           {(allAvg != null || myAvg != null || setupAvg != null || teardownAvg != null) && (
-            <div style={{ borderTop: "1px solid rgba(30,138,138,.18)", marginTop: 12, paddingTop: 11, display: "grid", gap: 5, fontSize: 13.5 }}>
+            <div style={{ borderTop: "1px solid rgba(30,138,138,.18)", marginTop: 12, paddingTop: 11, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5, fontSize: 13.5 }}>
               {allAvg != null && <div style={{ color: "#6b5d49" }}>Temps de jeu moyen par joueur : <b style={{ color: C.navy }}>{fmtDuration(allAvg)}</b></div>}
               {myAvg != null && <div style={{ color: "#6b5d49" }}>Ton temps de jeu moyen : <b style={{ color: C.teal }}>{fmtDuration(myAvg)}</b></div>}
               {setupAvg != null && <div style={{ color: "#6b5d49" }}>Temps de mise en place moyen : <b style={{ color: C.amber }}>{fmtDuration(setupAvg)}</b></div>}
@@ -6140,7 +6140,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
           <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 12 }}>
             {SCORE_DIR_LABEL[scoreStats.dir].charAt(0).toUpperCase() + SCORE_DIR_LABEL[scoreStats.dir].slice(1)} · sur {scoreStats.count} score{scoreStats.count > 1 ? "s" : ""} enregistré{scoreStats.count > 1 ? "s" : ""}
           </div>
-          <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, fontSize: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
               <span style={{ color: "#6b5d49" }}>Moyenne d'une partie</span>
               <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, whiteSpace: "nowrap" }}>{fmtPts(scoreStats.avg)} pts</b>
@@ -6186,7 +6186,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
                 </div>
               </div>
               {histOpen && (
-                <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", marginTop: 12, paddingTop: 10, display: "grid", gap: 5 }}>
+                <div style={{ borderTop: "1px solid rgba(232,163,23,.2)", marginTop: 12, paddingTop: 10, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
                   {myGamePlays.map((pl) => {
                     const me = pl.participants.find((pt) => pt.userId === currentUser.id);
                     const iWon = !!me && me.isWinner;
@@ -6414,7 +6414,7 @@ function VotersModal({ g, onClose }) {
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 32, color: C.amber }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
         <span style={{ fontSize: 14, color: "#9c8d79" }}> / 5 · {count} avis</span>
       </div>
-      <div style={{ display: "grid", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: "55vh", overflowY: "auto" }}>
         {voters.length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5, textAlign: "center" }}>Personne n'a encore noté ce jeu.</span>}
         {voters.map((v, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 12, background: "rgba(26,58,92,.04)" }}>
@@ -6461,7 +6461,7 @@ function GameRentalSection({ g, onClose, setToast, isOwner }) {
 
       {/* outils du propriétaire : poids + prêter */}
       {isOwner && (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
           {/* mon poids pour ce jeu (privé) */}
           <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 12, padding: "10px 14px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -6691,7 +6691,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
 
       {exts.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucune extension référencée pour ce jeu.</span>}
 
-      <div style={{ display: "grid", gap: 10, marginBottom: adding ? 14 : 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: adding ? 14 : 0 }}>
         {exts.map((x) => <ExtensionRow key={x.id} x={x} setToast={setToast} />)}
       </div>
 
@@ -6713,7 +6713,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
               </Field>
               {bggErr && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 10 }}>{bggErr}</div>}
               {bggResults.length > 0 && (
-                <div style={{ display: "grid", gap: 6, maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, maxHeight: 280, overflowY: "auto", marginBottom: 12 }}>
                   {bggResults.map((r) => (
                     <button key={r.id} type="button" onClick={() => importFromBgg(r.id, r.name)} disabled={bggLoadingId === r.id}
                       style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 12px", cursor: bggLoadingId === r.id ? "wait" : "pointer", textAlign: "left" }}>
@@ -6769,7 +6769,7 @@ function GameComments({ g, onAuth, onClose }) {
   return (
     <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
       <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 12px" }}>💬 Avis & commentaires ({list.length})</h4>
-      <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 14 }}>
         {list.length === 0 && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun commentaire pour l'instant. Partagez votre avis sur ce jeu !</span>}
         {list.map((c) => {
           const mine = currentUser && c.authorId === currentUser.id;
@@ -6982,7 +6982,7 @@ function UpcomingPage({ onAuth, setToast }) {
           : <Btn variant="amber" size="lg" onClick={() => onAuth("login")}><LogIn size={18} /> Se connecter</Btn>}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
         <div className="aladj-ludo-main">
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
@@ -7010,7 +7010,7 @@ function UpcomingPage({ onAuth, setToast }) {
           )}
         </div>
 
-        <aside style={{ position: "sticky", top: 88, display: "grid", gap: 18 }} className="aladj-ludo-aside">
+        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18 }} className="aladj-ludo-aside">
           <div style={{ background: `linear-gradient(160deg, ${C.red}, ${C.purple})`, borderRadius: 20, padding: 22, color: "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <Sparkles size={20} color="#ffd9a3" />
@@ -7018,9 +7018,9 @@ function UpcomingPage({ onAuth, setToast }) {
             </div>
             <p style={{ opacity: .75, fontSize: 12, margin: "0 0 12px", lineHeight: 1.5 }}>Dès qu'un jeu reçoit un vote, il entre dans ce classement.</p>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5 }}>Pas encore de vote.</p>}
-            <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((u, i) => (
-                <button key={u.id} onClick={() => setSelected(u.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.09)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left" }}>
+                <button key={u.id} onClick={() => setSelected(u.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.09)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
                   <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 17 : 14, color: "rgba(255,255,255,.85)", width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
@@ -7056,7 +7056,7 @@ function AddUpcomingFlow({ onClose, setToast }) {
   return (
     <Modal open onClose={onClose} title="Ajouter un jeu à venir" width={600}>
       {mode === "choose" && (
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
           <p style={{ fontSize: 14, color: "#5e5346", margin: "0 0 6px", lineHeight: 1.55 }}>
             Comment souhaitez-vous ajouter ce jeu à venir ?
           </p>
@@ -7311,7 +7311,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
       {/* Commentaires */}
       <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
         <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 10px" }}>💬 Commentaires ({(u.comments || []).length})</h4>
-        <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 14 }}>
           {(u.comments || []).map((c) => {
             const mine = currentUser && c.authorId === currentUser.id;
             const isEdit = editId === c.id;
@@ -7435,7 +7435,7 @@ function LocationsPage({ setToast }) {
         {myLent.length === 0 ? (
           <EmptyHint icon={Package} text="Vous ne prêtez aucun jeu actuellement." />
         ) : (
-          <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
             {myLent.map((l) => {
               const late = new Date(l.dueAt).getTime() < Date.now();
               return (
@@ -7472,7 +7472,7 @@ function LocationsPage({ setToast }) {
         {myBorrowed.length === 0 ? (
           <EmptyHint icon={Package} text="Vous n'empruntez aucun jeu actuellement." />
         ) : (
-          <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
             {myBorrowed.map((l) => {
               const late = new Date(l.dueAt).getTime() < Date.now();
               return (
@@ -7500,7 +7500,7 @@ function LocationsPage({ setToast }) {
       {history.length > 0 && (
         <section>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px" }}>Historique ({history.length})</h2>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
             {history.slice(0, 30).map((l) => (
               <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(26,58,92,.03)", borderRadius: 10, fontSize: 13.5 }}>
                 <span style={{ color: "#5e5346" }}><b>{l.gameName}</b> — {l.lenderId === currentUser?.id ? `prêté à ${l.borrowerName}` : `emprunté à ${l.lenderName}`}</span>
@@ -7700,7 +7700,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           : <Btn variant="ghost" onClick={() => onAuth("login")}><LogIn size={16} /> Connectez-vous pour ajouter</Btn>}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
         {/* COLONNE PRINCIPALE */}
         <div className="aladj-ludo-main">
           <RatingScaleNote />
@@ -7767,27 +7767,27 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           {filtered.length === 0 ? (
             <EmptyHint icon={Library} text="Aucun jeu ne correspond." />
           ) : view === "list" ? (
-            <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
               {/* en-tête de liste */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-                <span style={{ flex: 1 }}>Jeu</span>
-                <span style={{ width: 60, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
-                <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
-                <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
+                <span style={{ width: 60, flexShrink: 0, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
+                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Moyenne</span>
+                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Ma note</span>
               </div>
               {filtered.slice(0, visibleCount).map((g) => {
                 const { avg, count } = gameStats(g);
                 const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
                 const wantC = (g.wantIds || []).length;
                 return (
-                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
                     <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-                    <span style={{ width: 60, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                    <span style={{ width: 60, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                       {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
                     </span>
-                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
-                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
                   </button>
                 );
               })}
@@ -7807,7 +7807,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         </div>
 
         {/* COLONNE LATÉRALE : classements */}
-        <aside style={{ position: "sticky", top: 88, display: "grid", gap: 18 }} className="aladj-ludo-aside">
+        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18 }} className="aladj-ludo-aside">
           {/* CLASSEMENT PERSONNALISÉ (placé en premier pour remonter en haut sur mobile) */}
           <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}` }} className="aladj-ludo-custom">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -7827,11 +7827,11 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
                 return (
-                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.07)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left" }}>
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.07)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 18 : 15, color: medal, width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
@@ -8186,7 +8186,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
           ? "Aucun jeu pour enfants ne correspond à ces filtres. Élargissez avec « Enfants + tous les autres »."
           : "Aucun jeu ne correspond à ces filtres."} />
       ) : (
-        <div style={{ display: "grid", gap: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18 }}>
           {/* Section 1 : envies de découverte de la tablée */}
           {discoverGames.length > 0 && (
             <div>
@@ -8195,7 +8195,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Envies de découverte ({discoverGames.length})</h4>
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Jeux qu'au moins un membre de la tablée souhaite découvrir — l'occasion parfaite !</p>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
                 {discoverGames.slice(0, limits.discover).map((g, i) => {
                   const wanterNames = g._wanters.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean).join(", ");
                   return (
@@ -8226,7 +8226,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Mieux notés par la tablée ({regularGames.length})</h4>
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>{chosen.length >= 3 ? "Jeux notés par au moins 2 participants" : `${chosen.length} membre(s)`} · à note égale, les jeux les moins joués remontent.</p>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
                 {regularGames.slice(0, limits.regular).map((g, i) => (
                   <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: i === 0 ? "rgba(232,163,23,.1)" : "rgba(26,58,92,.04)", border: "none", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: i === 0 ? C.amber : "#b6a78f", width: 26 }}>{i + 1}</span>
@@ -8255,7 +8255,7 @@ function CustomRankModal({ onClose, onOpenGame }) {
                 <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: 0 }}>Exploration ludique ({exploreGames.length})</h4>
               </div>
               <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Suggestions basées sur les mécaniques favorites des participants, leurs coups de coeur individuels et les goûts des membres au profil proche de la tablée.</p>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
                 {exploreGames.slice(0, limits.explore).map((g, i) => (
                   <button key={g.id} onClick={() => onOpenGame(g.id)} style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(30,138,138,.05)", border: "1px solid rgba(30,138,138,.12)", borderRadius: 13, padding: "11px 16px", cursor: "pointer", textAlign: "left" }}>
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: "#b6a78f", width: 26 }}>{i + 1}</span>
@@ -8294,7 +8294,7 @@ function AddGameFlow({ onClose, setToast }) {
   return (
     <Modal open onClose={onClose} title="Ajouter un jeu à la ludothèque" width={640}>
       {mode === "choose" && (
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
           <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 4px", lineHeight: 1.5 }}>Comment souhaitez-vous ajouter ce jeu ? L'import récupère automatiquement la fiche (joueurs, durée, image, mécaniques) et traduit la description en français.</p>
           <SourceBtn icon={Globe} color={C.teal} title="Importer depuis BoardGameGeek" desc="Recherche dans la plus grande base mondiale + traduction auto en français." onClick={() => setMode("bgg")} />
           <SourceBtn icon={PenLine} color={C.amber} title="Saisir manuellement" desc="Remplissez vous-même la fiche du jeu (toujours disponible)." onClick={() => { setPrefillName(""); setMode("manual"); }} />
@@ -8450,7 +8450,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
         {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
         {!forUpcoming && (
           <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Mon espace.">
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {[
                 { v: "self",  t: "Je le possède" },
                 { v: "other", t: "Un autre membre le possède" },
@@ -8524,7 +8524,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
       {existing.length > 0 && (
         <div style={{ background: "rgba(30,138,138,.08)", border: "1px solid rgba(30,138,138,.25)", borderRadius: 14, padding: 14, marginBottom: 14 }}>
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14, display: "block", marginBottom: 8 }}>Déjà dans la ludothèque</span>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
             {existing.slice(0, 4).map((g) => {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
@@ -8553,7 +8553,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Aussi en « À venir »</span>
           </div>
           <p style={{ fontSize: 12, color: "#6e6256", margin: "0 0 8px" }}>Astuce : vous pouvez aussi utiliser le bouton <b>« Je l'ai ! »</b> depuis l'onglet À venir.</p>
-          <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
             {existingUpcoming.slice(0, 3).map((u) => (
               <div key={u.id} style={{ fontSize: 13, color: "#5e5346", padding: "3px 8px", background: "#fff", borderRadius: 7 }}>
                 • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
@@ -8567,7 +8567,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           <PenLine size={16} /> Saisir « {q.trim() || "ce jeu"} » manuellement
         </Btn>
       )}
-      <div style={{ display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 320, overflowY: "auto" }}>
         {results.map((r) => (
           <button key={r.id} onClick={() => pick(r)} disabled={importing} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, border: "1px solid #ece2d0", background: "#fff", cursor: "pointer", textAlign: "left" }}>
             <span>
@@ -8636,7 +8636,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
             <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", fontSize: 12.5 }}>Ignorer</button>
           </div>
           <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Inutile de recréer une fiche : cliquez sur « Je l'ai aussi » pour vous rattacher au jeu existant.</p>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
             {similar.slice(0, 5).map((g) => {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
@@ -8666,7 +8666,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Une fiche « À venir » existe</span>
           </div>
           <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Astuce : depuis la fiche « À venir » du jeu, cliquez sur <b>« Je l'ai ! »</b> — votre ludothèque sera créée en un clic, avec toutes les infos déjà remplies.</p>
-          <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
             {similarUpcoming.slice(0, 3).map((u) => (
               <div key={u.id} style={{ fontSize: 13.5, color: "#5e5346", padding: "4px 8px", background: "#fff", borderRadius: 8 }}>
                 • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
@@ -8712,7 +8712,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
 
       {/* Bloc : qui possède ce jeu ? (procuration possible) */}
       <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Mon espace.">
-        <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
           {[
             { v: "self",  t: "Je le possède",                                d: "Vous êtes inscrit·e comme propriétaire." },
             { v: "other", t: "Un autre membre le possède",                   d: "La fiche sera créée à son nom, à confirmer par sa part." },
@@ -8851,7 +8851,7 @@ function FamilySection({ setToast }) {
           {invitable.length === 0 ? (
             <p style={{ color: "#6e6256", fontSize: 14, margin: 0 }}>Aucun membre disponible à inviter pour le moment.</p>
           ) : (
-            <div style={{ display: "grid", gap: 6, maxHeight: 380, overflowY: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, maxHeight: 380, overflowY: "auto" }}>
               {invitable.map((m) => (
                 <button key={m.id} disabled={busy} onClick={async () => { const r = await run(() => inviteToHousehold(m.id), "Invitation envoyée."); if (!r?.error) setShowPicker(false); }}
                   style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, border: "1px solid #e6dcc9", background: "#fff", cursor: "pointer", textAlign: "left", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
@@ -8880,7 +8880,7 @@ function EventPlaySuggestions() {
         <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{total}</span>
       </h3>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: "#6e6256" }}>Confirme les parties qui te concernent pour les ajouter à tes statistiques.</p>
-      <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
         {(myPendingPlays || []).map((pl) => {
           const k = "play|" + pl.id;
           const won = !!wonSet[k];
@@ -8960,7 +8960,7 @@ function BadgeDetailModal({ b, onClose, canFeature, isFeatured, featureFull, onT
       </p>
       {next != null && <p style={{ fontSize: 13, color: "#9c8d79", margin: "0 0 14px" }}>Prochain palier : {next} ({count}/{next}).</p>}
       {next == null && <p style={{ fontSize: 13, color: C.amber, fontWeight: 700, margin: "0 0 14px" }}>Palier maximal atteint. Respect. 🙇</p>}
-      <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginBottom: 16 }}>
         {def.thresholds.map((t, i) => {
           const reached = tier >= i + 1;
           const current = tier === i + 1;
@@ -9275,7 +9275,7 @@ function AdminBackupSection() {
               const st = rowState(r);
               return (
                 <div key={r.table} title={r.error || (r.expected != null ? `${r.rows} / ${r.expected} en base` : "")} style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0,
                   background: "#fff", border: `1px solid ${STATE_BORDERS[st]}`,
                   borderRadius: 9, padding: "5px 9px", fontSize: 12.5,
                 }}>
@@ -9578,7 +9578,7 @@ function MembershipModal({ onClose, setToast }) {
       </p>
 
       {!mode && (
-        <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
           {ONLINE_PAYMENT_ENABLED && <button onClick={payOnline} disabled={busy}
             style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: `2px solid ${C.teal}`, background: "rgba(30,138,138,.06)" }}>
             <span style={{ fontSize: 24 }}>💳</span>
@@ -9781,7 +9781,7 @@ function RetroModal({ open, onClose }) {
               </div>
             )}
             {isYear && (
-              <div style={{ display: "grid", gap: 7 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
                 {r.topPartner && (
                   <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,.12)", borderRadius: 12, padding: "9px 13px", color: "#fff", fontSize: 14 }}>
                     🤝 <span>Partenaire de jeu favori : <b>{r.topPartner.name}</b> ({r.topPartner.count} partie{r.topPartner.count > 1 ? "s" : ""} ensemble)</span>
@@ -9845,7 +9845,7 @@ function Top10List({ ids, onOpenGame }) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
       {list.map((g, i) => (
         <div key={g.id} onClick={onOpenGame ? () => onOpenGame(g.id) : undefined}
-          style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px", cursor: onOpenGame ? "pointer" : "default" }}>
+          style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, minWidth: 0, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px", cursor: onOpenGame ? "pointer" : "default" }}>
           <span style={{ position: "absolute", top: -7, left: -7, width: 24, height: 24, borderRadius: "50%", background: i === 0 ? C.amber : C.navy, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, border: "2px solid #FBF7EF" }}>{i + 1}</span>
           <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy, lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{g.name}</span>
@@ -9856,6 +9856,12 @@ function Top10List({ ids, onOpenGame }) {
 }
 
 // Éditeur du top 10 : recherche d'un jeu, liste ordonnée avec montée/descente/retrait.
+// Boutons de réordonnancement du top 10 : cibles tactiles de 28 px, jamais compressées.
+const top10BtnStyle = {
+  border: "none", background: "none", padding: 0, width: 28, height: 28, flexShrink: 0,
+  display: "grid", placeItems: "center", borderRadius: 8, fontSize: 12, lineHeight: 1,
+};
+
 function Top10Editor({ open, onClose, setToast }) {
   const { games, currentUser, updateProfile } = useApp();
   const [ids, setIds] = useState([]);
@@ -9906,19 +9912,19 @@ function Top10Editor({ open, onClose, setToast }) {
           )}
         </div>
       )}
-      <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginBottom: 16 }}>
         {ids.length === 0 && <div style={{ textAlign: "center", color: "#a89a86", fontSize: 13.5, padding: "14px 0" }}>Votre podium est vide — ajoutez votre premier jeu ci-dessus.</div>}
         {ids.map((id, i) => {
           const g = games.find((x) => x.id === id);
           if (!g) return null;
           return (
-            <div key={id} style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, padding: "6px 9px" }}>
+            <div key={id} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, padding: "6px 7px 6px 9px" }}>
               <span style={{ width: 24, height: 24, borderRadius: "50%", background: i === 0 ? C.amber : C.navy, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{i + 1}</span>
               <div style={{ width: 32, height: 32, borderRadius: 7, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
-              <span style={{ flex: 1, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} style={{ border: "none", background: "none", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#ddd2bd" : C.navy, padding: 3 }}>▲</button>
-              <button type="button" onClick={() => move(i, 1)} disabled={i === ids.length - 1} style={{ border: "none", background: "none", cursor: i === ids.length - 1 ? "default" : "pointer", color: i === ids.length - 1 ? "#ddd2bd" : C.navy, padding: 3 }}>▼</button>
-              <button type="button" onClick={() => setIds((arr) => arr.filter((x) => x !== id))} style={{ border: "none", background: "none", cursor: "pointer", color: C.red, padding: 3 }}><X size={15} /></button>
+              <span style={{ flex: "1 1 0", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+              <button type="button" title="Monter" onClick={() => move(i, -1)} disabled={i === 0} style={{ ...top10BtnStyle, cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#ddd2bd" : C.navy }}>▲</button>
+              <button type="button" title="Descendre" onClick={() => move(i, 1)} disabled={i === ids.length - 1} style={{ ...top10BtnStyle, cursor: i === ids.length - 1 ? "default" : "pointer", color: i === ids.length - 1 ? "#ddd2bd" : C.navy }}>▼</button>
+              <button type="button" title="Retirer du classement" onClick={() => setIds((arr) => arr.filter((x) => x !== id))} style={{ ...top10BtnStyle, cursor: "pointer", color: C.red }}><X size={15} /></button>
             </div>
           );
         })}
@@ -10052,15 +10058,15 @@ function MyPlaysSection({ setToast }) {
           <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 10 }}>
             <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif", fontSize: 16 }}>{filtered.length}</b> partie{filtered.length > 1 ? "s" : ""} · <b style={{ color: C.navy }}>{ranking.length}</b> jeu{ranking.length > 1 ? "x" : ""} différent{ranking.length > 1 ? "s" : ""}
           </div>
-          <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
             {top.map((r, i) => {
               const g = gameById[r.gameId];
               return (
-                <div key={r.gameId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
-                  <span style={{ width: 20, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
+                <div key={r.gameId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, minWidth: 0 }}>
+                  <span style={{ width: 20, flexShrink: 0, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
                   <button onClick={() => openGame(r.gameId)} title="Voir les parties de ce jeu" style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 600, fontSize: 14, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</button>
-                  {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {r.wins}</span>}
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal }}>{r.count}</span>
+                  {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5, flexShrink: 0 }}>🏆 {r.wins}</span>}
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, flexShrink: 0 }}>{r.count}</span>
                 </div>
               );
             })}
@@ -10080,15 +10086,15 @@ function MyPlaysSection({ setToast }) {
             {ranking.length === 0 ? (
               <div style={{ color: "#9c8d79" }}>Aucune partie sur cette période.</div>
             ) : (
-              <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
                 {ranking.map((r, i) => {
                   const g = gameById[r.gameId];
                   return (
-                    <button key={r.gameId} onClick={() => setDetailGameId(r.gameId)} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 11px", cursor: "pointer", textAlign: "left", width: "100%" }}>
-                      <span style={{ width: 22, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
+                    <button key={r.gameId} onClick={() => setDetailGameId(r.gameId)} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 11px", cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0 }}>
+                      <span style={{ width: 22, flexShrink: 0, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>{i + 1}</span>
                       <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g?.name || "Jeu supprimé"}</span>
-                      {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {r.wins}</span>}
-                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal }}>{r.count}</span>
+                      {r.wins > 0 && <span title={r.wins + " victoire(s)"} style={{ color: C.amber, fontWeight: 700, fontSize: 12.5, flexShrink: 0 }}>🏆 {r.wins}</span>}
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, flexShrink: 0 }}>{r.count}</span>
                       <ChevronRight size={16} style={{ color: "#c3b49b" }} />
                     </button>
                   );
@@ -10109,7 +10115,7 @@ function MyPlaysSection({ setToast }) {
             {detailPlays.length === 0 ? (
               <div style={{ color: "#9c8d79" }}>Plus aucune partie sur cette période.</div>
             ) : (
-              <div style={{ display: "grid", gap: 7 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
                 {detailPlays.map((pl) => {
                   const iWon = pl.participants.some((pt) => pt.userId === currentUser.id && pt.isWinner);
                   const hasScores = (pl.participants || []).some((pt) => pt.score != null && pt.confirmed !== false);
@@ -10229,9 +10235,9 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 
   return (
     <Modal open={open} onClose={onClose} title="Enregistrer une partie" width={540}>
-      <div style={{ display: "grid", gap: 15 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 15 }}>
         <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seuls le résultat et les points le sont. Les scores sont facultatifs — laisse les cases vides si tu ne les as pas.</p>
-        <label style={{ display: "grid", gap: 5 }}>
+        <label style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Jeu</span>
           <div style={{ position: "relative" }}>
             <input
@@ -10255,15 +10261,15 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
             )}
           </div>
         </label>
-        <label style={{ display: "grid", gap: 5 }}>
+        <label style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Date de la partie</span>
           <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
         </label>
-        <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— touche «&nbsp;pts&nbsp;» pour le pavé de score, sinon appuie sur 🏆</span></span>
           {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
           {parts.map((p) => (
-            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
+            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
               <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.userId ? "" : " · invité"}</span>
               <span style={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${hasScore(p) ? C.amber : "#e6dcc9"}`, background: hasScore(p) ? "#FDF4E0" : "#fff" }}>
                 <button type="button" onClick={() => setScorePadFor(p.key)} title={`Noter le score de ${p.name} (facultatif)`}
@@ -10551,7 +10557,7 @@ function MyLudoPage({ setToast, setPage }) {
           <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 12px", lineHeight: 1.5 }}>
             On vous a ajouté à ces moments jeux. Confirmez votre venue pour apparaître comme participant (sinon vous restez affiché « en attente »).
           </p>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
             {myEventInvites.map(({ ev, guest }) => (
               <div key={guest.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, background: "#fff", border: `1px solid ${C.amber}`, flexWrap: "wrap" }}>
                 <Calendar size={16} color={C.amber} style={{ flexShrink: 0 }} />
@@ -10625,7 +10631,7 @@ function MyLudoPage({ setToast, setPage }) {
               </h3>
               {unreadCount > 0 && <Btn size="sm" variant="soft" onClick={() => markAllNotificationsRead()}>Tout marquer comme lu</Btn>}
             </div>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {shown.map((n) => {
                 const Icon = iconFor(n.type);
                 return (
@@ -10668,7 +10674,7 @@ function MyLudoPage({ setToast, setPage }) {
               {(() => { const n = myPending.length + myPendingExt.length; return n === 1 ? "Une possession à confirmer" : `${n} possessions à confirmer`; })()}
             </h3>
           </div>
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
             {myPending.map((g) => {
               const pending = (g.pendingOwners || []).find((o) => o.id === currentUser.id);
               const declarer = pending?.declaredByName || "un membre";
@@ -10823,29 +10829,29 @@ function MyLudoPage({ setToast, setPage }) {
           {mine.length === 0 ? (
             <EmptyHint icon={Library} text="Aucun de vos jeux ne correspond à ces filtres." />
           ) : view === "list" ? (
-            <div style={{ display: "grid", gap: 4 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-                <span style={{ flex: 1 }}>Jeu</span>
-                <span style={{ width: 60, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
-                <span style={{ width: 70, textAlign: "center" }}>Moyenne</span>
-                <span style={{ width: 70, textAlign: "center" }}>Ma note</span>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
+                <span style={{ width: 60, flexShrink: 0, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
+                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Moyenne</span>
+                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Ma note</span>
               </div>
               {mine.map((g) => {
                 const { avg, count } = gameStats(g);
                 const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
                 const wantC = (g.wantIds || []).length;
                 return (
-                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left" }}
+                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
                     <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {g.name}
                       {familyOwnerLabel(g) && <span style={{ marginLeft: 8, fontSize: 11.5, fontWeight: 700, color: C.purple }}>· {familyOwnerLabel(g)}</span>}
                     </span>
-                    <span style={{ width: 60, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                    <span style={{ width: 60, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                       {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
                     </span>
-                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
-                    <span style={{ width: 70, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
                   </button>
                 );
               })}
@@ -11103,6 +11109,17 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700&display=swap');
         * { box-sizing: border-box; }
         body { margin: 0; font-family: 'Nunito', sans-serif; -webkit-font-smoothing: antialiased; background: ${C.cream}; }
+        img, video, canvas { max-width: 100%; }
+        /* Safari iOS zoome automatiquement quand on touche un champ dont le texte
+           fait moins de 16px : la page reste ensuite agrandie. 16px = pas de zoom. */
+        @media (max-width: 860px) {
+          input:not([type="checkbox"]):not([type="radio"]), textarea { font-size: 16px !important; }
+        }
+        /* Sur téléphone, on récupère 16 px de large de chaque côté dans les fenêtres. */
+        @media (max-width: 520px) {
+          .aladj-modal-head { padding: 14px 16px !important; }
+          .aladj-modal-body { padding: 16px !important; }
+        }
         button { font-family: inherit; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
