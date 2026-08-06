@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, createContext
 import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
-  Heart, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
+  Heart, ThumbsUp, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil
@@ -2838,6 +2838,7 @@ function StatusInfoModal({ onClose, role, isChild }) {
       can: [
         "Tout ce que fait un membre, sans exception.",
         "Voix délibérative en assemblée générale : c'est lui qui décide de l'avenir de l'asso.",
+        "Accès à l'onglet <b>Décisionnaire</b> : boîte à idées partagée et votes en ligne.",
         "Pass Ludovore (Ludum.fr) offert pendant un an — valeur 29,99 €.",
         "Dispensé de caution lors d'une location de jeu.",
         "Une couronne ambre accompagne son nom partout sur le site.",
@@ -3237,8 +3238,17 @@ const NAV = [
   { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
   { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
+  // Onglet reserve : il n'apparait que pour les membres decisionnaires (et les
+  // administrateurs). Le serveur applique la meme regle, l'onglet cache n'est
+  // qu'un confort d'affichage.
+  { key: "decideur", label: "Décisionnaire", icon: Crown, auth: true, decider: true },
   { key: "guide", label: "Guide", icon: HelpCircle },
 ];
+
+// Un membre decisionnaire (ou un administrateur) a acces a l'espace decisionnaire.
+function isDecideur(u) {
+  return !!u && (u.role === "decideur" || u.admin === true);
+}
 
 function Navbar({ page, setPage, onAuth }) {
   const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, reload } = useApp();
@@ -3246,7 +3256,7 @@ function Navbar({ page, setPage, onAuth }) {
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
-  const items = NAV.filter((n) => !n.auth || currentUser);
+  const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
   const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
   const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length;
 
@@ -4355,6 +4365,47 @@ function GuidePage() {
       ],
     },
     {
+      icon: "👑", title: "L'espace décisionnaire",
+      items: [
+        {
+          q: "À quoi sert l'onglet « Décisionnaire » ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>C'est un onglet <b>réservé aux membres décisionnaires</b> (et aux administrateurs) : les autres membres ne le voient même pas apparaître dans le menu. Tout ce qui s'y écrit n'est visible que d'eux — c'est garanti côté serveur, pas seulement à l'affichage.</p>
+            <p style={{ margin: 0 }}>Il sert à faire vivre l'association entre deux assemblées générales : partager des idées, en discuter, puis trancher par un vote. Deux volets : la <b>💡 boîte à idées</b> et les <b>🗳️ votes</b>. Si votre statut décisionnaire expire, l'onglet disparaît simplement.</p>
+          </>,
+        },
+        {
+          q: "La boîte à idées",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Cliquez sur <b>« Proposer une idée »</b>, donnez-lui un titre en une phrase et, si besoin, ajoutez le contexte. L'idée apparaît aussitôt pour tous les décisionnaires.</p>
+            <p style={{ margin: "0 0 8px" }}>Chacun peut la <b>soutenir</b> (le pouce à gauche, avec son compteur — pratique pour voir ce qui fait consensus avant même de voter) et la <b>commenter</b> pour en discuter.</p>
+            <p style={{ margin: 0 }}>L'auteur d'une idée (et les administrateurs) peut la marquer <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
+          </>,
+        },
+        {
+          q: "Lancer un vote",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Onglet <b>🗳️ Votes</b> → <b>« Lancer un vote »</b>. Vous rédigez la question, ajoutez de <b>2 à 12 réponses</b> possibles, et réglez trois choses :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Réponse unique ou multiple</b> : cochez « Autoriser plusieurs réponses » pour que chacun puisse sélectionner plusieurs options, avec un plafond facultatif (« trois choix maximum », par exemple).</li>
+              <li><b>Le quorum</b> : le nombre de votants attendus. Le vote reste valable en deçà, mais l'écart est affiché en clair sur la carte (« il en manque 2 ») — de quoi relancer les retardataires.</li>
+              <li><b>La date limite</b> : jour et heure de clôture. Le temps restant s'affiche en permanence.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Tous les décisionnaires reçoivent une <b>notification</b> à l'ouverture du vote. L'auteur (et les administrateurs) peut <b>clore le vote en avance</b> ou le supprimer.</p>
+          </>,
+        },
+        {
+          q: "Voter, changer d'avis, et le secret des résultats",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sélectionnez votre ou vos réponses, puis validez. <b>Vous pouvez modifier votre vote autant de fois que vous voulez jusqu'à la clôture</b> : rouvrez la carte, changez votre sélection, revalidez. Pour retirer complètement votre vote, décochez tout et validez.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Les résultats restent invisibles tant que le vote est ouvert.</b> Chacun ne voit que son propre bulletin — impossible de se laisser influencer par les votes déjà exprimés, ou de deviner qui a voté quoi. Seul le <b>nombre de votants</b> est affiché en direct, puisqu'il ne révèle rien de la répartition et qu'il sert à suivre le quorum.</p>
+            <p style={{ margin: "0 0 8px" }}>À la clôture, les résultats apparaîssent sous forme de <b>barres</b> : voix et pourcentage par réponse, la réponse en tête en ambre, et votre propre choix signalé. Le vote bascule alors dans la liste « Terminés ».</p>
+            <p style={{ margin: 0 }}>Une exception : les <b>administrateurs</b> voient les résultats à tout moment, y compris en cours de vote. Un bandeau violet le rappelle explicitement quand c'est le cas, pour que personne ne s'y trompe.</p>
+          </>,
+        },
+      ],
+    },
+    {
       icon: "🧰", title: "En cas de pépin",
       items: [
         {
@@ -5105,6 +5156,661 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
         return gg ? <GameDetailModal g={gg} onClose={() => setGameOpen(null)} onAuth={onAuth} setToast={setToast} /> : null;
       })()}
       {editOpen && member && <ProfileEditModal member={member} onClose={() => setEditOpen(false)} />}
+    </Modal>
+  );
+}
+
+/* =============================================================================
+   ESPACE DECISIONNAIRE
+   Reserve aux membres decisionnaires : c'est la qu'on partage les idees et
+   qu'on tranche. Deux volets :
+     * la boite a idees (proposer, soutenir, discuter) ;
+     * les votes en ligne (choix multiples, quorum, date limite).
+
+   Les donnees sont chargees a la demande par cette page, et non au demarrage
+   du site : inutile de les transporter pour les membres qui n'y ont pas acces.
+   ============================================================================= */
+
+// Un vote est-il termine ? (cloture anticipee, ou date limite depassee)
+function isPollClosed(p) {
+  if (!p) return true;
+  if (p.closed_at) return true;
+  return !!p.closes_at && Date.now() > new Date(p.closes_at).getTime();
+}
+
+// Temps restant avant la fermeture, en clair.
+function pollTimeLeft(p) {
+  if (!p || !p.closes_at) return "";
+  const ms = new Date(p.closes_at).getTime() - Date.now();
+  if (ms <= 0) return "terminé";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins} min restantes`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} h restantes`;
+  const days = Math.floor(hours / 24);
+  return `${days} jour${days > 1 ? "s" : ""} restant${days > 1 ? "s" : ""}`;
+}
+
+function DeciderPage({ setToast }) {
+  const { currentUser } = useApp();
+  const [tab, setTab] = useState("idees");
+  if (!isDecideur(currentUser)) {
+    return (
+      <div style={{ maxWidth: 700, margin: "0 auto", padding: "60px 24px" }}>
+        <EmptyHint icon={Crown} text="Cet espace est réservé aux membres décisionnaires." />
+      </div>
+    );
+  }
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <div style={{ marginBottom: 22 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em", display: "flex", alignItems: "center", gap: 6 }}>
+          <Crown size={15} color={C.amber} /> Espace réservé
+        </span>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(28px,5vw,42px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Décisionnaire</h1>
+        <p style={{ margin: "8px 0 0", fontSize: 14.5, color: "#6e6256", lineHeight: 1.6, maxWidth: 640 }}>
+          L'endroit où l'on partage les idées et où l'on tranche, entre membres décisionnaires.
+          Ce que vous écrivez ici n'est visible que d'eux.
+        </p>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
+        {[
+          { k: "idees", t: "\ud83d\udca1 Boîte à idées" },
+          { k: "votes", t: "\ud83d\uddf3️ Votes" },
+        ].map((x) => (
+          <button key={x.k} type="button" onClick={() => setTab(x.k)}
+            style={{ padding: "10px 20px", borderRadius: 12, cursor: "pointer", border: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15,
+              background: tab === x.k ? C.navy : "rgba(26,58,92,.07)", color: tab === x.k ? "#fff" : C.navy }}>
+            {x.t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "idees" ? <IdeaBox setToast={setToast} /> : <PollBoard setToast={setToast} />}
+    </div>
+  );
+}
+
+/* ---- Boite a idees --------------------------------------------------------- */
+function IdeaBox({ setToast }) {
+  const { currentUser, users, askConfirm } = useApp();
+  const [ideas, setIdeas] = useState(null);
+  const [supports, setSupports] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [err, setErr] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ title: "", content: "" });
+  const [busy, setBusy] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const load = useCallback(async () => {
+    const [a, b, c] = await Promise.all([
+      supabase.from("decider_ideas").select("*").order("created_at", { ascending: false }),
+      supabase.from("decider_idea_supports").select("idea_id,user_id"),
+      supabase.from("decider_idea_comments").select("*").order("created_at", { ascending: true }),
+    ]);
+    if (a.error) { setErr(a.error.message); setIdeas([]); return; }
+    setIdeas(a.data || []);
+    setSupports(b.data || []);
+    setComments(c.data || []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
+  const supportsOf = (id) => supports.filter((x) => x.idea_id === id);
+  const iSupport = (id) => supports.some((x) => x.idea_id === id && x.user_id === currentUser?.id);
+  const commentsOf = (id) => comments.filter((c) => c.idea_id === id);
+
+  const submit = async () => {
+    const t = draft.title.trim();
+    if (!t) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("decider_ideas").insert({
+      author_id: currentUser.id, title: t.slice(0, 200), content: draft.content.trim().slice(0, 4000),
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setDraft({ title: "", content: "" }); setAdding(false);
+    await load();
+    if (setToast) setToast("Idée ajoutée à la boîte.");
+  };
+
+  const toggleSupport = async (id) => {
+    if (iSupport(id)) {
+      await supabase.from("decider_idea_supports").delete().eq("idea_id", id).eq("user_id", currentUser.id);
+    } else {
+      await supabase.from("decider_idea_supports").insert({ idea_id: id, user_id: currentUser.id });
+    }
+    await load();
+  };
+
+  const setStatus = async (idea, status) => {
+    await supabase.from("decider_ideas").update({ status, updated_at: new Date().toISOString() }).eq("id", idea.id);
+    await load();
+  };
+
+  const removeIdea = async (idea) => {
+    if (!(await askConfirm({
+      title: "Supprimer cette idée ?",
+      message: "L'idée et tous ses commentaires seront supprimés pour tous les membres décisionnaires.",
+      confirmLabel: "Supprimer",
+    }))) return;
+    const { error } = await supabase.from("decider_ideas").delete().eq("id", idea.id);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  const visible = (ideas || []).filter((i) => showArchived ? true : i.status !== "archived");
+  const archivedCount = (ideas || []).filter((i) => i.status === "archived").length;
+
+  return (
+    <div>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+      {!adding ? (
+        <Btn variant="amber" onClick={() => setAdding(true)} style={{ marginBottom: 20 }}><Plus size={17} /> Proposer une idée</Btn>
+      ) : (
+        <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: 18, marginBottom: 20 }}>
+          <Field label="L'idée en une phrase"><TextInput value={draft.title} maxLength={200} autoFocus placeholder="Ex. : organiser un week-end jeux en septembre" onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></Field>
+          <Field label="Détails" hint="Facultatif — le contexte, les contraintes, ce qu'il faudrait décider.">
+            <textarea rows={4} value={draft.content} maxLength={4000} onChange={(e) => setDraft({ ...draft, content: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
+          </Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="teal" onClick={submit} disabled={busy || !draft.title.trim()}>
+              {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> Publier</>}
+            </Btn>
+            <Btn variant="soft" onClick={() => { setAdding(false); setDraft({ title: "", content: "" }); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {ideas === null ? (
+        <div style={{ color: "#a89a86", fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={16} className="aladj-spin" /> Chargement…</div>
+      ) : visible.length === 0 ? (
+        <EmptyHint icon={Sparkles} text="La boîte à idées est vide. Lancez la première !" />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+          {visible.map((idea) => {
+            const sup = supportsOf(idea.id);
+            const mine = idea.author_id === currentUser?.id;
+            const canTouch = mine || currentUser?.admin;
+            const cs = commentsOf(idea.id);
+            const isOpen = openId === idea.id;
+            const done = idea.status === "done";
+            const archived = idea.status === "archived";
+            return (
+              <div key={idea.id} style={{ background: C.paper, border: `1px solid ${done ? "rgba(30,138,138,.35)" : "#ece2d0"}`, borderRadius: 16, padding: "16px 18px", opacity: archived ? .6 : 1 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => toggleSupport(idea.id)} title={iSupport(idea.id) ? "Retirer mon soutien" : "Je soutiens cette idée"}
+                    style={{ flexShrink: 0, display: "grid", placeItems: "center", width: 46, padding: "6px 0", borderRadius: 11, cursor: "pointer",
+                      border: `1.5px solid ${iSupport(idea.id) ? C.amber : "#e6dcc9"}`, background: iSupport(idea.id) ? "rgba(232,163,23,.12)" : "#fff" }}>
+                    <ThumbsUp size={15} color={iSupport(idea.id) ? C.amber : "#b6a78f"} />
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, color: iSupport(idea.id) ? C.amber : "#8a7c6a", marginTop: 2 }}>{sup.length}</span>
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5, overflowWrap: "anywhere" }}>{idea.title}</span>
+                      {done && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>TRANCHÉE</span>}
+                      {archived && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#9c8d79", borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>ARCHIVÉE</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#9c8d79", marginTop: 3, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                      <span>par {mine ? "vous" : nameOf(idea.author_id)}</span>
+                      <DeciderCrownFor id={idea.author_id} size={11} />
+                      <span>· {new Date(idea.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</span>
+                    </div>
+                    {idea.content && (
+                      <p style={{ margin: "9px 0 0", fontSize: 14, color: "#5e5346", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{idea.content}</p>
+                    )}
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                      <Btn size="sm" variant="soft" onClick={() => setOpenId(isOpen ? null : idea.id)}>
+                        <MessageCircle size={14} /> {cs.length > 0 ? `${cs.length} commentaire${cs.length > 1 ? "s" : ""}` : "Commenter"}
+                      </Btn>
+                      {canTouch && !done && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "done")}><Check size={14} /> Marquer tranchée</Btn>}
+                      {canTouch && done && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "open")}>Rouvrir</Btn>}
+                      {canTouch && !archived && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "archived")}>Archiver</Btn>}
+                      {canTouch && archived && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "open")}>Désarchiver</Btn>}
+                      {canTouch && <Btn size="sm" variant="danger" onClick={() => removeIdea(idea)}><Trash2 size={14} /></Btn>}
+                    </div>
+                    {isOpen && <IdeaComments ideaId={idea.id} rows={cs} onChange={load} nameOf={nameOf} />}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {archivedCount > 0 && (
+        <button type="button" onClick={() => setShowArchived((v) => !v)}
+          style={{ marginTop: 18, background: "none", border: "none", color: C.teal, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", fontFamily: "'Nunito',sans-serif", padding: 0 }}>
+          {showArchived ? "Masquer" : "Afficher"} les {archivedCount} idée{archivedCount > 1 ? "s" : ""} archivée{archivedCount > 1 ? "s" : ""}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ---- Commentaires d'une idee ---------------------------------------------- */
+function IdeaComments({ ideaId, rows, onChange, nameOf }) {
+  const { currentUser, askConfirm } = useApp();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t) return;
+    setBusy(true);
+    await supabase.from("decider_idea_comments").insert({ idea_id: ideaId, author_id: currentUser.id, content: t.slice(0, 2000) });
+    setBusy(false); setText("");
+    await onChange();
+  };
+
+  const remove = async (c) => {
+    if (!(await askConfirm({ title: "Supprimer ce commentaire ?", message: "Il sera retiré de la discussion.", confirmLabel: "Supprimer" }))) return;
+    await supabase.from("decider_idea_comments").delete().eq("id", c.id);
+    await onChange();
+  };
+
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid #f0e8d8", paddingTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 10 }}>
+        {rows.length === 0 && <span style={{ fontSize: 13, color: "#a89a86" }}>Aucun commentaire pour l'instant.</span>}
+        {rows.map((c) => (
+          <div key={c.id} style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "9px 12px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: "#9c8d79", marginBottom: 2, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif" }}>{c.author_id === currentUser?.id ? "Vous" : nameOf(c.author_id)}</b>
+                <DeciderCrownFor id={c.author_id} size={11} />
+                <span>· {new Date(c.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+              </div>
+              <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{c.content}</div>
+            </div>
+            {(c.author_id === currentUser?.id || currentUser?.admin) && (
+              <button onClick={() => remove(c)} title="Supprimer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, flexShrink: 0 }}><Trash2 size={14} /></button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} maxLength={2000} placeholder="Votre avis sur cette idée…" style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
+        <Btn size="sm" variant="teal" onClick={send} disabled={busy || !text.trim()}>Envoyer</Btn>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Votes ----------------------------------------------------------------- */
+function PollBoard({ setToast }) {
+  const { currentUser, users, askConfirm } = useApp();
+  const [polls, setPolls] = useState(null);
+  const [options, setOptions] = useState([]);
+  const [myVotes, setMyVotes] = useState([]);
+  const [status, setStatus] = useState({});     // poll_id -> { voter_count, is_closed }
+  const [results, setResults] = useState({});   // poll_id -> [{ option_id, votes }]
+  const [err, setErr] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    const [p, o, v, st] = await Promise.all([
+      supabase.from("polls").select("*").order("created_at", { ascending: false }),
+      supabase.from("poll_options").select("*").order("sort_order", { ascending: true }),
+      supabase.from("poll_votes").select("poll_id,option_id").eq("voter_id", currentUser.id),
+      supabase.rpc("aladj_poll_status"),
+    ]);
+    if (p.error) { setErr(p.error.message); setPolls([]); return; }
+    setPolls(p.data || []);
+    setOptions(o.data || []);
+    setMyVotes(v.data || []);
+    const map = {};
+    (st.data || []).forEach((r) => { map[r.poll_id] = { voterCount: r.voter_count, isClosed: r.is_closed }; });
+    setStatus(map);
+
+    // Resultats : seulement pour les votes clos (ou pour un administrateur).
+    const wanted = (p.data || []).filter((x) => isPollClosed(x) || currentUser.admin);
+    const res = {};
+    await Promise.all(wanted.map(async (x) => {
+      const { data } = await supabase.rpc("aladj_poll_results", { p_poll_id: x.id });
+      if (data) res[x.id] = data;
+    }));
+    setResults(res);
+  }, [currentUser]);
+  useEffect(() => { load(); }, [load]);
+
+  const removePoll = async (p) => {
+    if (!(await askConfirm({
+      title: "Supprimer ce vote ?", message: "Le vote, ses options et tous les bulletins seront supprimés. Action définitive.", confirmLabel: "Supprimer",
+    }))) return;
+    const { error } = await supabase.from("polls").delete().eq("id", p.id);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  const closeNow = async (p) => {
+    if (!(await askConfirm({
+      title: "Clore ce vote maintenant ?", message: "Plus personne ne pourra voter, et les résultats deviendront visibles de tous les membres décisionnaires.", confirmLabel: "Clore le vote",
+    }))) return;
+    await supabase.from("polls").update({ closed_at: new Date().toISOString() }).eq("id", p.id);
+    await load();
+  };
+
+  const open = (polls || []).filter((p) => !isPollClosed(p));
+  const closed = (polls || []).filter((p) => isPollClosed(p));
+
+  return (
+    <div>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+      <Btn variant="amber" onClick={() => setCreating(true)} style={{ marginBottom: 20 }}><Plus size={17} /> Lancer un vote</Btn>
+
+      {polls === null ? (
+        <div style={{ color: "#a89a86", fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={16} className="aladj-spin" /> Chargement…</div>
+      ) : polls.length === 0 ? (
+        <EmptyHint icon={Crown} text="Aucun vote pour l'instant." />
+      ) : (
+        <>
+          {open.length > 0 && (
+            <>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px" }}>En cours ({open.length})</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14, marginBottom: 26 }}>
+                {open.map((p) => (
+                  <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
+                    myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
+                    st={status[p.id]} result={results[p.id]} users={users}
+                    onChanged={load} onRemove={removePoll} onClose={closeNow} setToast={setToast} />
+                ))}
+              </div>
+            </>
+          )}
+          {closed.length > 0 && (
+            <>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px" }}>Terminés ({closed.length})</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+                {closed.map((p) => (
+                  <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
+                    myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
+                    st={status[p.id]} result={results[p.id]} users={users}
+                    onChanged={load} onRemove={removePoll} onClose={closeNow} setToast={setToast} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {creating && <CreatePollModal onClose={() => setCreating(false)} onDone={async () => { setCreating(false); await load(); if (setToast) setToast("Vote lancé — les décisionnaires sont prévenus."); }} />}
+    </div>
+  );
+}
+
+/* ---- Une carte de vote ----------------------------------------------------- */
+function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, onRemove, onClose, setToast }) {
+  const { currentUser } = useApp();
+  const [sel, setSel] = useState(myOptionIds);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { setSel(myOptionIds); }, [myOptionIds.join("|")]); // eslint-disable-line
+
+  const closedNow = isPollClosed(poll);
+  const mine = poll.author_id === currentUser?.id;
+  const canManage = mine || currentUser?.admin;
+  const voterCount = st?.voterCount ?? 0;
+  const quorumOk = voterCount >= (poll.min_voters || 1);
+  const iVoted = myOptionIds.length > 0;
+  const authorName = (users || []).find((u) => u.id === poll.author_id)?.name || "Un membre";
+
+  // Les resultats ne sont charges que si le vote est clos, ou si l'on est
+  // administrateur : le serveur refuse purement et simplement les autres cas.
+  const showResults = !!result;
+  const totalVotes = (result || []).reduce((s, r) => s + (r.votes || 0), 0);
+  const maxVotes = Math.max(1, ...(result || []).map((r) => r.votes || 0));
+
+  const toggle = (id) => {
+    setErr("");
+    if (poll.multi) {
+      setSel((arr) => arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
+    } else {
+      setSel((arr) => arr.includes(id) ? [] : [id]);
+    }
+  };
+
+  const send = async () => {
+    setBusy(true); setErr("");
+    const { error } = await supabase.rpc("aladj_cast_vote", { p_poll_id: poll.id, p_option_ids: sel });
+    setBusy(false);
+    if (error) {
+      const m = error.message || "";
+      setErr(/ALADJ_POLL_CLOSED/.test(m) ? "Ce vote est clôturé : il n'est plus possible de voter."
+        : /ALADJ_TOO_MANY_CHOICES/.test(m) ? `Vous ne pouvez choisir que ${poll.max_choices} réponse${poll.max_choices > 1 ? "s" : ""} au maximum.`
+        : /ALADJ_SINGLE_CHOICE/.test(m) ? "Ce vote n'accepte qu'une seule réponse."
+        : /ALADJ_NOT_DECIDEUR/.test(m) ? "Seuls les membres décisionnaires peuvent voter."
+        : m);
+      return;
+    }
+    await onChanged();
+    if (setToast) setToast(sel.length === 0 ? "Votre vote a été retiré." : "Vote enregistré.");
+  };
+
+  const dirty = sel.slice().sort().join("|") !== myOptionIds.slice().sort().join("|");
+
+  return (
+    <div style={{ background: C.paper, border: `1px solid ${closedNow ? "#ece2d0" : "rgba(232,163,23,.45)"}`, borderRadius: 16, padding: "18px 20px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 18, minWidth: 0, overflowWrap: "anywhere" }}>{poll.question}</span>
+        <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", borderRadius: 999, padding: "3px 11px",
+          background: closedNow ? "rgba(26,58,92,.08)" : "rgba(232,163,23,.16)", color: closedNow ? "#8a7c6a" : "#8a6a1f" }}>
+          {closedNow ? "TERMINÉ" : pollTimeLeft(poll).toUpperCase()}
+        </span>
+      </div>
+
+      <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 12, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+        <span>proposé par {mine ? "vous" : authorName}</span>
+        <span>· {poll.multi ? (poll.max_choices ? `plusieurs réponses (max. ${poll.max_choices})` : "plusieurs réponses possibles") : "une seule réponse"}</span>
+        <span>· clôture le {new Date(poll.closes_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })} à {new Date(poll.closes_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+      </div>
+
+      {poll.description && (
+        <p style={{ margin: "0 0 14px", fontSize: 14, color: "#5e5346", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{poll.description}</p>
+      )}
+
+      {/* Participation et quorum */}
+      <div style={{ display: "flex", alignItems: "center", gap: 9, background: quorumOk ? "rgba(30,138,138,.08)" : "rgba(232,163,23,.1)", borderRadius: 11, padding: "9px 13px", marginBottom: 14, fontSize: 13, color: quorumOk ? C.teal : "#8a6a1f", fontWeight: 600 }}>
+        <Users size={15} style={{ flexShrink: 0 }} />
+        <span>
+          <b>{voterCount}</b> votant{voterCount > 1 ? "s" : ""} · quorum de <b>{poll.min_voters}</b> {quorumOk ? "atteint" : `— il en manque ${poll.min_voters - voterCount}`}
+        </span>
+      </div>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 12px", borderRadius: 10, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{err}</div>}
+
+      {/* Bulletin ou resultats */}
+      {showResults ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+          {!closedNow && (
+            <div style={{ fontSize: 12.5, color: C.purple, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", display: "flex", alignItems: "center", gap: 5 }}>
+              <Eye size={13} /> Résultats provisoires — visibles par les administrateurs uniquement
+            </div>
+          )}
+          {(result || []).map((r) => {
+            const pct = totalVotes > 0 ? Math.round((r.votes / totalVotes) * 100) : 0;
+            const isMine = myOptionIds.includes(r.option_id);
+            const isTop = r.votes === maxVotes && r.votes > 0;
+            return (
+              <div key={r.option_id}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 3, fontSize: 14 }}>
+                  <span style={{ color: "#5e5346", minWidth: 0, overflowWrap: "anywhere" }}>
+                    {r.label}{isMine ? <b style={{ color: C.teal }}> · votre choix</b> : ""}
+                  </span>
+                  <span style={{ flexShrink: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: isTop ? C.amber : C.navy }}>
+                    {r.votes} <span style={{ fontSize: 12, fontWeight: 600, color: "#9c8d79" }}>({pct} %)</span>
+                  </span>
+                </div>
+                <div style={{ height: 12, background: "#eee4d2", borderRadius: 99, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${totalVotes > 0 ? (r.votes / maxVotes) * 100 : 0}%`, background: isTop ? C.amber : C.teal, borderRadius: 99, transition: "width .3s" }} />
+                </div>
+              </div>
+            );
+          })}
+          {totalVotes === 0 && <span style={{ fontSize: 13.5, color: "#a89a86" }}>Personne n'a voté.</span>}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+          {options.map((o) => {
+            const on = sel.includes(o.id);
+            return (
+              <button key={o.id} type="button" onClick={() => !closedNow && toggle(o.id)} disabled={closedNow}
+                style={{ display: "flex", gap: 11, alignItems: "center", padding: "11px 14px", borderRadius: 11, cursor: closedNow ? "default" : "pointer", textAlign: "left",
+                  border: `2px solid ${on ? C.teal : "#e6dcc9"}`, background: on ? "rgba(30,138,138,.07)" : "#fff", font: "inherit", minWidth: 0 }}>
+                <span style={{ width: 19, height: 19, borderRadius: poll.multi ? 5 : "50%", border: `2px solid ${on ? C.teal : "#c5b69c"}`, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                  {on && (poll.multi
+                    ? <Check size={12} color={C.teal} />
+                    : <span style={{ width: 9, height: 9, borderRadius: "50%", background: C.teal }} />)}
+                </span>
+                <span style={{ fontSize: 14.5, color: C.navy, minWidth: 0, overflowWrap: "anywhere" }}>{o.label}</span>
+              </button>
+            );
+          })}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+            <Btn size="sm" variant="teal" onClick={send} disabled={busy || closedNow || !dirty}>
+              {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> {iVoted ? "Modifier mon vote" : "Voter"}</>}
+            </Btn>
+            {iVoted && !closedNow && (
+              <span style={{ fontSize: 12.5, color: C.teal, fontWeight: 600 }}>
+                Vote enregistré — modifiable jusqu'à la clôture.
+              </span>
+            )}
+            {!iVoted && <span style={{ fontSize: 12.5, color: "#9c8d79" }}>Les résultats seront révélés à la clôture.</span>}
+          </div>
+        </div>
+      )}
+
+      {canManage && (
+        <div style={{ display: "flex", gap: 8, marginTop: 14, borderTop: "1px solid #f0e8d8", paddingTop: 12, flexWrap: "wrap" }}>
+          {!closedNow && <Btn size="sm" variant="soft" onClick={() => onClose(poll)}><Lock size={14} /> Clore maintenant</Btn>}
+          <Btn size="sm" variant="danger" onClick={() => onRemove(poll)}><Trash2 size={14} /> Supprimer</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Creation d'un vote ---------------------------------------------------- */
+function CreatePollModal({ onClose, onDone }) {
+  const { currentUser } = useApp();
+  const today = new Date().toISOString().slice(0, 10);
+  const inAWeek = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const [f, setF] = useState({
+    question: "", description: "", multi: false, maxChoices: "",
+    minVoters: 2, closeDate: inAWeek, closeTime: "20:00",
+  });
+  const [opts, setOpts] = useState(["", ""]);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const setOpt = (i, v) => setOpts((a) => a.map((x, j) => j === i ? v : x));
+  const addOpt = () => setOpts((a) => a.length >= 12 ? a : [...a, ""]);
+  const delOpt = (i) => setOpts((a) => a.length <= 2 ? a : a.filter((_, j) => j !== i));
+
+  const submit = async () => {
+    setErr("");
+    const q = f.question.trim();
+    const clean = opts.map((o) => o.trim()).filter(Boolean);
+    if (!q) { setErr("Formulez la question soumise au vote."); return; }
+    if (clean.length < 2) { setErr("Il faut au moins deux réponses possibles."); return; }
+    if (new Set(clean.map((c) => c.toLowerCase())).size !== clean.length) { setErr("Deux réponses sont identiques."); return; }
+    const closesAt = new Date(`${f.closeDate}T${f.closeTime}:00`);
+    if (isNaN(closesAt.getTime())) { setErr("Date limite invalide."); return; }
+    if (closesAt.getTime() <= Date.now()) { setErr("La date limite doit être dans le futur."); return; }
+    const minV = Math.max(1, parseInt(f.minVoters, 10) || 1);
+    const maxC = f.multi && f.maxChoices ? Math.max(1, parseInt(f.maxChoices, 10)) : null;
+    if (maxC && maxC > clean.length) { setErr("Le nombre maximum de choix dépasse le nombre de réponses."); return; }
+
+    setBusy(true);
+    const { data, error } = await supabase.from("polls").insert({
+      author_id: currentUser.id, question: q.slice(0, 300), description: f.description.trim().slice(0, 4000),
+      multi: !!f.multi, max_choices: maxC, min_voters: minV, closes_at: closesAt.toISOString(),
+    }).select().single();
+    if (error) { setBusy(false); setErr(error.message); return; }
+
+    const { error: oErr } = await supabase.from("poll_options")
+      .insert(clean.map((label, i) => ({ poll_id: data.id, label: label.slice(0, 200), sort_order: i })));
+    setBusy(false);
+    if (oErr) {
+      // Un vote sans reponse n'a aucun sens : on annule tout plutot que de
+      // laisser un vote inutilisable derriere nous.
+      await supabase.from("polls").delete().eq("id", data.id);
+      setErr(oErr.message);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="🗳️ Lancer un vote" width={580}>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+      <Field label="La question soumise au vote">
+        <TextInput value={f.question} maxLength={300} autoFocus placeholder="Ex. : quelle date pour l'assemblée générale ?" onChange={(e) => setF({ ...f, question: e.target.value })} />
+      </Field>
+      <Field label="Précisions" hint="Facultatif — le contexte, les conséquences de chaque option.">
+        <textarea rows={3} value={f.description} maxLength={4000} onChange={(e) => setF({ ...f, description: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
+      </Field>
+
+      <Field label="Les réponses possibles" hint="Deux au minimum, douze au maximum.">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+          {opts.map((o, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ width: 20, flexShrink: 0, color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, textAlign: "right" }}>{i + 1}</span>
+              <TextInput value={o} maxLength={200} placeholder={`Réponse ${i + 1}`} onChange={(e) => setOpt(i, e.target.value)} style={{ flex: 1 }} />
+              {opts.length > 2 && (
+                <button onClick={() => delOpt(i)} title="Retirer cette réponse" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, flexShrink: 0, padding: 0 }}><X size={16} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+        {opts.length < 12 && <Btn size="sm" variant="soft" onClick={addOpt} style={{ marginTop: 9 }}><Plus size={14} /> Ajouter une réponse</Btn>}
+      </Field>
+
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.multi ? "rgba(30,138,138,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.multi ? C.teal : "transparent"}`, marginBottom: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.multi} onChange={(e) => setF({ ...f, multi: e.target.checked, maxChoices: "" })} style={{ width: 18, height: 18, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          Autoriser plusieurs réponses
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 3 }}>
+            Chaque votant pourra cocher plusieurs cases. Sinon, une seule réponse par personne.
+          </span>
+        </span>
+      </label>
+
+      <div style={{ display: "grid", gridTemplateColumns: f.multi ? "1fr 1fr" : "minmax(0,1fr)", gap: 14 }}>
+        <Field label="Votants requis (quorum)" hint="Le vote reste valable en deçà, mais l'écart est signalé.">
+          <TextInput type="number" min="1" value={f.minVoters} onChange={(e) => setF({ ...f, minVoters: e.target.value })} />
+        </Field>
+        {f.multi && (
+          <Field label="Choix maximum" hint="Laissez vide pour ne pas limiter.">
+            <TextInput type="number" min="1" value={f.maxChoices} onChange={(e) => setF({ ...f, maxChoices: e.target.value })} placeholder="illimité" />
+          </Field>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Field label="Clôture le"><TextInput type="date" min={today} value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} /></Field>
+        <Field label="à"><TextInput type="time" value={f.closeTime} onChange={(e) => setF({ ...f, closeTime: e.target.value })} /></Field>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.07)", borderRadius: 11, padding: "10px 13px", marginBottom: 16 }}>
+        <Info size={16} color={C.purple} style={{ flexShrink: 0, marginTop: 2 }} />
+        <span style={{ fontSize: 13, color: "#5e5346", lineHeight: 1.55 }}>
+          Les résultats resteront <b>invisibles jusqu'à la clôture</b> : chacun ne voit que son propre bulletin, et peut le modifier jusqu'au dernier moment. Seuls les administrateurs y ont accès en cours de route. Tous les décisionnaires seront prévenus de l'ouverture du vote.
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="teal" onClick={submit} disabled={busy}>
+          {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> Lancer le vote</>}
+        </Btn>
+        <Btn variant="soft" onClick={onClose}>Annuler</Btn>
+      </div>
     </Modal>
   );
 }
@@ -9794,6 +10500,13 @@ const BACKUP_TABLES = [
   ["play_session_players", [["id"]]],
   ["play_session_games", [["id"]]],
   ["play_turns", [["id"]]],
+  // Espace decisionnaire
+  ["decider_ideas", [["created_at", "id"]]],
+  ["decider_idea_comments", [["created_at", "id"]]],
+  ["decider_idea_supports", [["idea_id", "user_id"]]],
+  ["polls", [["created_at", "id"]]],
+  ["poll_options", [["id"]]],
+  ["poll_votes", [["id"]]],
   // Divers
   ["notifications", [["id"], ["created_at"]]],
   ["push_subscriptions", [["id"], ["created_at"]]],
@@ -11321,7 +12034,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : t === "poll_open" ? Crown : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -11338,6 +12051,7 @@ function MyLudoPage({ setToast, setPage }) {
                   <div key={n.id} role="button" tabIndex={0} onClick={() => {
                     markNotificationRead(n.id);
                     if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
+                    else if (n.linkKind === "poll") setPage("decideur");
                     else if (n.linkKind === "event") setPage("soirees");
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
@@ -11835,6 +12549,9 @@ function Shell() {
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
   useEffect(() => { if (!currentUser && (page === "ma-ludo" || page === "locations")) setPage("accueil"); }, [currentUser, page]);
+  // L'onglet decisionnaire disparait si l'on perd ce statut (cotisation expiree,
+  // deconnexion) : on ne laisse pas l'utilisateur bloque sur une page vide.
+  useEffect(() => { if (page === "decideur" && !isDecideur(currentUser)) setPage("accueil"); }, [currentUser, page]);
   useEffect(() => { if (page === "soirees") markMomentsSeen(); }, [page]); // eslint-disable-line
 
   if (fatalError === "config") return <ConfigScreen />;
@@ -11865,6 +12582,7 @@ function Shell() {
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
         {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
+        {page === "decideur" && currentUser && <DeciderPage setToast={setToast} />}
         {page === "guide" && <GuidePage />}
       </main>
       <Footer setPage={setPage} />
