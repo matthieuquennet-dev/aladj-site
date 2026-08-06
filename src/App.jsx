@@ -746,6 +746,7 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
     deadline: row.deadline || null, isPrivate: row.is_private === true,
+    signupDeadline: row.signup_deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     // un membre invité (event_guests.member_id) qui s'est aussi inscrit comme participant
     // n'est ni affiché ni compté deux fois : on le retire de la liste des invités
@@ -1552,7 +1553,7 @@ function AppProvider({ children }) {
     const { data, error } = await supabase.from("events").insert({
       event_date: d.date, event_time: d.time, place: d.place, place_id: d.placeId || null, min_players: d.min, max_players: d.max,
       notes: d.notes || "", online: d.online || false, host_id: currentUser.id, deadline: d.deadline || null,
-      is_private: !!d.isPrivate,
+      is_private: !!d.isPrivate, signup_deadline: d.signupDeadline || null,
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
@@ -1578,7 +1579,7 @@ function AppProvider({ children }) {
     const { error } = await supabase.from("events").update({
       event_date: patch.date, event_time: patch.time, place: patch.place, place_id: patch.placeId || null,
       min_players: patch.min, max_players: patch.max, notes: patch.notes || "", online: patch.online || false, deadline: patch.deadline || null,
-      is_private: !!patch.isPrivate,
+      is_private: !!patch.isPrivate, signup_deadline: patch.signupDeadline || null,
     }).eq("id", id);
     if (error) return { error: error.message };
     await loadData();
@@ -1742,10 +1743,12 @@ function AppProvider({ children }) {
   // ---- Invités nommés (membres avec compte OU personnes sans compte) ----
   const addGuest = useCallback(async (eventId, guestName, memberId = null) => {
     if (!currentUser) return { error: "Connectez-vous." };
+    const evNow = events.find((e) => e.id === eventId);
+    if (!currentUser.admin && isSignupClosed(evNow)) return { error: signupClosedMessage(evNow) };
     const { error } = await supabase.from("event_guests").insert({
       event_id: eventId, guest_name: guestName.trim(), member_id: memberId, added_by: currentUser.id,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: /ALADJ_SIGNUP_CLOSED/.test(error.message) ? signupClosedMessage(evNow) : error.message };
     // Inviter un membre => on le prévient ; il confirmera depuis Ma ludothèque (en attente = ambre)
     if (memberId && memberId !== currentUser.id) {
       const ev = events.find((e) => e.id === eventId);
@@ -1957,12 +1960,26 @@ function AppProvider({ children }) {
   }, [loadData]);
 
   const toggleJoin = useCallback(async (eventId) => {
-    if (!currentUser) return;
+    if (!currentUser) return {};
     const ev = events.find((e) => e.id === eventId);
     const inIt = ev?.players.some((p) => p.id === currentUser.id);
-    if (inIt) await supabase.from("event_players").delete().eq("event_id", eventId).eq("user_id", currentUser.id);
-    else await supabase.from("event_players").insert({ event_id: eventId, user_id: currentUser.id });
+    if (inIt) {
+      await supabase.from("event_players").delete().eq("event_id", eventId).eq("user_id", currentUser.id);
+    } else {
+      // Verrou local (48 h apres le debut / date limite d'inscription) : on evite
+      // un aller-retour serveur quand la reponse est deja connue.
+      if (!currentUser.admin && isSignupClosed(ev)) {
+        await loadData();
+        return { error: signupClosedMessage(ev) };
+      }
+      const { error } = await supabase.from("event_players").insert({ event_id: eventId, user_id: currentUser.id });
+      if (error) {
+        await loadData();
+        return { error: /ALADJ_SIGNUP_CLOSED/.test(error.message) ? signupClosedMessage(ev) : error.message };
+      }
+    }
     await loadData();
+    return {};
   }, [currentUser, events, loadData]);
 
   // Retirer une inscription d'un moment jeux.
@@ -2329,6 +2346,53 @@ function isEventExpired(e) {
   if (Date.now() < new Date(e.deadline).getTime()) return false;
   const total = (e.players?.length || 0) + (e.guests?.length || 0);
   return total < e.min;
+}
+
+// ---- Fenetre d'inscription a un moment jeux ----
+// Deux verrous se cumulent, le plus proche l'emporte :
+//   * 48 h APRES le debut du moment : plus aucun ajout possible (regle fixe) ;
+//   * la date/heure limite d'inscription fixee par le createur (facultative).
+const SIGNUP_LOCK_HOURS = 48;
+function eventStartAt(e) {
+  if (!e || !e.date) return null;
+  const t = (e.time || "00:00").slice(0, 5);
+  const d = new Date(`${e.date}T${t}:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+// Instant exact de fermeture des inscriptions (null = jamais).
+function signupCloseAt(e) {
+  const start = eventStartAt(e);
+  const lock = start ? new Date(start.getTime() + SIGNUP_LOCK_HOURS * 3600 * 1000) : null;
+  const manual = e && e.signupDeadline ? new Date(e.signupDeadline) : null;
+  const valid = [lock, manual].filter((d) => d && !isNaN(d.getTime()));
+  if (!valid.length) return null;
+  return new Date(Math.min(...valid.map((d) => d.getTime())));
+}
+// Message affiche quand une inscription est refusee.
+function signupClosedMessage(e) {
+  const at = signupCloseAt(e);
+  if (signupClosedReason(e) === "deadline") {
+    return `Les inscriptions à ce moment jeux sont closes depuis le ${formatDateTimeFr(at)} (date limite fixée par l'organisateur).`;
+  }
+  return `Les inscriptions à ce moment jeux sont closes : plus aucun ajout n'est possible ${SIGNUP_LOCK_HOURS} h après son début.`;
+}
+function isSignupClosed(e) {
+  const c = signupCloseAt(e);
+  return !!c && Date.now() > c.getTime();
+}
+// Raison de la fermeture, pour l'affichage.
+function signupClosedReason(e) {
+  const start = eventStartAt(e);
+  const manual = e && e.signupDeadline ? new Date(e.signupDeadline) : null;
+  if (manual && Date.now() > manual.getTime()) {
+    const lock = start ? new Date(start.getTime() + SIGNUP_LOCK_HOURS * 3600 * 1000) : null;
+    if (!lock || manual <= lock) return "deadline";
+  }
+  return "lock48";
+}
+function formatDateTimeFr(d) {
+  if (!d) return "";
+  return `${formatDateFr(d.toISOString().slice(0, 10))} à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 // Moteur de recommandations : propose des jeux non notés par l'utilisateur,
@@ -3907,6 +3971,22 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Jusqu'à quand peut-on s'inscrire à un moment jeux ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Deux verrous encadrent les inscriptions. Le plus proche l'emporte, et la fiche du moment affiche toujours la date retenue.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>La limite d'inscription</b> (facultative) : à la création du moment, une case <b style={{ color: C.teal }}>« Fixer une limite d'inscription »</b> permet de choisir une date et une heure au-delà desquelles plus personne ne peut s'inscrire ni être invité. De quoi motiver tout le monde à se décider sans attendre la dernière minute. Le créateur peut la reculer à tout moment en modifiant le moment.</li>
+              <li><b>Le verrou des {SIGNUP_LOCK_HOURS} h</b> (automatique, toujours actif) : <b>{SIGNUP_LOCK_HOURS} heures après le début du moment</b>, plus aucun participant ni invité ne peut être ajouté. Cela laisse une marge confortable pour régulariser après coup quelqu'un qui était bien là, puis fige définitivement la liste.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>Quand c'est fermé, le bouton devient <b>« Inscriptions closes »</b> et « Ajouter un invité » disparaît. À noter : on peut <b>toujours se retirer</b> d'un moment, même après la fermeture — seuls les <i>ajouts</i> sont bloqués.</p>
+            <p style={{ margin: 0 }}>Les <b>administrateurs</b> restent libres d'ajouter quelqu'un après la fermeture, pour corriger un oubli.</p>
+          </>,
+        },
+        {
+          q: "Être prévenu quand quelqu'un rejoint un moment",
+          a: <p style={{ margin: 0 }}>Quand le <b>quorum est déjà atteint</b> et qu'un nouveau joueur s'inscrit, <b>tous les membres déjà inscrits</b> reçoivent une notification (« Untel vient de s'inscrire au moment jeux du … ») avec le nouveau total de participants. Pratique pour savoir si la tablée grossit et adapter les jeux qu'on apporte. Le franchissement du quorum, lui, garde sa propre notification.</p>,
+        },
+        {
           q: "Retirer un participant d'un moment jeux",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans la fiche du moment, une petite croix apparaît à côté du nom des participants que vous avez le droit de retirer. Trois profils peuvent le faire :</p>
@@ -3944,7 +4024,8 @@ function GuidePage() {
                 <span style={{ width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, display: "grid", placeItems: "center", fontSize: 15 }}>+</span>
               </span>
             </Illu>
-            <p style={{ margin: "6px 0 0" }}>Chaque participant recevra ensuite une suggestion par partie (« Catan — partie 2/3 ») à confirmer dans son espace.</p>
+            <p style={{ margin: "6px 0 8px" }}>Chaque participant recevra ensuite une suggestion par partie (« Catan — partie 2/3 ») à confirmer dans son espace.</p>
+            <p style={{ margin: 0 }}><b>Qui peut modifier cette liste ?</b> <b>Tous les membres présents au moment</b> (les inscrits et le créateur), ainsi que les <b>administrateurs</b> — et personne d'autre. Chacun peut ajouter un jeu, changer son nombre de parties ou le retirer, sans avoir à être celui qui l'a ajouté : c'est la mémoire commune de la soirée, on la tient à plusieurs.</p>
           </>,
         },
         {
@@ -5150,7 +5231,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, isPrivate: false, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00" });
+  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, isPrivate: false, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00", useSignupLimit: false, signupDate: startDate, signupTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -5173,11 +5254,17 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) {
       deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
     }
+    let signupDeadline = null;
+    if (f.useSignupLimit && f.signupDate && f.signupTime) {
+      const sd = new Date(`${f.signupDate}T${f.signupTime}:00`);
+      if (isNaN(sd.getTime())) { setErr("Date limite d'inscription invalide."); return; }
+      signupDeadline = sd.toISOString();
+    }
     setBusy(true);
     const res = await onCreate({
       date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online,
       min: minN, max: maxN, notes: f.notes.trim(),
-      joinSelf: f.joinSelf, isPrivate: f.isPrivate, deadline, invites,
+      joinSelf: f.joinSelf, isPrivate: f.isPrivate, deadline, signupDeadline, invites,
     });
     setBusy(false);
     if (res?.error) setErr(res.error);
@@ -5286,6 +5373,24 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
         </div>
       )}
 
+      {/* limite d'inscription */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.useSignupLimit ? "rgba(30,138,138,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.useSignupLimit ? C.teal : "transparent"}`, marginBottom: f.useSignupLimit ? 12 : 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.useSignupLimit} onChange={(e) => setF({ ...f, useSignupLimit: e.target.checked })} style={{ width: 18, height: 18, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          <Clock size={14} style={{ verticalAlign: "-2px", marginRight: 5, color: f.useSignupLimit ? C.teal : "#9c8d79" }} />
+          Fixer une limite d'inscription
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 3 }}>
+            Passé cette date/heure, plus personne ne peut s'inscrire ni être invité — de quoi éviter les inscriptions de dernière minute. Vous pourrez toujours reculer la limite en modifiant le moment.
+          </span>
+        </span>
+      </label>
+      {f.useSignupLimit && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Inscriptions jusqu'au"><TextInput type="date" min={today} max={f.date} value={f.signupDate} onChange={(e) => setF({ ...f, signupDate: e.target.value })} /></Field>
+          <Field label="à"><TextInput type="time" value={f.signupTime} onChange={(e) => setF({ ...f, signupTime: e.target.value })} /></Field>
+        </div>
+      )}
+
       <Field label="Note (jeux prévus, ambiance...)" hint="Facultatif">
         <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="On sort les gros jeux de gestion ? Apéro partagé..."
           style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
@@ -5313,6 +5418,12 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
   const childBlocked = !!currentUser && isChildAccount(currentUser) && !e.isPrivate && !isIn;
   const isParticipant = currentUser && (isIn || e.hostId === currentUser.id);
   const canManage = currentUser && (currentUser.id === e.hostId || currentUser.admin);
+  // Jeux joues : tous les participants du moment, et les administrateurs.
+  const canEditPlayed = !!currentUser && (!!isParticipant || currentUser.admin === true);
+  // Inscriptions closes (limite fixee par l'organisateur, ou 48 h apres le debut).
+  const signupClosed = isSignupClosed(e);
+  const signupCloseDate = signupCloseAt(e);
+  const closedForMe = signupClosed && !(currentUser && currentUser.admin);
 
   const [showGuest, setShowGuest] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -5400,6 +5511,19 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             </div>
           )}
 
+          {/* fenetre d'inscription */}
+          {!expired && currentUser && signupCloseDate && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: signupClosed ? "rgba(181,40,58,.09)" : "rgba(30,138,138,.09)", border: `1.5px solid ${signupClosed ? C.red : C.teal}33`, borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: signupClosed ? C.red : C.teal, fontWeight: 600, lineHeight: 1.5 }}>
+              <Lock size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>
+                {signupClosed
+                  ? <>Inscriptions closes depuis le <b>{formatDateTimeFr(signupCloseDate)}</b>{signupClosedReason(e) === "lock48" ? <> — plus aucun ajout {SIGNUP_LOCK_HOURS} h après le début du moment.</> : " (limite fixée par l'organisateur)."}
+                      {currentUser.admin && <span style={{ display: "block", color: C.purple, fontWeight: 700, marginTop: 3 }}>Vous pouvez tout de même agir en tant qu'administrateur.</span>}</>
+                  : <>Inscriptions ouvertes jusqu'au <b>{formatDateTimeFr(signupCloseDate)}</b>{signupClosedReason(e) === "lock48" ? "" : " (limite fixée par l'organisateur)"}.</>}
+              </span>
+            </div>
+          )}
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
               {totalCount}{e.max ? ` / ${e.max}` : ""} participant{totalCount > 1 ? "s" : ""}{!e.max ? " · sans limite" : ""}
@@ -5467,7 +5591,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           {/* ajouter un invité (participants + créateur) */}
           {isParticipant && (
             <div style={{ marginBottom: 18, display: expired ? "none" : "block" }}>
-              {!showGuest ? (
+              {closedForMe ? (
+                <span style={{ fontSize: 12.5, color: "#a89a86" }}>Les inscriptions sont closes : plus aucun invité ne peut être ajouté.</span>
+              ) : !showGuest ? (
                 <Btn size="sm" variant="soft" onClick={() => setShowGuest(true)}><UserPlus size={15} /> Ajouter un invité</Btn>
               ) : (
                 <GuestAdder users={users} currentEvent={e} onAdd={addGuest} onDone={() => setShowGuest(false)} />
@@ -5494,8 +5620,11 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           )}
           {currentUser && !expired ? (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
-              <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")} disabled={childBlocked || (!isIn && full)} onClick={() => onJoin(e.id)} style={canManage ? { flex: 1 } : {}}>
-                {isIn ? <><X size={17} /> Me retirer</> : childBlocked ? "Réservé aux 14 ans et plus" : full ? "Complet" : <><Check size={17} /> Je participe</>}
+              <Btn full={!canManage} size="lg" variant={isIn ? "ghost" : (reached ? "teal" : "red")}
+                disabled={childBlocked || (!isIn && (full || closedForMe))}
+                onClick={async () => { setActionErr(""); const r = await onJoin(e.id); if (r?.error) setActionErr(r.error); }}
+                style={canManage ? { flex: 1 } : {}}>
+                {isIn ? <><X size={17} /> Me retirer</> : childBlocked ? "Réservé aux 14 ans et plus" : closedForMe ? <><Lock size={16} /> Inscriptions closes</> : full ? "Complet" : <><Check size={17} /> Je participe</>}
               </Btn>
               {canManage && <Btn variant="soft" size="lg" onClick={() => setShowEdit(true)}><Edit3 size={17} /></Btn>}
               {canManage && <Btn variant="danger" size="lg" onClick={async () => { if (await askConfirm({ title: "Supprimer ce moment jeux ?", message: "Le moment, ses inscriptions et ses commentaires seront supprimés pour tous les membres. Action définitive.", confirmLabel: "Supprimer" })) onRemove(e.id); }}><Trash2 size={17} /></Btn>}
@@ -5511,7 +5640,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           )}
 
           {/* JEUX JOUÉS */}
-          <EventPlayedGames e={e} isParticipant={!expired && !!isParticipant} canManage={!expired && !!canManage} />
+          <EventPlayedGames e={e} isParticipant={!expired && canEditPlayed} canManage={!expired && !!canManage} />
 
           {/* COMMENTAIRES */}
           <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18 }}>
@@ -5608,7 +5737,9 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
       {played.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: adding ? 14 : 0 }}>
           {played.map((p) => {
-            const mineToRemove = currentUser && (p.addedBy === currentUser.id || canManage);
+            // Regle : tous les membres presents au moment (et les administrateurs)
+            // peuvent ajouter ou retirer un jeu joue, pas seulement celui qui l'a ajoute.
+            const mineToRemove = !!currentUser && (isParticipant || canManage);
             const gameStillExists = !!games.find((g) => g.id === p.gameId);
             return (
               <div key={p.id} role={gameStillExists ? "button" : undefined} tabIndex={gameStillExists ? 0 : undefined}
@@ -5641,7 +5772,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
       {/* recherche / ajout */}
       {adding && (
         <div style={{ background: "rgba(30,138,138,.06)", borderRadius: 12, padding: 12 }}>
-          <Field label="Rechercher un jeu de la ludothèque" hint={isParticipant ? "Vous pouvez ajouter n'importe quel jeu de l'association." : null}>
+          <Field label="Rechercher un jeu de la ludothèque" hint={isParticipant ? "Tous les participants du moment peuvent ajouter ou retirer un jeu joué." : null}>
             <div style={{ position: "relative" }}>
               <Search size={16} color="#b6a78f" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
               <TextInput value={q} onChange={(ev) => setQ(ev.target.value)} placeholder="Nom du jeu..." autoFocus style={{ paddingLeft: 38 }} />
@@ -5665,8 +5796,8 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
         </div>
       )}
 
-      {!isParticipant && played.length === 0 && currentUser && (
-        <span style={{ fontSize: 12.5, color: "#a89a86", display: "block", marginTop: 6 }}>Seuls les participants au moment peuvent ajouter des jeux joués.</span>
+      {!isParticipant && !canManage && currentUser && (
+        <span style={{ fontSize: 12.5, color: "#a89a86", display: "block", marginTop: 6 }}>Seuls les membres présents à ce moment jeux (et les administrateurs) peuvent modifier la liste des jeux joués.</span>
       )}
 
       {/* Fiche jeu ouverte au clic sur un jeu joué (permet de noter le jeu en direct) */}
@@ -5685,6 +5816,9 @@ function EditEventModal({ e, onClose, onSave }) {
     useDeadline: !!e.deadline,
     deadlineDate: e.deadline ? new Date(e.deadline).toISOString().slice(0, 10) : e.date,
     deadlineTime: e.deadline ? new Date(e.deadline).toTimeString().slice(0, 5) : "18:00",
+    useSignupLimit: !!e.signupDeadline,
+    signupDate: e.signupDeadline ? new Date(e.signupDeadline).toISOString().slice(0, 10) : e.date,
+    signupTime: e.signupDeadline ? new Date(e.signupDeadline).toTimeString().slice(0, 5) : "18:00",
   });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -5697,8 +5831,14 @@ function EditEventModal({ e, onClose, onSave }) {
     if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
+    let signupDeadline = null;
+    if (f.useSignupLimit && f.signupDate && f.signupTime) {
+      const sd = new Date(`${f.signupDate}T${f.signupTime}:00`);
+      if (isNaN(sd.getTime())) { setErr("Date limite d'inscription invalide."); return; }
+      signupDeadline = sd.toISOString();
+    }
     setBusy(true);
-    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), isPrivate: f.isPrivate, deadline });
+    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), isPrivate: f.isPrivate, deadline, signupDeadline });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
@@ -5750,6 +5890,18 @@ function EditEventModal({ e, onClose, onSave }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <Field label="Valable jusqu'au"><TextInput type="date" value={f.deadlineDate} onChange={(ev) => setF({ ...f, deadlineDate: ev.target.value })} /></Field>
           <Field label="à"><TextInput type="time" value={f.deadlineTime} onChange={(ev) => setF({ ...f, deadlineTime: ev.target.value })} /></Field>
+        </div>
+      )}
+      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(30,138,138,.1)", marginBottom: f.useSignupLimit ? 12 : 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={f.useSignupLimit} onChange={(ev) => setF({ ...f, useSignupLimit: ev.target.checked })} style={{ width: 18, height: 18, accentColor: C.teal }} />
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
+          <Clock size={14} style={{ verticalAlign: "-2px", marginRight: 5, color: f.useSignupLimit ? C.teal : "#9c8d79" }} /> Limite d'inscription
+        </span>
+      </label>
+      {f.useSignupLimit && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Inscriptions jusqu'au"><TextInput type="date" value={f.signupDate} onChange={(ev) => setF({ ...f, signupDate: ev.target.value })} /></Field>
+          <Field label="à"><TextInput type="time" value={f.signupTime} onChange={(ev) => setF({ ...f, signupTime: ev.target.value })} /></Field>
         </div>
       )}
       <Field label="Note"><textarea value={f.notes} onChange={(ev) => setF({ ...f, notes: ev.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
@@ -10851,7 +11003,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
