@@ -2131,12 +2131,27 @@ function AppProvider({ children }) {
     return {};
   }, [reloadPlays]);
 
+  // Retirer une partie de mon historique.
+  // Si la partie provient d'un moment jeux, on enregistre AUSSI un « non » dans
+  // event_play_dismissed : sans cela, la suggestion « as-tu joue a X ? » revenait
+  // aussitot dans « Parties a confirmer », comme si le retrait n'avait pas eu lieu.
   const declinePlayParticipation = useCallback(async (playId) => {
+    const pl = (plays || []).find((p) => p.id === playId);
     const { error } = await supabase.rpc("decline_play_participation", { p_play_id: playId });
     if (error) return { error: error.message };
+    if (pl && pl.eventId && pl.gameId && currentUser) {
+      const row = { user_id: currentUser.id, event_id: pl.eventId, game_id: pl.gameId, occurrence: pl.occurrence || 1 };
+      const { error: dErr } = await supabase.from("event_play_dismissed").insert(row);
+      if (!dErr || /duplicate|unique/i.test(dErr.message)) {
+        setEventPlayDismissed((prev) => (
+          prev.some((d) => d.event_id === row.event_id && d.game_id === row.game_id && (d.occurrence || 1) === row.occurrence)
+            ? prev : [...prev, row]
+        ));
+      }
+    }
     await reloadPlays();
     return {};
-  }, [reloadPlays]);
+  }, [plays, currentUser, reloadPlays]);
 
   const confirmEventPlay = useCallback(async (eventId, gameId, occurrence, isWinner) => {
     const { error } = await supabase.rpc("confirm_event_play", { p_event_id: eventId, p_game_id: gameId, p_occurrence: occurrence || 1, p_is_winner: !!isWinner });
@@ -4077,6 +4092,10 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Retirer une partie de mon historique",
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, ouvrez un jeu puis la corbeille à côté d'une partie : elle quitte votre historique et vos statistiques (les autres joueurs ne sont pas affectés). Le site <b>retient votre décision</b> : la partie ne reviendra plus vous demander « as-tu joué à ce jeu ? » dans « Parties à confirmer ». Auparavant, une partie retirée à la main réapparaîssait aussitôt en suggestion — ce n'est plus le cas.</p>,
+        },
+        {
           q: "« Mes parties » : ouvrir la fiche d'un jeu",
           a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, cliquez sur un jeu du classement pour voir le détail de vos parties sur la période. Dans cet affichage, le <b>nom du jeu en haut de la fenêtre</b> est souligné : un clic ouvre directement sa <b>fiche complète</b> (note, avis, extensions, propriétaires, chronomètre…). Fermez la fiche pour revenir à vos parties.</p>,
         },
@@ -4091,7 +4110,18 @@ function GuidePage() {
       items: [
         {
           q: "Lancer un chrono",
-          a: <p style={{ margin: 0 }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
+            <p style={{ margin: 0 }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
+          </>,
+        },
+        {
+          q: "Garder l'écran allumé pendant la partie",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Pendant une partie, un bouton <b style={{ color: "#8a6a1f" }}>☀️ Écran allumé</b> apparaît en haut du chrono. Tant qu'il est actif, le téléphone <b>ne se met plus en veille tout seul</b> : le chrono reste sous les yeux de toute la tablée. Un second appui rend la main à la veille automatique (🌙).</p>
+            <p style={{ margin: "0 0 8px" }}>C'est actif par défaut dès que la partie démarre, et relâché tout seul à la fin — inutile de vider la batterie sur l'écran de résultats.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : afficher le chrono <i>sur l'écran verrouillé</i> n'est pas possible depuis un site web — cela demanderait une vraie application installée. Empêcher la veille est l'équivalent le plus proche. La fonction demande un navigateur récent (Chrome Android, Safari iOS 16.4+) ; si votre appareil ne la propose pas, le bouton n'apparaît tout simplement pas.</p>
+          </>,
         },
         {
           q: "Jouer à plusieurs téléphones",
@@ -4120,6 +4150,14 @@ function GuidePage() {
         {
           q: "Terminer… ou quitter sans enregistrer",
           a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : cochez les vainqueurs (laissez vide pour un jeu coopératif) et enregistrez — la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
+        },
+        {
+          q: "Pas de doublon : un joueur, une ligne — une partie, un enregistrement",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}><b>Le même membre n'apparaît plus deux fois.</b> Si l'organisateur vous a déjà ajouté à la partie et que vous la rejoignez ensuite depuis votre téléphone, le chrono <b>reconnaît votre ligne</b> et vous la rend, au lieu d'en créer une seconde à votre nom.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Une partie jouée = un enregistrement.</b> Quand un jeu est à la fois déclaré dans les « jeux joués » d'un moment et chronométré, les deux ne se cumulent plus : <b>c'est le chrono qui fait foi</b> (il a les durées et les scores) et la partie déclarée à la main qu'il recouvre est absorbée.</p>
+            <p style={{ margin: 0 }}>Les vrais multiples restent bien comptés : si vous annoncez <b>3 parties</b> d'un jeu dans la soirée et n'en chronométrez qu'une, vous obtenez bien <b>3 enregistrements</b> — un chronométré et deux déclarés. Deux chronos successifs du même jeu comptent également pour deux parties. Un jeu chronométré depuis un moment s'ajoute par ailleurs tout seul à ses « jeux joués », pour que les autres participants reçoivent leur demande de confirmation.</p>
+          </>,
         },
       ],
     },
