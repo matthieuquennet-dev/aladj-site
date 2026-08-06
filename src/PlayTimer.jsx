@@ -43,6 +43,64 @@ const fmt = (s) => {
 const initials = (name = '?') =>
   name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
+/* ---------------------------------------------------------------------
+   Garder l'ecran allume pendant une partie (Screen Wake Lock API).
+   Un vrai affichage sur l'ecran verrouille n'est pas possible depuis un
+   site web (il faudrait une application native) : on empeche donc la mise
+   en veille tant que le chrono est ouvert. Le verrou est relache par le
+   navigateur quand l'onglet passe en arriere-plan : on le redemande au
+   retour au premier plan.
+   --------------------------------------------------------------------- */
+const WAKE_LOCK_SUPPORTED = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
+
+function useKeepAwake(enabled) {
+  const [active, setActive] = useState(false);
+  const lockRef = useRef(null);
+
+  useEffect(() => {
+    if (!WAKE_LOCK_SUPPORTED) return undefined;
+    let cancelled = false;
+
+    const drop = async () => {
+      const l = lockRef.current;
+      lockRef.current = null;
+      setActive(false);
+      if (l) { try { await l.release(); } catch (e) { /* deja relache */ } }
+    };
+
+    const acquire = async () => {
+      if (cancelled || !enabled) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (lockRef.current) return;
+      try {
+        const l = await navigator.wakeLock.request('screen');
+        if (cancelled || !enabled) { try { await l.release(); } catch (e) {} return; }
+        lockRef.current = l;
+        setActive(true);
+        l.addEventListener('release', () => {
+          if (lockRef.current === l) lockRef.current = null;
+          setActive(false);
+        });
+      } catch (e) {
+        // Refuse par le navigateur (batterie faible, onglet masque...) : sans gravite.
+        setActive(false);
+      }
+    };
+
+    if (enabled) acquire(); else drop();
+
+    const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      drop();
+    };
+  }, [enabled]);
+
+  return { supported: WAKE_LOCK_SUPPORTED, active };
+}
+
 function Avatar({ name, url, color, size = 44 }) {
   const st = {
     width: size, height: size, borderRadius: '50%', flex: '0 0 auto',
@@ -57,6 +115,8 @@ function Avatar({ name, url, color, size = 44 }) {
 export default function PlayTimer({ supabase, currentUser, gameId, eventId, joinCode, onExit }) {
   const [phase, setPhase] = useState('loading'); // loading|setup|lobby|running|done|error
   const [error, setError] = useState(null);
+  // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
+  const [keepAwake, setKeepAwake] = useState(true);
   const [myUid, setMyUid] = useState(null);
 
   // session live
@@ -268,19 +328,34 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           setGame(first);
           setBoxMin(first?.play_time ? String(first.play_time) : '');
 
-          const { data: eguests } = await supabase.from('event_guests')
-            .select('member_id,guest_name').eq('event_id', eventId);
-          const memberIds = [...new Set((eguests || []).map((r) => r.member_id).filter(Boolean))];
+          // (14) Tous les participants du moment jeux sont pre-ajoutes a la partie :
+          // les membres inscrits (event_players), les membres invites en attente et
+          // les invites non-membres (event_guests). On peut ensuite en retirer
+          // librement depuis l'ecran de preparation.
+          const [{ data: eplayers }, { data: eguests }] = await Promise.all([
+            supabase.from('event_players').select('user_id').eq('event_id', eventId),
+            supabase.from('event_guests').select('member_id,guest_name').eq('event_id', eventId),
+          ]);
+          const memberIds = [...new Set([
+            ...(eplayers || []).map((r) => r.user_id),
+            ...(eguests || []).map((r) => r.member_id),
+          ].filter(Boolean))];
           let pById = {};
           if (memberIds.length) {
             const { data } = await supabase.from('profiles').select('id,name,avatar_url').in('id', memberIds);
             (data || []).forEach((p) => { pById[p.id] = p; });
           }
-          const pre = (eguests || []).map((g, i) => g.member_id
-            ? { key: `m${i}`, profileId: g.member_id, guestName: null,
-                name: pById[g.member_id]?.name || 'Membre', avatar_url: pById[g.member_id]?.avatar_url }
-            : { key: `g${i}`, profileId: null, guestName: g.guest_name,
-                name: g.guest_name || 'Invité', avatar_url: null });
+          const pre = [];
+          memberIds.forEach((id) => {
+            if (id === currentUser?.id) return;              // l'hote est deja dans la partie
+            pre.push({ key: `m${id}`, profileId: id, guestName: null,
+              name: pById[id]?.name || 'Membre', avatar_url: pById[id]?.avatar_url || null });
+          });
+          (eguests || []).forEach((g, i) => {
+            if (g.member_id || !g.guest_name) return;        // deja traite comme membre
+            pre.push({ key: `g${i}`, profileId: null, guestName: g.guest_name,
+              name: g.guest_name, avatar_url: null });
+          });
           setDraft(pre);
         } else if (gameId) {
           const { data: g } = await supabase.from('games')
@@ -468,6 +543,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // =====================================================================
   //  RENDU
   // =====================================================================
+  // On ne maintient l'ecran allume que quand une partie est reellement en cours
+  // ou sur le point de commencer : inutile de vider la batterie sur l'ecran final.
+  const wake = useKeepAwake(keepAwake && (phase === 'running' || phase === 'lobby'));
+
   const shell = (children) => (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000, background: C.cream, color: C.navy,
@@ -478,7 +557,20 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.navy }}>
             Chrono <span style={{ color: C.teal }}>ALADJ</span>
           </div>
-          <button onClick={quitNoSave} style={btnGhost}>Quitter</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {wake.supported && (phase === 'running' || phase === 'lobby') && (
+              <button onClick={() => setKeepAwake((v) => !v)}
+                title={keepAwake ? "L'ecran reste allume pendant la partie - toucher pour laisser le telephone se mettre en veille" : "Empecher la mise en veille pendant la partie"}
+                style={{
+                  border: `1.5px solid ${wake.active ? C.amber : '#d9cdb6'}`, background: wake.active ? '#FDF4E0' : '#fff',
+                  color: wake.active ? '#8a6a1f' : `${C.navy}88`, borderRadius: 999, padding: '6px 12px',
+                  fontFamily: TITLE, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                {wake.active ? '\u2600\ufe0f Ecran allume' : '\ud83c\udf19 Veille normale'}
+              </button>
+            )}
+            <button onClick={quitNoSave} style={btnGhost}>Quitter</button>
+          </div>
         </div>
         {error && (
           <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`,
