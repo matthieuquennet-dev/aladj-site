@@ -2507,16 +2507,159 @@ function MeepleIcon({ size = 22, color = C.navy }) {
 
 /* ---- Étoiles de notation ---- */
 /* ---- Encart : échelle de notation (réutilisé en ludothèque générale et perso) ---- */
+/* Echelle de notation ALADJ — source unique, utilisee par l'encart et la fenetre. */
+const RATING_SCALE = [
+  { v: 5,   t: "j'y joue encore et encore (j'adore)" },
+  { v: 4,   t: "j'y joue avec plaisir" },
+  { v: 3,   t: "j'y joue si on me le propose" },
+  { v: 2,   t: "j'y joue pour faire plaisir" },
+  { v: 1,   t: "j'y joue à contre-cœur" },
+  { v: 0.5, t: "je n'y rejouerai jamais" },
+];
+const RATING_SCALE_INTRO = "Juger la qualité « objective » d'un jeu est difficile, mais on sait facilement si on a envie d'y rejouer. Notre échelle reflète cette envie :";
+
+/* Fenetre « Notre notation » — rappel de l'echelle, ouvrable depuis une fiche de jeu. */
+function RatingScaleModal({ onClose }) {
+  return (
+    <Modal open onClose={onClose} title="\u2b50 Notre notation" width={520}>
+      <p style={{ fontSize: 14, color: "#5e5346", margin: "0 0 16px", lineHeight: 1.6 }}>{RATING_SCALE_INTRO}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+        {RATING_SCALE.map((sc) => (
+          <div key={sc.v} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.25)", borderRadius: 12, padding: "10px 14px", flexWrap: "wrap" }}>
+            <span style={{ flexShrink: 0, width: 112 }}><Stars value={sc.v} readOnly size={15} /></span>
+            <span style={{ flex: 1, minWidth: 140, fontSize: 14, color: "#5e5346" }}>{sc.t}</span>
+            <span style={{ flexShrink: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 15 }}>{String(sc.v).replace(".", ",")}</span>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 13, color: "#8a7c6a", margin: "16px 0 0", lineHeight: 1.55 }}>
+        La demi-étoile est autorisée : on peut noter 2,5 ou 4,5. La note affichée sur la fiche est la <b>moyenne</b> des notes des membres.
+      </p>
+    </Modal>
+  );
+}
+
+/* Petite liste cliquable reutilisable (extensions, jeux notes, ...). */
+function PickListModal({ title, subtitle, rows, empty, onClose, width = 520 }) {
+  return (
+    <Modal open onClose={onClose} title={title} width={width}>
+      {subtitle && <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>{subtitle}</p>}
+      {rows.length === 0 ? (
+        <div style={{ color: "#9c8d79", fontSize: 14, padding: "10px 0" }}>{empty}</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7, maxHeight: "58vh", overflowY: "auto", padding: 2 }}>
+          {rows.map((r, i) => (
+            <button key={r.key} type="button" onClick={r.onClick} title={r.title || "Ouvrir la fiche du jeu"}
+              style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: "1px solid #efe6d6", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0, font: "inherit" }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.06)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+              <span style={{ width: 22, flexShrink: 0, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{i + 1}</span>
+              <span style={{ width: 40, height: 40, borderRadius: 9, flexShrink: 0, display: "grid", placeItems: "center", background: r.img ? `center/cover url("${r.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})` }}>
+                {!r.img && <span style={{ fontSize: 16 }}>{r.emoji || "\ud83c\udfb2"}</span>}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, lineHeight: 1.25, overflowWrap: "anywhere" }}>{r.name}</span>
+                {r.sub && <span style={{ display: "block", fontSize: 12, color: "#9c8d79", marginTop: 2 }}>{r.sub}</span>}
+              </span>
+              {r.right}
+              <ChevronRight size={16} color="#c3b49b" style={{ flexShrink: 0 }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* Fenetre « Statut » — ce que permet (ou non) chacun des 3 statuts. */
+function StatusInfoModal({ onClose, role, isChild }) {
+  const blocks = [
+    {
+      key: "membre", label: "Membre", color: C.teal, icon: Heart, price: "Gratuit",
+      can: [
+        "Consulter tout le site : ludothèque, fiches, moments jeux, trombinoscope.",
+        "Ajouter ses jeux et ses extensions, tenir sa ludothèque, la partager ou la garder privée.",
+        "Noter et commenter les jeux, dire ce qu'on a envie de découvrir.",
+        "Créer des moments jeux, s'y inscrire, inviter d'autres membres.",
+        "Enregistrer ses parties, lancer le chronomètre, gagner des badges.",
+        "Emprunter et prêter des jeux entre membres.",
+      ],
+      cannot: [
+        "Pas de voix délibérative en assemblée générale (présence possible à titre consultatif).",
+        "Une caution (au prix neuf du jeu) peut être demandée par le prêteur lors d'une location.",
+      ],
+    },
+    {
+      key: "decideur", label: "Membre décisionnaire", color: C.amber, icon: Crown, price: COTISATION_EUR + " € / an (365 jours, cumulables)",
+      can: [
+        "Tout ce que fait un membre, sans exception.",
+        "Voix délibérative en assemblée générale : c'est lui qui décide de l'avenir de l'asso.",
+        "Pass Ludovore (Ludum.fr) offert pendant un an — valeur 29,99 €.",
+        "Dispensé de caution lors d'une location de jeu.",
+        "Une couronne ambre accompagne son nom partout sur le site.",
+      ],
+      cannot: [
+        "Le statut dure 365 jours : passé ce délai, il faut le renouveler (le bandeau prévient 15 jours avant).",
+      ],
+    },
+    {
+      key: "enfant", label: "Compte enfant (moins de " + "{CHILD}" + " ans)", color: C.purple, icon: null, price: "Gratuit",
+      can: [
+        "Tout consulter, noter des jeux, tenir sa ludothèque, écrire des commentaires.",
+        "Participer aux moments jeux <b>privés</b> auxquels il est convié.",
+        "Enregistrer ses parties et gagner des badges comme tout le monde.",
+      ],
+      cannot: [
+        "S'inscrire aux moments jeux de l'association <b>ouverts à tous</b>, en présentiel comme sur Board Game Arena.",
+        "Le statut disparaît tout seul le jour des " + "{CHILD}" + " ans si la date de naissance complète est renseignée.",
+      ],
+    },
+  ];
+  const mineKey = isChild ? "enfant" : (role === "decideur" ? "decideur" : "membre");
+  return (
+    <Modal open onClose={onClose} title="Les statuts à l'ALADJ" width={620}>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        Trois statuts coexistent sur le site. Le vôtre est encadré en couleur.
+        {isChild ? " Un compte enfant peut aussi être décisionnaire une fois adulte." : ""}
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+        {blocks.map((b) => {
+          const isMine = b.key === mineKey;
+          const Icon = b.icon;
+          return (
+            <div key={b.key} style={{ background: isMine ? `${b.color}12` : "#fff", border: isMine ? `2px solid ${b.color}` : "1px solid #efe6d6", borderRadius: 16, padding: "14px 18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", marginBottom: 4 }}>
+                <span style={{ width: 30, height: 30, borderRadius: 9, background: `${b.color}1f`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                  {Icon ? <Icon size={16} color={b.color} /> : <PacifierIcon size={16} color={b.color} />}
+                </span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16 }}>{b.label.replace(/\{CHILD\}/g, String(CHILD_AGE_LIMIT))}</span>
+                {isMine && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: b.color, borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>VOTRE STATUT</span>}
+                <span style={{ marginLeft: "auto", fontSize: 12.5, color: b.color, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{b.price}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5, marginTop: 10 }}>
+                {b.can.map((t, i) => (
+                  <div key={"c" + i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <Check size={14} color={C.teal} style={{ flexShrink: 0, marginTop: 3 }} />
+                    <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }} dangerouslySetInnerHTML={{ __html: t.replace(/\{CHILD\}/g, String(CHILD_AGE_LIMIT)) }} />
+                  </div>
+                ))}
+                {b.cannot.map((t, i) => (
+                  <div key={"n" + i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <X size={14} color={C.red} style={{ flexShrink: 0, marginTop: 3 }} />
+                    <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }} dangerouslySetInnerHTML={{ __html: t.replace(/\{CHILD\}/g, String(CHILD_AGE_LIMIT)) }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
 function RatingScaleNote() {
   const [open, setOpen] = useState(false);
-  const scale = [
-    { v: 5,   t: "j'y joue encore et encore (j'adore)" },
-    { v: 4,   t: "j'y joue avec plaisir" },
-    { v: 3,   t: "j'y joue si on me le propose" },
-    { v: 2,   t: "j'y joue pour faire plaisir" },
-    { v: 1,   t: "j'y joue à contre-cœur" },
-    { v: 0.5, t: "je n'y rejouerai jamais" },
-  ];
+  const scale = RATING_SCALE;
   return (
     <div style={{ background: "rgba(232,163,23,.08)", border: "1px solid rgba(232,163,23,.3)", borderRadius: 14, padding: "12px 16px", marginBottom: 20 }}>
       <button onClick={() => setOpen((o) => !o)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>
@@ -2528,7 +2671,7 @@ function RatingScaleNote() {
       {open && (
         <>
           <p style={{ fontSize: 13.5, color: "#5e5346", margin: "10px 0 12px", lineHeight: 1.55 }}>
-            Juger la qualité « objective » d'un jeu est difficile, mais on sait facilement si on a envie d'y rejouer. Notre échelle reflète cette envie :
+            {RATING_SCALE_INTRO}
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
             {scale.map((s) => (
@@ -3616,6 +3759,19 @@ function GuidePage() {
             </Illu>
           </>,
         },
+        {
+          q: "Mon espace : les 4 tuiles du haut sont cliquables",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>En haut de <b>Mon espace</b>, quatre tuiles résument votre activité. Elles ne sont plus de simples compteurs : un petit chevron indique qu'on peut <b>cliquer dessus</b>.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
+              <li><b>Jeux apportés</b> — vous fait descendre directement sur <b>Ma ludothèque</b>, tout en bas de la page.</li>
+              <li><b>Extensions</b> — ouvre la liste de vos extensions ; cliquez sur l'une d'elles pour ouvrir la fiche du jeu auquel elle se rattache.</li>
+              <li><b>Jeux notés</b> — ouvre la liste de vos notes, de la meilleure à la moins bonne ; un clic ouvre la fiche du jeu.</li>
+              <li><b>Statut</b> — ouvre le rappel des trois statuts (membre, membre décisionnaire, compte enfant) : ce que chacun permet et ce qu'il ne permet pas. Le vôtre est encadré en couleur.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Vos <b>notifications</b> sont désormais placées <b>juste au-dessus</b> du bouton « 🎲 Enregistrer une partie jouée » : elles se voient tout de suite, sans avoir à faire défiler la page.</p>
+          </>,
+        },
       ],
     },
     {
@@ -3632,6 +3788,29 @@ function GuidePage() {
         {
           q: "Noter un jeu, avoir envie de le découvrir",
           a: <p style={{ margin: 0 }}>Ouvrez la fiche d'un jeu pour lui donner votre note (re-cliquez la même note pour la retirer). Pas encore joué ? Le cœur <Heart size={13} style={{ verticalAlign: "-2px", color: C.red }} /> « envie de découvrir » prévient les propriétaires du jeu — parfait pour provoquer une partie au prochain moment jeux.</p>,
+        },
+        {
+          q: "« Notre notation » : comprendre l'échelle",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur chaque fiche de jeu, juste sous le <b>nombre d'avis</b>, un lien <b style={{ color: C.amber }}>« Notre notation »</b> ouvre le rappel de l'échelle ALADJ. Juger la qualité « objective » d'un jeu est difficile, mais on sait toujours si on a envie d'y rejouer — c'est cette envie que nos notes mesurent.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5, margin: "0 0 8px" }}>
+              {RATING_SCALE.map((sc) => (
+                <div key={sc.v} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ flexShrink: 0, width: 110 }}><Stars value={sc.v} readOnly size={14} /></span>
+                  <span style={{ fontSize: 13.5, color: "#5e5346" }}>{sc.t}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{ margin: 0 }}>La demi-étoile est autorisée (2,5 ; 4,5…). La note affichée sur la fiche est la <b>moyenne</b> des notes des membres — cliquez sur cette moyenne pour voir qui a voté.</p>
+          </>,
+        },
+        {
+          q: "La fiche d'un membre : ses jeux, son top 10, ses jeux les plus joués",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur l'accueil, cliquez sur le <b>nombre de membres</b> pour ouvrir le trombinoscope, puis sur un membre pour voir sa fiche.</p>
+            <p style={{ margin: "0 0 8px" }}>On y trouve sa présentation, ses badges, son <b>💎 top 10 ever</b> (les jeux qu'il garderait s'il ne restait qu'eux) et, juste en dessous, ses <b>🎲 jeux les plus joués</b> : le classement de ses 10 jeux les plus fréquents, avec le <b>nombre de parties</b> et ses victoires, calculé automatiquement à partir des parties enregistrées. Chaque ligne ouvre la fiche du jeu.</p>
+            <p style={{ margin: 0 }}>Vient enfin sa ludothèque. Si le membre partage une <b>ludothèque familiale</b>, les deux sont désormais affichées : d'abord <b>ses jeux à lui</b> en grandes vignettes, puis les jeux <b>du reste du foyer</b> en petites vignettes. Avant, seule l'une des deux apparaissait.</p>
+          </>,
         },
         {
           q: "Ajouter un jeu à ma ludothèque",
@@ -3815,6 +3994,10 @@ function GuidePage() {
               <BadgeMedal def={BADGE_DEFS[8]} tier={2} size={58} />
             </Illu>
           </>,
+        },
+        {
+          q: "« Mes parties » : ouvrir la fiche d'un jeu",
+          a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, cliquez sur un jeu du classement pour voir le détail de vos parties sur la période. Dans cet affichage, le <b>nom du jeu en haut de la fenêtre</b> est souligné : un clic ouvre directement sa <b>fiche complète</b> (note, avis, extensions, propriétaires, chronomètre…). Fermez la fiche pour revenir à vos parties.</p>,
         },
         {
           q: "La rétrospective : votre bilan ludique",
@@ -4403,11 +4586,27 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
   // Foyer : autres membres avec qui il partage sa ludothèque
   const famIds = (householdByUser[memberId] || []).filter((id) => id !== memberId);
   const famNames = famIds.map((id) => users.find((u) => u.id === id)?.name).filter(Boolean);
-  // Ludothèque familiale : les jeux des autres membres du foyer (repli quand il n'a pas de jeu à lui)
+  // Ludothèque familiale : les jeux des autres membres du foyer, qui ne sont pas déjà à son nom.
+  // Ils sont TOUJOURS affichés (en petites vignettes), en complément de ses jeux personnels.
   const famGames = famIds.length
     ? games.filter((g) => !(g.ownerIds || []).includes(memberId) && (g.ownerIds || []).some((id) => famIds.includes(id))).sort((a, b) => a.name.localeCompare(b.name, "fr"))
     : [];
-  const showFamilyFallback = theirGames.length === 0 && famGames.length > 0;
+  // Top 10 des jeux les plus joués par ce membre, d'après l'historique des parties enregistrées.
+  const theirMostPlayed = useMemo(() => {
+    const byGame = {};
+    (plays || []).forEach((pl) => {
+      const part = (pl.participants || []).find((pt) => pt.userId === memberId && pt.confirmed !== false);
+      if (!part) return;
+      const e = (byGame[pl.gameId] ||= { gameId: pl.gameId, count: 0, wins: 0 });
+      e.count++;
+      if (part.isWinner) e.wins++;
+    });
+    return Object.values(byGame)
+      .map((e) => ({ ...e, game: games.find((g) => g.id === e.gameId) || null }))
+      .filter((e) => e.game)
+      .sort((a, b) => (b.count - a.count) || a.game.name.localeCompare(b.game.name, "fr"))
+      .slice(0, 10);
+  }, [plays, games, memberId]);
   // Nombre d'extensions que ce membre possède
   const theirExtCount = (() => {
     let n = 0;
@@ -4499,10 +4698,30 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
             💎 Son top 10 ever <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux qu'il garderait s'il ne restait qu'eux</span>
           </h4>
           <div style={{ marginBottom: 18 }}><Top10List ids={theirTop} onOpenGame={setGameOpen} /></div>
-          {gameOpen && (() => {
-            const gg = games.find((g) => g.id === gameOpen);
-            return gg ? <GameDetailModal g={gg} onClose={() => setGameOpen(null)} onAuth={onAuth} setToast={setToast} /> : null;
-          })()}
+        </>
+      )}
+
+      {/* Top 10 des jeux les plus joués (historique des parties enregistrées) */}
+      {theirMostPlayed.length > 0 && (
+        <>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+            🎲 Ses jeux les plus joués <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· d'après ses parties enregistrées</span>
+          </h4>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginBottom: 18 }}>
+            {theirMostPlayed.map((e, i) => (
+              <button key={e.gameId} type="button" onClick={() => setGameOpen(e.gameId)} title={`Ouvrir la fiche de ${e.game.name}`}
+                style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #efe6d6", borderRadius: 11, padding: "7px 11px", cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0, font: "inherit" }}
+                onMouseEnter={(ev) => ev.currentTarget.style.background = "rgba(30,138,138,.06)"} onMouseLeave={(ev) => ev.currentTarget.style.background = "#fff"}>
+                <span style={{ width: 20, flexShrink: 0, textAlign: "right", color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{i + 1}</span>
+                <span style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: e.game.img ? `center/cover url("${e.game.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+                <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.game.name}</span>
+                {e.wins > 0 && <span title={`${e.wins} victoire${e.wins > 1 ? "s" : ""}`} style={{ flexShrink: 0, color: C.amber, fontWeight: 700, fontSize: 12.5 }}>🏆 {e.wins}</span>}
+                <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "baseline", gap: 4, background: "rgba(30,138,138,.12)", color: C.teal, borderRadius: 999, padding: "3px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>
+                  {e.count}<span style={{ fontSize: 10.5, fontWeight: 600 }}>partie{e.count > 1 ? "s" : ""}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </>
       )}
 
@@ -4514,25 +4733,14 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
           👨‍👩‍👧 Partage une ludothèque familiale avec <b style={{ color: C.navy }}>{famNames.join(", ")}</b>.
         </p>
       )}
-      {showFamilyFallback && (
-        <>
-          <p style={{ margin: "0 0 10px", fontSize: 13.5, color: "#6e6256" }}>Ce membre n'a pas de jeu à son nom — voici la <b>ludothèque familiale</b> :</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 6 }}>
-            {famGames.map((g) => (
-              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px" }}>
-                <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy, lineHeight: 1.2 }}>{g.name}</span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      {theirGames.length === 0 && !showFamilyFallback ? (
+      {theirGames.length === 0 && famGames.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
           <Gamepad2 size={40} style={{ opacity: .4, marginBottom: 12 }} />
           <p style={{ fontSize: 14.5 }}>Ce membre n'a pas encore ajouté de jeu.</p>
         </div>
-      ) : theirGames.length === 0 ? null : (
+      ) : theirGames.length === 0 ? (
+        <p style={{ margin: "0 0 4px", fontSize: 13.5, color: "#6e6256" }}>Ce membre n'a pas de jeu à son nom, mais il joue avec la <b>ludothèque familiale</b> ci-dessous.</p>
+      ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "55vh", overflowY: "auto", padding: 2 }}>
           {theirGames.map((g) => {
             const myRating = g.ratings?.[memberId] || 0;
@@ -4558,6 +4766,32 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
           })}
         </div>
       )}
+
+      {/* Ludothèque familiale : les jeux des autres membres du foyer, en petites vignettes */}
+      {famGames.length > 0 && (
+        <>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "18px 0 4px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
+            👨‍👩‍👧 Sa ludothèque familiale ({famGames.length}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux {famNames.length === 1 ? "de " + famNames[0] : "de son foyer"}</span>
+          </h4>
+          <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "#9c8d79" }}>Ces jeux ne sont pas à son nom, mais il y a accès au quotidien.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, maxHeight: "40vh", overflowY: "auto", padding: 2 }}>
+            {famGames.map((g) => (
+              <button key={g.id} type="button" onClick={() => setGameOpen(g.id)} title={`Ouvrir la fiche de ${g.name}`}
+                style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px", cursor: "pointer", textAlign: "left", minWidth: 0, font: "inherit" }}
+                onMouseEnter={(ev) => ev.currentTarget.style.background = "rgba(30,138,138,.06)"} onMouseLeave={(ev) => ev.currentTarget.style.background = "#fff"}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+                <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: C.navy, lineHeight: 1.2, overflowWrap: "anywhere" }}>{g.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Fiche de jeu ouverte depuis l'un des blocs ci-dessus */}
+      {gameOpen && (() => {
+        const gg = games.find((g) => g.id === gameOpen);
+        return gg ? <GameDetailModal g={gg} onClose={() => setGameOpen(null)} onAuth={onAuth} setToast={setToast} /> : null;
+      })()}
       {editOpen && member && <ProfileEditModal member={member} onClose={() => setEditOpen(false)} />}
     </Modal>
   );
@@ -5963,6 +6197,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const canManage = currentUser && (isOwner || currentUser.admin);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
+  const [showScale, setShowScale] = useState(false); // rappel de l'echelle de notation ALADJ
   const [showSessions, setShowSessions] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [sessions, setSessions] = useState(null);
@@ -6085,11 +6320,17 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {/* note moyenne */}
       <div style={{ display: "flex", gap: 20, alignItems: "center", background: "rgba(232,163,23,.08)", borderRadius: 16, padding: "16px 20px", marginBottom: 18, flexWrap: "wrap" }}>
-        <button type="button" onClick={() => count > 0 && setShowVoters(true)} style={{ textAlign: "center", background: "none", border: "none", cursor: count > 0 ? "pointer" : "default", padding: 0 }} title={count > 0 ? "Voir qui a voté" : ""}>
-          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 42, color: C.amber, lineHeight: 1 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</div>
-          <Stars value={Math.round(avg * 2) / 2} readOnly size={15} />
-          <div style={{ fontSize: 12, color: count > 0 ? C.teal : "#9c8d79", marginTop: 3, textDecoration: count > 0 ? "underline" : "none", textUnderlineOffset: 2 }}>{count} avis</div>
-        </button>
+        <div style={{ textAlign: "center" }}>
+          <button type="button" onClick={() => count > 0 && setShowVoters(true)} style={{ textAlign: "center", background: "none", border: "none", cursor: count > 0 ? "pointer" : "default", padding: 0 }} title={count > 0 ? "Voir qui a voté" : ""}>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 42, color: C.amber, lineHeight: 1 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</div>
+            <Stars value={Math.round(avg * 2) / 2} readOnly size={15} />
+            <div style={{ fontSize: 12, color: count > 0 ? C.teal : "#9c8d79", marginTop: 3, textDecoration: count > 0 ? "underline" : "none", textUnderlineOffset: 2 }}>{count} avis</div>
+          </button>
+          <button type="button" onClick={() => setShowScale(true)} title="Comment on note les jeux à l'ALADJ"
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, margin: "7px auto 0", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, color: C.amber, textDecoration: "underline", textUnderlineOffset: 2, whiteSpace: "nowrap" }}>
+            <HelpCircle size={12} /> Notre notation
+          </button>
+        </div>
         <div style={{ flex: 1, minWidth: 160 }}>
           {dist.map((d) => (
             <div key={d.n} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -6396,6 +6637,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {editing && <EditGameModal g={{ ...g, desc }} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
+      {showScale && <RatingScaleModal onClose={() => setShowScale(false)} />}
       {showSessions && <SessionsModal sessions={sessions} gameName={g.name} game={g} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
@@ -9978,6 +10220,7 @@ function MyPlaysSection({ setToast }) {
   const [allOpen, setAllOpen] = useState(false);
   const [detailGameId, setDetailGameId] = useState(null);
   const [openPlayId, setOpenPlayId] = useState(null); // partie dépliée (scores)
+  const [sheetGameId, setSheetGameId] = useState(null); // fiche de jeu ouverte depuis l'en-tete
   const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
   const myPlays = useMemo(
     () => (currentUser ? (plays || []).filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed !== false)) : []).sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt)),
@@ -10077,7 +10320,15 @@ function MyPlaysSection({ setToast }) {
           </button>
         </div>
       )}
-      <Modal open={allOpen} onClose={closeModal} title={detailGame ? `${detailGame.name || "Jeu supprimé"} · ${selLabel}` : `Ma sélection · ${selLabel}`} width={540}>
+      <Modal open={allOpen} onClose={closeModal} width={540} title={detailGame ? (
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+          <button type="button" onClick={() => setSheetGameId(detailGame.id)} title={`Ouvrir la fiche de ${detailGame.name}`}
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit", color: C.teal, textDecoration: "underline", textUnderlineOffset: 3, overflowWrap: "anywhere", textAlign: "left" }}>
+            {detailGame.name}
+          </button>
+          <span style={{ fontSize: 14, fontWeight: 400, color: "#9c8d79" }}>· {selLabel}</span>
+        </span>
+      ) : (detailGameId != null ? `Jeu supprimé · ${selLabel}` : `Ma sélection · ${selLabel}`)}>
         {detailGameId == null ? (
           <>
             <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 12 }}>
@@ -10145,6 +10396,9 @@ function MyPlaysSection({ setToast }) {
           </>
         )}
       </Modal>
+      {sheetGameId != null && gameById[sheetGameId] && (
+        <GameDetailModal g={gameById[sheetGameId]} onClose={() => setSheetGameId(null)} onAuth={() => {}} setToast={setToast || (() => {})} />
+      )}
     </div>
   );
 }
@@ -10338,6 +10592,8 @@ function MyLudoPage({ setToast, setPage }) {
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
+  const [statPanel, setStatPanel] = useState(null); // "ext" | "rated" | "status" — fenetre ouverte depuis les tuiles
+  const ludoAnchorRef = useRef(null);               // ancre « Ma ludotheque » (bas de page)
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
@@ -10461,6 +10717,25 @@ function MyLudoPage({ setToast, setPage }) {
   }, [allMine, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
   const myRatingsCount = useMemo(() => games.filter((g) => g.ratings?.[currentUser?.id]).length, [games, currentUser]);
+  // Detail des extensions du foyer (pour la fenetre ouverte depuis la tuile « extensions »)
+  const myExtList = useMemo(() => {
+    const out = [];
+    games.forEach((g) => (g.extensions || []).forEach((x) => {
+      if ((x.ownerIds || []).some((id) => householdIds.includes(id))) out.push({ ext: x, game: g });
+    }));
+    return out.sort((a, b) => a.ext.name.localeCompare(b.ext.name, "fr"));
+  }, [games, householdIds]);
+  // Detail de mes jeux notes (pour la fenetre ouverte depuis la tuile « jeux notes »)
+  const myRatedList = useMemo(() => {
+    if (!currentUser) return [];
+    return games.filter((g) => g.ratings?.[currentUser.id])
+      .map((g) => ({ game: g, note: g.ratings[currentUser.id] }))
+      .sort((a, b) => (b.note - a.note) || a.game.name.localeCompare(b.game.name, "fr"));
+  }, [games, currentUser]);
+  const scrollToLudo = () => {
+    const el = ludoAnchorRef.current;
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const recommendations = useMemo(() => recommendGames(games, currentUser?.id, dismissedIds), [games, currentUser, dismissedIds]);
 
   const exportExcel = async () => {
@@ -10543,10 +10818,10 @@ function MyLudoPage({ setToast, setPage }) {
       </div>
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        <StatCard icon={Library} color={C.teal} n={mine.length} label="jeux apportés" />
-        <StatCard icon={Package} color={C.red} n={myExtCount} label={myExtCount > 1 ? "extensions" : "extension"} />
-        <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" />
-        <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small />
+        <StatCard icon={Library} color={C.teal} n={mine.length} label="jeux apportés" onClick={scrollToLudo} title="Aller à ma ludothèque" />
+        <StatCard icon={Package} color={C.red} n={myExtCount} label={myExtCount > 1 ? "extensions" : "extension"} onClick={() => setStatPanel("ext")} title="Voir la liste de mes extensions" />
+        <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" onClick={() => setStatPanel("rated")} title="Voir la liste de mes jeux notés" />
+        <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small onClick={() => setStatPanel("status")} title="Ce que permet mon statut" />
       </div>
 
       {myEventInvites.length > 0 && (
@@ -10571,51 +10846,6 @@ function MyLudoPage({ setToast, setPage }) {
           </div>
         </div>
       )}
-
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
-        <Btn variant="primary" onClick={() => setRecordOpen(true)}>🎲 Enregistrer une partie jouée</Btn>
-      </div>
-      <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
-      <EventPlaySuggestions />
-      <MyPlaysSection setToast={setToast} />
-      <MyBadgesSection setToast={setToast} />
-      <MyRetroSection />
-      <AdminBackupSection />
-      <AdminMechanicsSection setToast={setToast} />
-
-      <FamilySection setToast={setToast} />
-
-      {pushSupported && (
-        <div style={{ background: "rgba(232,163,23,.08)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "14px 20px", marginBottom: 22, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 22 }}>🔔</span>
-            <div>
-              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy }}>Notifications sur cet appareil</div>
-              <div style={{ fontSize: 13, color: "#6e6256" }}>{pushEnabled ? "Activées — tu seras prévenu même quand le site est fermé." : "Reçois une alerte quand on te commente, t'invite, ou qu'un moment est créé."}</div>
-            </div>
-          </div>
-          <Btn size="sm" variant={pushEnabled ? "soft" : "amber"} onClick={async () => {
-            const res = pushEnabled ? await disablePush() : await enablePush();
-            if (res?.error) setToast(res.error);
-            else setToast(pushEnabled ? "Notifications désactivées sur cet appareil." : "Notifications activées sur cet appareil !");
-          }}>{pushEnabled ? "Désactiver" : "Activer"}</Btn>
-        </div>
-      )}
-
-      {/* Rétrospective par e-mail */}
-      <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: "14px 20px", marginBottom: 22, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 230 }}>
-          <span style={{ fontSize: 22 }}>💌</span>
-          <div>
-            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy }}>Rétrospective par e-mail</div>
-            <div style={{ fontSize: 13, color: "#6e6256" }}>{currentUser.retroEmails ? "Chaque début de mois, votre bilan ludique arrive par e-mail (l'annuel en janvier)." : "Vous ne recevez pas les rétrospectives par e-mail."}</div>
-          </div>
-        </div>
-        <Btn size="sm" variant={currentUser.retroEmails ? "soft" : "amber"} onClick={async () => {
-          await setRetroEmails(!currentUser.retroEmails);
-          setToast(currentUser.retroEmails ? "Rétrospectives par e-mail désactivées." : "Rétrospectives par e-mail activées !");
-        }}>{currentUser.retroEmails ? "Désactiver" : "Activer"}</Btn>
-      </div>
 
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
@@ -10664,6 +10894,51 @@ function MyLudoPage({ setToast, setPage }) {
           </div>
         );
       })()}
+
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+        <Btn variant="primary" onClick={() => setRecordOpen(true)}>🎲 Enregistrer une partie jouée</Btn>
+      </div>
+      <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
+      <EventPlaySuggestions />
+      <MyPlaysSection setToast={setToast} />
+      <MyBadgesSection setToast={setToast} />
+      <MyRetroSection />
+      <AdminBackupSection />
+      <AdminMechanicsSection setToast={setToast} />
+
+      <FamilySection setToast={setToast} />
+
+      {pushSupported && (
+        <div style={{ background: "rgba(232,163,23,.08)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "14px 20px", marginBottom: 22, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>🔔</span>
+            <div>
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy }}>Notifications sur cet appareil</div>
+              <div style={{ fontSize: 13, color: "#6e6256" }}>{pushEnabled ? "Activées — tu seras prévenu même quand le site est fermé." : "Reçois une alerte quand on te commente, t'invite, ou qu'un moment est créé."}</div>
+            </div>
+          </div>
+          <Btn size="sm" variant={pushEnabled ? "soft" : "amber"} onClick={async () => {
+            const res = pushEnabled ? await disablePush() : await enablePush();
+            if (res?.error) setToast(res.error);
+            else setToast(pushEnabled ? "Notifications désactivées sur cet appareil." : "Notifications activées sur cet appareil !");
+          }}>{pushEnabled ? "Désactiver" : "Activer"}</Btn>
+        </div>
+      )}
+
+      {/* Rétrospective par e-mail */}
+      <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: "14px 20px", marginBottom: 22, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 230 }}>
+          <span style={{ fontSize: 22 }}>💌</span>
+          <div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy }}>Rétrospective par e-mail</div>
+            <div style={{ fontSize: 13, color: "#6e6256" }}>{currentUser.retroEmails ? "Chaque début de mois, votre bilan ludique arrive par e-mail (l'annuel en janvier)." : "Vous ne recevez pas les rétrospectives par e-mail."}</div>
+          </div>
+        </div>
+        <Btn size="sm" variant={currentUser.retroEmails ? "soft" : "amber"} onClick={async () => {
+          await setRetroEmails(!currentUser.retroEmails);
+          setToast(currentUser.retroEmails ? "Rétrospectives par e-mail désactivées." : "Rétrospectives par e-mail activées !");
+        }}>{currentUser.retroEmails ? "Désactiver" : "Activer"}</Btn>
+      </div>
 
       {/* Possessions à confirmer (déclarées par d'autres membres) */}
       {(myPending.length + myPendingExt.length) > 0 && (
@@ -10761,7 +11036,7 @@ function MyLudoPage({ setToast, setPage }) {
       <MyTop10Section setToast={setToast} onOpenGame={(id) => setSelected(id)} />
       {viewSelf && currentUser && <MemberLibraryModal memberId={currentUser.id} onClose={() => setViewSelf(false)} setToast={setToast} />}
 
-      <div style={{ margin: "34px 0 18px" }}>
+      <div ref={ludoAnchorRef} style={{ margin: "34px 0 18px", scrollMarginTop: 90 }}>
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Mes jeux</span>
         <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(24px,4vw,34px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ma ludothèque</h2>
       </div>
@@ -10865,20 +11140,71 @@ function MyLudoPage({ setToast, setPage }) {
       )}
 
       {showAdd && <AddGameFlow onClose={() => setShowAdd(false)} setToast={setToast} />}
+
+      {/* Fenetres ouvertes depuis les tuiles de statistiques */}
+      {statPanel === "ext" && (
+        <PickListModal
+          title={`\ud83e\udde9 Mes extensions (${myExtList.length})`}
+          subtitle="Cliquez sur une extension pour ouvrir la fiche du jeu auquel elle se rattache."
+          empty="Vous n'avez encore déclaré aucune extension. Ajoutez-les depuis la fiche du jeu concerné."
+          onClose={() => setStatPanel(null)}
+          rows={myExtList.map(({ ext, game }) => ({
+            key: ext.id, name: ext.name, img: ext.img, emoji: "\ud83e\udde9",
+            sub: game.name,
+            onClick: () => { setStatPanel(null); setSelected(game.id); },
+            title: `Ouvrir la fiche de ${game.name}`,
+          }))}
+        />
+      )}
+      {statPanel === "rated" && (
+        <PickListModal
+          title={`\u2b50 Mes jeux notés (${myRatedList.length})`}
+          subtitle="Classés de ma meilleure note à la moins bonne. Cliquez pour ouvrir la fiche du jeu."
+          empty="Vous n'avez encore noté aucun jeu. Ouvrez une fiche et cliquez sur les étoiles !"
+          onClose={() => setStatPanel(null)}
+          rows={myRatedList.map(({ game, note }) => ({
+            key: game.id, name: game.name, img: game.img,
+            sub: game.owners && game.owners.length ? `chez ${game.owners.map((o) => o.name).join(", ")}` : null,
+            right: (
+              <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(232,163,23,.14)", color: C.amber, borderRadius: 999, padding: "3px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>
+                <Star size={12} fill={C.amber} color={C.amber} /> {String(note).replace(".", ",")}
+              </span>
+            ),
+            onClick: () => { setStatPanel(null); setSelected(game.id); },
+          }))}
+        />
+      )}
+      {statPanel === "status" && (
+        <StatusInfoModal onClose={() => setStatPanel(null)} role={currentUser.role} isChild={isChildAccount(currentUser)} />
+      )}
+
       {selected && <GameDetailModal g={games.find((g) => g.id === selected)} onClose={() => setSelected(null)} onAuth={() => {}} setToast={setToast} />}
     </div>
   );
 }
 
-function StatCard({ icon: Icon, color, n, label, small }) {
-  return (
-    <div style={{ flex: "1 1 160px", background: C.paper, borderRadius: 18, padding: "18px 22px", border: "1px solid #ece2d0", display: "flex", alignItems: "center", gap: 14 }}>
+function StatCard({ icon: Icon, color, n, label, small, onClick, title }) {
+  const clickable = typeof onClick === "function";
+  const base = { flex: "1 1 160px", background: C.paper, borderRadius: 18, padding: "18px 22px", border: "1px solid #ece2d0", display: "flex", alignItems: "center", gap: 14, minWidth: 0 };
+  const inner = (
+    <>
       <span style={{ width: 50, height: 50, borderRadius: 14, background: `${color}1a`, display: "grid", placeItems: "center", flexShrink: 0 }}><Icon size={24} color={color} /></span>
-      <div>
+      <div style={{ minWidth: 0, textAlign: "left" }}>
         <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: small ? 18 : 28, lineHeight: 1 }}>{n}</div>
-        <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2 }}>{label}</div>
+        <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+          {label}{clickable && <ChevronRight size={13} color={color} />}
+        </div>
       </div>
-    </div>
+    </>
+  );
+  if (!clickable) return <div style={base}>{inner}</div>;
+  return (
+    <button type="button" onClick={onClick} title={title || label}
+      style={{ ...base, cursor: "pointer", font: "inherit", transition: "border-color .15s, box-shadow .15s" }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = color; e.currentTarget.style.boxShadow = `0 4px 14px ${color}26`; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#ece2d0"; e.currentTarget.style.boxShadow = "none"; }}>
+      {inner}
+    </button>
   );
 }
 
