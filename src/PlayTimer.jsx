@@ -101,6 +101,153 @@ function useKeepAwake(enabled) {
   return { supported: WAKE_LOCK_SUPPORTED, active };
 }
 
+/* ---------------------------------------------------------------------
+   Points de regle, version chronometre.
+   Meme contenu que la fiche du jeu (table game_rules), consultable et
+   modifiable sans quitter la partie : c'est justement au moment ou la
+   question se pose qu'on a besoin de la reponse.
+   --------------------------------------------------------------------- */
+function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose, onCount }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [names, setNames] = useState({});
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('game_rules')
+      .select('id,author_id,content,created_at,updated_at')
+      .eq('game_id', gameId).order('created_at', { ascending: true });
+    if (error) { setErr(error.message); setRows([]); return; }
+    setRows(data || []);
+    if (onCount) onCount((data || []).length);
+    const ids = [...new Set((data || []).map((r) => r.author_id).filter(Boolean))];
+    if (ids.length) {
+      const { data: profs } = await supabase.from('profiles').select('id,name').in('id', ids);
+      const m = {}; (profs || []).forEach((p) => { m[p.id] = p.name; });
+      setNames(m);
+    }
+  }, [supabase, gameId, onCount]);
+  useEffect(() => { load(); }, [load]);
+
+  const canTouch = (r) => !!currentUser && (r.author_id === currentUser.id || isAdmin);
+
+  const submitNew = async () => {
+    const txt = draft.trim();
+    if (!txt || !currentUser) return;
+    setBusy(true); setErr(null);
+    const { error } = await supabase.from('game_rules')
+      .insert({ game_id: gameId, author_id: currentUser.id, content: txt.slice(0, 2000) });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setDraft(''); setAdding(false); await load();
+  };
+
+  const saveEdit = async () => {
+    const txt = editText.trim();
+    if (!txt) return;
+    setBusy(true); setErr(null);
+    const { error } = await supabase.from('game_rules')
+      .update({ content: txt.slice(0, 2000), updated_at: new Date().toISOString() }).eq('id', editId);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null); setEditText(''); await load();
+  };
+
+  const removeRule = async (r) => {
+    if (typeof window !== 'undefined' && !window.confirm('Supprimer ce point de regle ?')) return;
+    setErr(null);
+    const { error } = await supabase.from('game_rules').delete().eq('id', r.id);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: C.cream, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 560,
+        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: C.navy, minWidth: 0 }}>
+            📖 Points de regle
+          </div>
+          <button onClick={onClose} style={btnGhost}>Fermer</button>
+        </div>
+        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>{gameName || 'Ce jeu'}</div>
+
+        {err && (
+          <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`, borderRadius: 12, padding: '9px 12px', marginBottom: 10, fontWeight: 600, fontSize: 13 }}>{err}</div>
+        )}
+
+        {rows === null ? (
+          <div style={{ color: `${C.navy}88`, fontSize: 14, padding: '10px 0' }}>Chargement...</div>
+        ) : rows.length === 0 ? (
+          <div style={{ color: `${C.navy}88`, fontSize: 14, padding: '10px 0' }}>
+            Aucun point de regle pour ce jeu.{currentUser ? ' Notez le premier : il sera visible par tous, ici comme sur la fiche du jeu.' : ''}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+            {rows.map((r, i) => (
+              <div key={r.id} style={{ display: 'flex', gap: 10, background: '#fff', border: '1px solid #e6dcc9', borderRadius: 12, padding: '10px 12px' }}>
+                <span style={{ flex: '0 0 auto', width: 24, height: 24, borderRadius: 8, background: C.teal, color: '#fff', display: 'grid', placeItems: 'center', fontFamily: TITLE, fontWeight: 600, fontSize: 13 }}>{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {editId === r.id ? (
+                    <div>
+                      <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} maxLength={2000}
+                        style={{ ...input, resize: 'vertical', marginBottom: 8 }} />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button style={{ ...btnPrimary, padding: '8px 14px', fontSize: 14 }} onClick={saveEdit} disabled={busy || !editText.trim()}>Enregistrer</button>
+                        <button style={btnGhost} onClick={() => { setEditId(null); setEditText(''); }}>Annuler</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 14.5, color: C.navy, lineHeight: 1.5, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{r.content}</div>
+                      <div style={{ fontSize: 11.5, color: `${C.navy}77`, marginTop: 4 }}>
+                        par {currentUser && r.author_id === currentUser.id ? 'vous' : (names[r.author_id] || 'un membre')}
+                      </div>
+                    </>
+                  )}
+                </div>
+                {canTouch(r) && editId !== r.id && (
+                  <div style={{ display: 'flex', gap: 10, flex: '0 0 auto' }}>
+                    <button onClick={() => { setEditId(r.id); setEditText(r.content); }} title="Modifier"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: 0, lineHeight: 1 }}>✏️</button>
+                    <button onClick={() => removeRule(r)} title="Supprimer"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: 0, lineHeight: 1 }}>🗑️</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!currentUser ? (
+          <div style={{ fontSize: 13, color: `${C.navy}88` }}>Seuls les membres connectes peuvent ajouter un point de regle.</div>
+        ) : !adding ? (
+          <button style={{ ...btnSecondary, width: '100%' }} onClick={() => setAdding(true)}>+ Ajouter un point de regle</button>
+        ) : (
+          <div>
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} maxLength={2000} autoFocus
+              placeholder="Ex. : on ne defausse qu'une fois par tour, meme avec la carte Marchand."
+              style={{ ...input, resize: 'vertical', marginBottom: 8 }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button style={{ ...btnPrimary, flex: 1, opacity: busy || !draft.trim() ? 0.6 : 1 }} onClick={submitNew} disabled={busy || !draft.trim()}>
+                {busy ? 'Enregistrement...' : 'Ajouter'}
+              </button>
+              <button style={btnGhost} onClick={() => { setAdding(false); setDraft(''); }}>Annuler</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Avatar({ name, url, color, size = 44 }) {
   const st = {
     width: size, height: size, borderRadius: '50%', flex: '0 0 auto',
@@ -117,6 +264,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [error, setError] = useState(null);
   // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
   const [keepAwake, setKeepAwake] = useState(true);
+  // Points de regle du jeu en cours (voir RulesSheet plus haut).
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [rulesCount, setRulesCount] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [myUid, setMyUid] = useState(null);
 
   // session live
@@ -547,6 +698,29 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // ou sur le point de commencer : inutile de vider la batterie sur l'ecran final.
   const wake = useKeepAwake(keepAwake && (phase === 'running' || phase === 'lobby'));
 
+  // Nombre de points de regle du jeu, pour la pastille du bouton.
+  useEffect(() => {
+    const gid = game?.id || session?.game_id;
+    if (!gid) { setRulesCount(null); return undefined; }
+    let go = true;
+    (async () => {
+      const { count } = await supabase.from('game_rules').select('id', { count: 'exact', head: true }).eq('game_id', gid);
+      if (go) setRulesCount(count || 0);
+    })();
+    return () => { go = false; };
+  }, [supabase, game?.id, session?.game_id]);
+
+  // Un administrateur peut corriger n'importe quel point de regle.
+  useEffect(() => {
+    if (!currentUser?.id) { setIsAdmin(false); return undefined; }
+    let go = true;
+    (async () => {
+      const { data } = await supabase.from('profiles').select('is_admin').eq('id', currentUser.id).maybeSingle();
+      if (go) setIsAdmin(data?.is_admin === true);
+    })();
+    return () => { go = false; };
+  }, [supabase, currentUser?.id]);
+
   const shell = (children) => (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000, background: C.cream, color: C.navy,
@@ -557,7 +731,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.navy }}>
             Chrono <span style={{ color: C.teal }}>ALADJ</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {(game?.id || session?.game_id) && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
+              <button onClick={() => setRulesOpen(true)} title="Points de regle de ce jeu"
+                style={{
+                  border: `1.5px solid ${C.teal}55`, background: `${C.teal}12`, color: C.teal,
+                  borderRadius: 999, padding: '6px 12px', fontFamily: TITLE, fontWeight: 600,
+                  fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                📖 Regles{rulesCount ? ` (${rulesCount})` : ''}
+              </button>
+            )}
             {wake.supported && (phase === 'running' || phase === 'lobby') && (
               <button onClick={() => setKeepAwake((v) => !v)}
                 title={keepAwake ? "L'ecran reste allume pendant la partie - toucher pour laisser le telephone se mettre en veille" : "Empecher la mise en veille pendant la partie"}
@@ -580,6 +764,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
         {children}
       </div>
+      {rulesOpen && (game?.id || session?.game_id) && (
+        <RulesSheet
+          supabase={supabase}
+          currentUser={currentUser}
+          isAdmin={isAdmin}
+          gameId={game?.id || session?.game_id}
+          gameName={game?.name || ''}
+          onClose={() => setRulesOpen(false)}
+          onCount={setRulesCount}
+        />
+      )}
     </div>
   );
 
