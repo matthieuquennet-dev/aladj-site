@@ -685,11 +685,14 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
   // ownersByGame[row.id] est un tableau d'objets { owner_id, confirmed, declared_by }
   // (auparavant c'était de simples ID — on garde la compat en testant)
   const ownerRows = ownersByGame[row.id] || [];
-  // Repli sur owner_id si la table de liaison est TOTALEMENT vide (cas de migration / anciens jeux
-  // qui n'ont jamais eu de ligne dans game_owners). Si la table contient des lignes — même
-  // si toutes sont en attente — on les utilise telles quelles, sans inventer de propriétaire.
-  let normalizedOwners = ownerRows;
-  if (normalizedOwners.length === 0 && row.owner_id) normalizedOwners = [{ owner_id: row.owner_id, confirmed: true, declared_by: null }];
+  // game_owners fait desormais autorite, sans aucun repli : une fiche sans ligne
+  // de possession est une FICHE DE REFERENCE (personne ne possede ce jeu).
+  // L'ancien repli sur games.owner_id a ete supprime avec le lot E : il aurait
+  // re-attribue au createur toute fiche dont le dernier proprietaire se retire,
+  // rendant les fiches de reference impossibles. Les anciennes fiches ont ete
+  // reprises une bonne fois pour toutes par migration_lot_E.sql.
+  // Rappel : games.owner_id ne designe PAS un possesseur mais l'auteur de la fiche.
+  const normalizedOwners = ownerRows;
 
   const ownerToInfo = (o) => ({
     id: o.owner_id,
@@ -730,6 +733,12 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     source: row.source || "manuel", ownerId: row.owner_id, ownerName: nameById[row.owner_id] || "Membre",
     owners, ownerIds,
     confirmedOwners, pendingOwners,           // nouvelles structures
+    // Fiche de reference : aucun membre ne possede (encore) ce jeu. Ce n'est pas
+    // un champ stocke, juste l'absence de proprietaire confirme -- rien a
+    // desynchroniser. La fiche reste consultable et permet d'enregistrer des
+    // parties (Board Game Arena, convention, joueurs exterieurs...), mais elle
+    // n'est pas comptee dans les jeux de l'association.
+    unowned: confirmedOwners.length === 0,
     wantIds,                                  // envies de découvrir : liste d'IDs
     extensions: extsByGame[row.id] || [],
     newPrice: row.new_price != null ? Number(row.new_price) : null,
@@ -1290,15 +1299,18 @@ function AppProvider({ children }) {
     return {};
   }, [currentUser, loadData]);
 
-  // Se retirer d'un jeu ("je ne l'ai plus"). Si plus aucun propriétaire, la fiche est supprimée.
+  // Se retirer d'un jeu ("je ne l'ai plus").
+  // S'il ne reste plus aucun propriétaire, la fiche n'est PLUS supprimée : elle
+  // devient une « fiche de référence » (grisée). Notes, avis, commentaires et
+  // historique de parties sont conservés, et le jeu reste disponible pour
+  // enregistrer des parties. Si quelqu'un le rachète un jour, un simple
+  // « Je l'ai ! » lui redonne son statut normal.
   const removeOwner = useCallback(async (gameId) => {
     if (!currentUser) return;
     await supabase.from("game_owners").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
     // reste-t-il des propriétaires ?
     const { data: remaining } = await supabase.from("game_owners").select("owner_id").eq("game_id", gameId);
-    if (!remaining || remaining.length === 0) {
-      await supabase.from("games").delete().eq("id", gameId); // plus personne → on retire la fiche
-    } else {
+    if (remaining && remaining.length > 0) {
       // si le créateur initial (owner_id) vient de se retirer, on réaffecte owner_id
       // à un propriétaire restant pour garder la fiche cohérente
       const game = games.find((g) => g.id === gameId);
@@ -1318,14 +1330,13 @@ function AppProvider({ children }) {
     await loadData();
   }, [currentUser, loadData]);
 
-  // Refuser une possession en attente : on retire la ligne, et on supprime la fiche si elle devient orpheline.
+  // Refuser une possession en attente : on retire la ligne. Si la fiche devient
+  // orpheline, elle est conservée en « fiche de référence » (voir removeOwner).
   const declineOwnership = useCallback(async (gameId) => {
     if (!currentUser) return;
     await supabase.from("game_owners").delete().eq("game_id", gameId).eq("owner_id", currentUser.id);
     const { data: remaining } = await supabase.from("game_owners").select("owner_id").eq("game_id", gameId);
-    if (!remaining || remaining.length === 0) {
-      await supabase.from("games").delete().eq("id", gameId);
-    } else {
+    if (remaining && remaining.length > 0) {
       const game = games.find((g) => g.id === gameId);
       if (game && game.ownerId === currentUser.id) {
         await supabase.from("games").update({ owner_id: remaining[0].owner_id }).eq("id", gameId);
@@ -1347,7 +1358,8 @@ function AppProvider({ children }) {
       await supabase.from("game_discoveries").insert({ game_id: gameId, user_id: currentUser.id });
       // Notifier les propriétaires du jeu qu'un membre souhaite le découvrir (sauf moi).
       if (g) {
-        const recipients = [...new Set((g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []))]
+        // Fiche de référence : aucun propriétaire, donc personne à prévenir.
+        const recipients = [...new Set(g.ownerIds || [])]
           .filter((id) => id && id !== currentUser.id);
         if (recipients.length > 0) {
           await supabase.from("notifications").insert(recipients.map((rid) => ({
@@ -1836,7 +1848,7 @@ function AppProvider({ children }) {
     // Notifier les propriétaires (confirmés) du jeu, sauf l'auteur du commentaire.
     const g = games.find((x) => x.id === gameId);
     if (g) {
-      const recipients = (g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []);
+      const recipients = g.ownerIds || [];   // fiche de reference = personne a prevenir
       await notifyUsers(recipients, {
         type: "game_comment",
         message: `${currentUser.name} a commenté votre jeu « ${g.name} »`,
@@ -2478,6 +2490,7 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
   const dismissed = new Set(dismissedIds);
   const candidates = games.filter((g) =>
     !ratedIds.has(g.id)
+    && !g.unowned                                  // inutile de conseiller un jeu que personne n'a
     && !(g.ownerIds || []).includes(currentUserId)
     && !(g.wantIds || []).includes(currentUserId)
     && !dismissed.has(g.id)
@@ -4037,6 +4050,16 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Les fiches de référence : des jeux que personne ne possède",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>On ne joue pas qu'à nos propres jeux : il y a Board Game Arena, les conventions, les soirées chez des amis extérieurs à l'asso. Pour que ces parties comptent quand même, la ludothèque accepte des <b>fiches de référence</b> : des fiches de jeux que <b>personne ne possède</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>On les reconnaît du premier coup d'œil : leur <b>vignette est grisée</b> et porte le bandeau « Fiche de référence ». Elles fonctionnent comme les autres — notes, avis, envies de découvrir, points de règle, chronomètre, parties enregistrées — à une exception près : elles ne sont <b>pas comptées dans les jeux de l'association</b>. Le titre de la ludothèque affiche donc les jeux réellement possédés, et mentionne à part le nombre de fiches de référence.</p>
+            <p style={{ margin: "0 0 8px" }}><b>En créer une :</b> ajoutez un jeu comme d'habitude, puis à la question « Qui possède ce jeu ? » choisissez <b>« Personne — fiche de référence »</b>.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Elles vont et viennent toutes seules.</b> Si le dernier propriétaire d'un jeu clique sur « Je ne l'ai plus », la fiche n'est plus supprimée : elle bascule en fiche de référence. Les notes, avis, commentaires et parties déjà enregistrées sont <b>conservés</b> — des années d'historique ne disparaissent plus parce qu'un membre a revendu sa boîte. À l'inverse, dès qu'un membre clique sur <b>« Je l'ai ! »</b>, la fiche retrouve ses couleurs et rejoint la ludothèque de l'association.</p>
+            <p style={{ margin: 0 }}>Le filtre <b>« Toute la ludothèque »</b> en haut de la page permet de n'afficher que les <b>jeux de l'association</b>, ou au contraire que les <b>fiches de référence</b>. Comme ces fiches n'appartiennent à personne, elles sont entretenues collectivement : <b>tout membre</b> peut en corriger les informations. Elles ne sont pas proposées dans les recommandations personnalisées — inutile de conseiller un jeu que personne n'a sous la main.</p>
+          </>,
+        },
+        {
           q: "Les points de règle : la mémoire commune de la table",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur chaque fiche de jeu, juste sous « Chronométrer une partie », un encadré <b style={{ color: C.teal }}>📖 Points de règle</b> rassemble les précisions tranchées par les membres : une règle mal rédigée, une variante qu'on a adoptée, un piège dans lequel tout le monde tombe. Plus besoin de refaire le débat à chaque partie.</p>
@@ -4052,6 +4075,10 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>On y trouve sa présentation, ses badges, son <b>💎 top 10 ever</b> (les jeux qu'il garderait s'il ne restait qu'eux) et, juste en dessous, ses <b>🎲 jeux les plus joués</b> : le classement de ses 10 jeux les plus fréquents, avec le <b>nombre de parties</b> et ses victoires, calculé automatiquement à partir des parties enregistrées. Chaque ligne ouvre la fiche du jeu.</p>
             <p style={{ margin: 0 }}>Vient enfin sa ludothèque. Si le membre partage une <b>ludothèque familiale</b>, les deux sont désormais affichées : d'abord <b>ses jeux à lui</b> en grandes vignettes, puis les jeux <b>du reste du foyer</b> en petites vignettes. Avant, seule l'une des deux apparaissait.</p>
           </>,
+        },
+        {
+          q: "Je ne possède plus un jeu : que devient sa fiche ?",
+          a: <p style={{ margin: 0 }}>Sur la fiche du jeu, le bouton <b>« Je ne l'ai plus »</b> vous retire des propriétaires. S'il en reste d'autres, rien ne change pour eux. Si vous étiez le <b>dernier</b>, la fiche n'est plus supprimée : elle devient une <b>fiche de référence</b> (grisée, hors du compte des jeux de l'association), et tout l'historique est préservé — notes, avis, commentaires, parties, points de règle. Seuls les <b>administrateurs</b> peuvent supprimer définitivement une fiche.</p>,
         },
         {
           q: "Ajouter un jeu à ma ludothèque",
@@ -4436,7 +4463,7 @@ function HomePage({ setPage, onAuth }) {
 
           <div style={{ display: "flex", gap: "clamp(20px,5vw,64px)", justifyContent: "center", marginTop: 56, flexWrap: "wrap" }}>
             {[
-              { n: games.length, l: "jeux partagés", onClick: () => setPage("ludotheque") },
+              { n: games.filter((g) => !g.unowned).length, l: "jeux partagés", onClick: () => setPage("ludotheque") },
               { n: users.length, l: "membres", onClick: () => setShowMembers(true) },
               { n: upcomingCount, l: "moments à venir", onClick: () => setPage("soirees") },
               { n: "2010", l: "depuis", onClick: null },
@@ -6311,17 +6338,21 @@ function GameCover({ g, size = "md" }) {
   // placeholder coloré (utilisé si pas d'image OU si l'image ne charge pas)
   const palette = [C.teal, C.amber, C.red, C.purple, C.navy];
   const col = palette[(g.name.charCodeAt(0) + (g.name.length || 0)) % palette.length];
+  // Fiche de référence (personne ne possède ce jeu) : vignette désaturée, pour
+  // qu'on repère d'un coup d'oeil ce qui n'est pas dans la ludothèque de l'asso.
+  const dim = g.unowned === true;
+  const dimStyle = dim ? { filter: size === "lg" ? "grayscale(.8)" : "grayscale(1)", opacity: size === "lg" ? .82 : .7 } : null;
 
   if (g.img && !imgError) {
     return (
-      <div style={{ height: h, position: "relative", borderRadius: size === "sm" ? 10 : 0, overflow: "hidden", background: "#11202f" }}>
+      <div style={{ height: h, position: "relative", borderRadius: size === "sm" ? 10 : 0, overflow: "hidden", background: "#11202f", ...dimStyle }}>
         <img src={g.img} alt={g.name} onError={() => setImgError(true)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       </div>
     );
   }
   return (
-    <div style={{ height: h, background: `linear-gradient(135deg, ${col}, ${col}cc)`, display: "grid", placeItems: "center", borderRadius: size === "sm" ? 10 : 0, position: "relative", overflow: "hidden" }}>
+    <div style={{ height: h, background: dim ? "linear-gradient(135deg, #a9a099, #837a72)" : `linear-gradient(135deg, ${col}, ${col}cc)`, display: "grid", placeItems: "center", borderRadius: size === "sm" ? 10 : 0, position: "relative", overflow: "hidden", ...(dim ? { opacity: .9 } : null) }}>
       <Dice color="rgba(255,255,255,.25)" n={(g.name.length % 6) + 1} style={{ position: "absolute", width: h * 0.55, right: -h * 0.1, bottom: -h * 0.12, transform: "rotate(12deg)" }} />
       <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: size === "sm" ? 18 : 34, textAlign: "center", padding: 8, lineHeight: 1, textShadow: "0 2px 8px rgba(0,0,0,.25)", zIndex: 1 }}>
         {g.name.split(" ").slice(0, 3).map((w) => w[0]).join("").toUpperCase().slice(0, 3)}
@@ -6400,8 +6431,14 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, own
           <GameCover g={g} />
           {(g.wantIds || []).length > 0 && (
             <div title={`${g.wantIds.length} membre${g.wantIds.length > 1 ? "s veulent" : " veut"} découvrir ce jeu`}
-              style={{ position: "absolute", top: 10, left: 10, background: C.red, color: "#fff", borderRadius: 999, padding: "4px 9px 4px 7px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.18)" }}>
+              style={{ position: "absolute", top: g.unowned ? 40 : 10, left: 10, background: C.red, color: "#fff", borderRadius: 999, padding: "4px 9px 4px 7px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.18)" }}>
               <Heart size={13} fill="#fff" color="#fff" /> {g.wantIds.length}
+            </div>
+          )}
+          {g.unowned && (
+            <div title="Fiche de référence : aucun membre ne possède ce jeu. Elle sert à enregistrer des parties (Board Game Arena, convention, joueurs extérieurs…)."
+              style={{ position: "absolute", top: 10, left: 10, background: "rgba(94,83,70,.92)", color: "#fff", borderRadius: 999, padding: "3px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: .2, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }}>
+              Fiche de référence
             </div>
           )}
           {ownerBadge && (
@@ -6443,15 +6480,16 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, own
             {(g.mechanics || []).slice(0, 2).map((m, i) => <Badge key={i} color={C.purple}>{m}</Badge>)}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f0e8d8", paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: "#9c8d79" }}>chez {(() => {
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>{(() => {
               // Affichage : possesseurs confirmés en priorité, puis pendings avec mention "X selon Y"
               const confirmed = (g.confirmedOwners || g.owners || []).map((o) => ({ name: o.name }));
               const pending = (g.pendingOwners || []).map((o) => ({ name: o.name, declaredByName: o.declaredByName }));
               const all = [...confirmed, ...pending];
-              if (all.length === 0 && g.ownerName) all.push({ name: g.ownerName });
+              // Personne ne le possède : on le dit, plutôt que de désigner l'auteur de la fiche.
+              if (all.length === 0) return <i style={{ color: "#a89a86" }}>Fiche de référence</i>;
               const shown = all.slice(0, 2).map((o) => o.declaredByName ? `${o.name} selon ${o.declaredByName}` : o.name).join(", ");
               const extra = all.length - 2;
-              return <><b style={{ color: C.teal }}>{shown || "—"}</b>{extra > 0 ? ` +${extra}` : ""}</>;
+              return <>chez <b style={{ color: C.teal }}>{shown}</b>{extra > 0 ? ` +${extra}` : ""}</>;
             })()}</span>
             <span style={{ fontSize: 11.5, color: "#8a7c6a", fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{count} vote{count > 1 ? "s" : ""}</span>
           </div>
@@ -6546,11 +6584,17 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono, plays, beltByGame, askConfirm } = useApp();
   const { avg, count } = gameStats(g);
   const myRating = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
-  const confirmedOwners = g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : (g.owners && g.owners.length ? g.owners : (g.ownerId ? [{ id: g.ownerId, name: g.ownerName, confirmed: true }] : []));
+  // Aucun repli sur g.ownerId : ce champ designe l'auteur de la fiche, pas un
+  // possesseur. Une liste vide signifie bien « personne ne possede ce jeu ».
+  const confirmedOwners = (g.confirmedOwners && g.confirmedOwners.length ? g.confirmedOwners : g.owners) || [];
   const pendingOwners = g.pendingOwners || [];
   const owners = confirmedOwners;
   const isOwner = currentUser && confirmedOwners.some((o) => o.id === currentUser.id);
-  const canManage = currentUser && (isOwner || currentUser.admin);
+  // Fiche de reference : aucun proprietaire confirme.
+  const unowned = confirmedOwners.length === 0;
+  // Une fiche sans proprietaire n'appartient a personne : elle est entretenue
+  // collectivement (le serveur applique la meme regle, cf. migration lot E).
+  const canManage = currentUser && (isOwner || currentUser.admin || unowned);
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
   const [showScale, setShowScale] = useState(false); // rappel de l'echelle de notation ALADJ
@@ -6891,7 +6935,16 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
           <div>
-            <span style={{ fontSize: 13, color: "#8a7c6a", display: "block", marginBottom: 4 }}>{owners.length > 1 ? "Possédé par" : "Apporté par"}</span>
+            <span style={{ fontSize: 13, color: "#8a7c6a", display: "block", marginBottom: 4 }}>{unowned ? "Personne ne possède ce jeu" : owners.length > 1 ? "Possédé par" : "Apporté par"}</span>
+            {unowned && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(94,83,70,.08)", border: "1px dashed #c3b49b", borderRadius: 11, padding: "10px 13px", maxWidth: 420 }}>
+                <Info size={16} color="#8a7c6a" style={{ flexShrink: 0, marginTop: 2 }} />
+                <span style={{ fontSize: 13, color: "#6e6256", lineHeight: 1.55 }}>
+                  C'est une <b>fiche de référence</b> : elle n'est pas comptée dans les jeux de l'association, mais elle permet d'<b>enregistrer des parties</b> jouées ailleurs — sur Board Game Arena, en convention, chez des joueurs extérieurs…
+                  {currentUser ? " Si vous possédez ce jeu, un clic sur « Je l'ai ! » le fait entrer dans la ludothèque." : ""}
+                </span>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {owners.map((o) => (
                 <span key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: o.id === currentUser?.id ? "rgba(30,138,138,.12)" : "rgba(26,58,92,.05)", borderRadius: 999, padding: "4px 11px", fontSize: 13, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: o.id === currentUser?.id ? C.teal : C.navy }}>
@@ -6917,18 +6970,19 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
                 if (!(await askConfirm({
                   title: "Ne plus posséder ce jeu ?",
                   message: last
-                    ? "Vous êtes le dernier propriétaire : la fiche sera retirée de la ludothèque de l'association (notes et envies comprises)."
+                    ? "Vous êtes le dernier propriétaire : la fiche deviendra une « fiche de référence », grisée et hors du compte des jeux de l'association. Vos notes, avis et parties sont conservés, et le jeu reste disponible pour enregistrer des parties."
                     : "Vous serez retiré des propriétaires de ce jeu. La fiche reste dans la ludothèque via les autres propriétaires.",
-                  confirmLabel: last ? "Retirer la fiche" : "Je ne l'ai plus",
+                  confirmLabel: last ? "Je ne l'ai plus" : "Je ne l'ai plus",
                 }))) return;
                 await removeOwner(g.id);
-                if (last) { onClose(); setToast("Jeu retiré de la ludothèque."); }
-                else setToast("Vous ne possédez plus ce jeu.");
+                setToast(last ? "Le jeu devient une fiche de référence." : "Vous ne possédez plus ce jeu.");
               }}><X size={14} /> Je ne l'ai plus</Btn>
             ) : (
-              <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); setToast("Ajouté à votre ludothèque !"); }}><Plus size={14} /> Je l'ai aussi</Btn>
+              <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); setToast(unowned ? "Le jeu rejoint la ludothèque de l'association !" : "Ajouté à votre ludothèque !"); }}>
+                <Plus size={14} /> {unowned ? "Je l'ai !" : "Je l'ai aussi"}
+              </Btn>
             )}
-            {currentUser.admin && owners.length > 0 && (
+            {currentUser.admin && (
               <Btn size="sm" variant="soft" style={{ marginLeft: 8 }} onClick={async () => { if (!(await askConfirm({ title: "Supprimer cette fiche ?", message: "La fiche sera supprimée pour tous les membres (propriétaires, notes, envies et commentaires compris). Action définitive.", confirmLabel: "Supprimer" }))) return; await removeGame(g.id); onClose(); setToast("Fiche supprimée (admin)."); }}><Trash2 size={14} /> Supprimer la fiche</Btn>
             )}
           </div>
@@ -8242,9 +8296,11 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const communGames = useMemo(
     () => games.filter((g) => {
       if (g.shared === false) return false;
+      // Fiche de référence : elle n'appartient à personne, donc aucun réglage de
+      // partage ne s'y applique — elle reste visible de tous.
+      if (g.unowned) return true;
       // visible si au moins un propriétaire partage sa ludothèque
-      const ids = (g.ownerIds && g.ownerIds.length) ? g.ownerIds : (g.ownerId ? [g.ownerId] : []);
-      return ids.some((id) => sharedById[id] !== false);
+      return (g.ownerIds || []).some((id) => sharedById[id] !== false);
     }),
     [games, sharedById]
   );
@@ -8271,8 +8327,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   // Rendu progressif : on affiche les jeux par tranches pour rester fluide
   // quand la ludothèque grossit (des milliers de cartes tuent les téléphones).
   const [visibleCount, setVisibleCount] = useState(60);
+  // "" = tout ; "owned" = jeux de l'asso seulement ; "ref" = fiches de reference seulement
+  const [ownFilter, setOwnFilter] = useState("");
   const filtered = useMemo(() => {
     let list = communGames.filter((g) => {
+      // filtre possession : jeux de l'association / fiches de reference
+      if (ownFilter === "owned" && g.unowned) return false;
+      if (ownFilter === "ref" && !g.unowned) return false;
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (g.mechanics || []).includes(mech);
       // filtre nombre de joueurs : le jeu accepte-t-il ce nombre ? (entre min et max)
@@ -8313,7 +8374,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
     return list;
-  }, [communGames, q, mech, players, duration, year, wantFilter, sort, currentUser]);
+  }, [communGames, q, mech, players, duration, year, wantFilter, ownFilter, sort, currentUser]);
+
+  // Jeux réellement possédés par des membres : c'est eux, et eux seuls, qui
+  // constituent « la ludothèque de l'association ». Les fiches de référence
+  // restent visibles et consultables, mais ne sont pas comptées.
+  const ownedCount = useMemo(() => games.filter((g) => !g.unowned).length, [games]);
+  const refCount = games.length - ownedCount;
 
   // Top 20 : un jeu doit avoir au moins 4 votes pour entrer dans le classement
   // (évite que quelques avis isolés propulsent un jeu en tête).
@@ -8325,7 +8392,12 @@ function LudothequePage({ onAuth, setToast, setPage }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 26 }}>
         <div>
           <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>La collection de l'asso</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ludothèque · {games.length} jeux</h1>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ludothèque · {ownedCount} jeux</h1>
+          {refCount > 0 && (
+            <span style={{ display: "block", fontSize: 13, color: "#9c8d79", marginTop: 5 }}>
+              + {refCount} fiche{refCount > 1 ? "s" : ""} de référence <span style={{ color: "#b6a78f" }}>· jeux que personne ne possède, gardés pour enregistrer des parties</span>
+            </span>
+          )}
         </div>
         {currentUser
           ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
@@ -8375,6 +8447,11 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               {currentUser && <option value="mine">Que j'ai envie de découvrir</option>}
               <option value="any">Avec au moins une envie</option>
               <option value="none">Sans envie</option>
+            </select>
+            <select value={ownFilter} onChange={(e) => setOwnFilter(e.target.value)} title="Filtrer sur les jeux réellement possédés, ou sur les fiches de référence" style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="">Toute la ludothèque</option>
+              <option value="owned">Jeux de l'association</option>
+              <option value="ref">Fiches de référence</option>
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés (général)</option>
@@ -9081,12 +9158,13 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
 
         {/* Bloc : qui possède ce jeu ? (uniquement pour la ludothèque, pas pour À venir) */}
         {!forUpcoming && (
-          <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Mon espace.">
+          <Field label="Qui possède ce jeu ?" hint="Le membre concerné devra confirmer la possession dans Mon espace. Choisissez « Personne » pour créer une fiche de référence, utile pour enregistrer des parties jouées ailleurs.">
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {[
                 { v: "self",  t: "Je le possède" },
                 { v: "other", t: "Un autre membre le possède" },
                 { v: "both",  t: "Plusieurs membres le possèdent (dont moi)" },
+                { v: "none",  t: "Personne — fiche de référence" },
               ].map((opt) => {
                 const active = ownership === opt.v;
                 return (
@@ -9166,7 +9244,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
                   </div>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
-                    <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79" }}>{g.unowned ? "Fiche de référence — personne ne le possède" : `chez ${(g.owners || []).map((o) => o.name).join(", ")}`}</span>
                   </span>
                   {alreadyMine
                     ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 6px" }}>✓ Vous l'avez</span>
@@ -9278,7 +9356,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
                   </div>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{g.name}</span>
-                    <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>{g.year ? `${g.year} · ` : ""}chez {(g.owners || []).map((o) => o.name).join(", ") || g.ownerName}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>{g.year ? `${g.year} · ` : ""}{g.unowned ? "Fiche de référence — personne ne le possède" : `chez ${(g.owners || []).map((o) => o.name).join(", ")}`}</span>
                   </span>
                   {alreadyMine
                     ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 8px" }}>✓ Vous l'avez</span>
@@ -9343,12 +9421,13 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
       </Field>
 
       {/* Bloc : qui possède ce jeu ? (procuration possible) */}
-      <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, ou les deux. Le membre concerné devra confirmer la possession dans Mon espace.">
+      <Field label="Qui possède ce jeu ?" hint="Vous pouvez créer cette fiche pour vous, pour un autre membre, pour les deux — ou pour personne. Le membre concerné devra confirmer la possession dans Mon espace.">
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
           {[
             { v: "self",  t: "Je le possède",                                d: "Vous êtes inscrit·e comme propriétaire." },
             { v: "other", t: "Un autre membre le possède",                   d: "La fiche sera créée à son nom, à confirmer par sa part." },
             { v: "both",  t: "Plusieurs membres le possèdent (dont moi)",    d: "Vous et d'autres membres êtes propriétaires." },
+            { v: "none",  t: "Personne — fiche de référence",               d: "Pour enregistrer des parties jouées sur Board Game Arena, en convention ou chez des joueurs extérieurs. La fiche apparaît grisée et n'est pas comptée dans les jeux de l'association." },
           ].map((opt) => {
             const active = ownership === opt.v;
             return (
