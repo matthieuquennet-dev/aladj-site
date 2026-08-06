@@ -2649,6 +2649,159 @@ function PickListModal({ title, subtitle, rows, empty, onClose, width = 520 }) {
   );
 }
 
+/* -----------------------------------------------------------------------------
+   POINTS DE REGLE
+   Memoire commune de la table : chaque membre peut consigner une precision de
+   regle sur un jeu (« on ne pioche qu'une fois par tour », « la variante X se
+   joue ainsi »...). Chacun corrige ou supprime ses propres points ; les
+   administrateurs peuvent intervenir sur tous.
+   La liste est chargee a la demande (table game_rules), pas au demarrage du
+   site : inutile de la transporter partout.
+   ----------------------------------------------------------------------------- */
+function GameRulesModal({ gameId, gameName, onClose, onCount }) {
+  const { currentUser, users, askConfirm } = useApp();
+  const [rows, setRows] = useState(null);      // null = chargement en cours
+  const [err, setErr] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from("game_rules")
+      .select("id,game_id,author_id,content,created_at,updated_at")
+      .eq("game_id", gameId).order("created_at", { ascending: true });
+    if (error) { setErr(error.message); setRows([]); return; }
+    setRows(data || []);
+    if (onCount) onCount((data || []).length);
+  }, [gameId, onCount]);
+  useEffect(() => { load(); }, [load]);
+
+  const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
+  const canTouch = (r) => !!currentUser && (r.author_id === currentUser.id || currentUser.admin === true);
+
+  const submitNew = async () => {
+    const txt = draft.trim();
+    if (!txt || !currentUser) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("game_rules").insert({ game_id: gameId, author_id: currentUser.id, content: txt.slice(0, 2000) });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setDraft(""); setAdding(false);
+    await load();
+  };
+
+  const saveEdit = async () => {
+    const txt = editText.trim();
+    if (!txt) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("game_rules")
+      .update({ content: txt.slice(0, 2000), updated_at: new Date().toISOString() }).eq("id", editId);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null); setEditText("");
+    await load();
+  };
+
+  const removeRule = async (r) => {
+    const ok = await askConfirm({
+      title: "Supprimer ce point de règle ?",
+      message: "Il disparaîtra de la fiche du jeu et du chronomètre, pour tous les membres.",
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    setErr("");
+    const { error } = await supabase.from("game_rules").delete().eq("id", r.id);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`📖 Points de règle · ${gameName}`} width={580}>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        La mémoire commune de la table : les précisions de règle, variantes et pièges tranchés une bonne fois pour toutes.
+        {currentUser ? " Chacun peut en ajouter, et corriger ou supprimer les siens." : ""}
+      </p>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+      {rows === null ? (
+        <div style={{ color: "#a89a86", fontSize: 14, padding: "12px 0", display: "flex", alignItems: "center", gap: 8 }}>
+          <Loader2 size={16} className="aladj-spin" /> Chargement…
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "26px 16px", color: "#a89a86" }}>
+          <BookOpen size={34} style={{ opacity: .4, marginBottom: 10 }} />
+          <p style={{ fontSize: 14, margin: 0 }}>Aucun point de règle pour ce jeu.{currentUser ? " Soyez le premier à en noter un !" : ""}</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 16 }}>
+          {rows.map((r, i) => {
+            const edited = r.updated_at && r.created_at && new Date(r.updated_at).getTime() - new Date(r.created_at).getTime() > 2000;
+            const mine = !!currentUser && r.author_id === currentUser.id;
+            return (
+              <div key={r.id} style={{ display: "flex", gap: 11, background: "rgba(30,138,138,.06)", border: "1px solid rgba(30,138,138,.18)", borderRadius: 13, padding: "11px 14px" }}>
+                <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {editId === r.id ? (
+                    <div>
+                      <textarea value={editText} onChange={(ev) => setEditText(ev.target.value)} rows={3} maxLength={2000}
+                        style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editText.trim()}><Check size={14} /> Enregistrer</Btn>
+                        <Btn size="sm" variant="soft" onClick={() => { setEditId(null); setEditText(""); }}>Annuler</Btn>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 14.5, color: "#4e463b", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{r.content}</div>
+                      <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 5, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                        <span>par {mine ? "vous" : nameOf(r.author_id)}</span>
+                        <DeciderCrownFor id={r.author_id} size={11} />
+                        <span>· {new Date(r.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</span>
+                        {edited && <span style={{ fontStyle: "italic" }}>(modifié)</span>}
+                      </div>
+                    </>
+                  )}
+                </div>
+                {canTouch(r) && editId !== r.id && (
+                  <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
+                    <button onClick={() => { setEditId(r.id); setEditText(r.content); }} title="Modifier ce point de règle"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, height: 20 }}><Edit3 size={15} /></button>
+                    <button onClick={() => removeRule(r)} title="Supprimer ce point de règle"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 20 }}><Trash2 size={15} /></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!currentUser ? (
+        <span style={{ fontSize: 13, color: "#a89a86" }}>Connectez-vous pour ajouter un point de règle.</span>
+      ) : !adding ? (
+        <Btn full variant="soft" onClick={() => setAdding(true)}><Plus size={16} /> Ajouter un point de règle</Btn>
+      ) : (
+        <div style={{ background: "rgba(30,138,138,.06)", borderRadius: 12, padding: 12 }}>
+          <Field label="Nouveau point de règle" hint="Soyez précis : la règle concernée, et ce qu'on a tranché.">
+            <textarea value={draft} onChange={(ev) => setDraft(ev.target.value)} rows={3} maxLength={2000} autoFocus
+              placeholder="Ex. : on ne peut défausser qu'une seule fois par tour, même avec la carte Marchand."
+              style={{ ...inputStyle, resize: "vertical" }} />
+          </Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" onClick={submitNew} disabled={busy || !draft.trim()}>
+              {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Ajouter</>}
+            </Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setDraft(""); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 /* Fenetre « Statut » — ce que permet (ou non) chacun des 3 statuts. */
 function StatusInfoModal({ onClose, role, isChild }) {
   const blocks = [
@@ -3884,6 +4037,15 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Les points de règle : la mémoire commune de la table",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur chaque fiche de jeu, juste sous « Chronométrer une partie », un encadré <b style={{ color: C.teal }}>📖 Points de règle</b> rassemble les précisions tranchées par les membres : une règle mal rédigée, une variante qu'on a adoptée, un piège dans lequel tout le monde tombe. Plus besoin de refaire le débat à chaque partie.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Tout membre peut en ajouter</b> : ouvrez l'encadré, cliquez sur « Ajouter un point de règle », écrivez, validez. Les points s'affichent numérotés (1, 2, 3…) dans l'ordre où ils ont été écrits, avec le nom de leur auteur.</p>
+            <p style={{ margin: "0 0 8px" }}>Chacun peut <b>modifier</b> (✏️) ou <b>supprimer</b> (🗑️) les points qu'il a écrits ; les administrateurs peuvent intervenir sur tous, pour corriger une coquille ou retirer un doublon.</p>
+            <p style={{ margin: 0 }}>Et surtout : les points de règle sont aussi accessibles <b>depuis le chronomètre</b>, via le bouton 📖 en haut de l'écran — c'est justement en pleine partie que la question se pose. Consultation, ajout, correction et suppression y fonctionnent à l'identique, sans quitter la partie en cours.</p>
+          </>,
+        },
+        {
           q: "La fiche d'un membre : ses jeux, son top 10, ses jeux les plus joués",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur l'accueil, cliquez sur le <b>nombre de membres</b> pour ouvrir le trombinoscope, puis sur un membre pour voir sa fiche.</p>
@@ -4114,6 +4276,10 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
             <p style={{ margin: 0 }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
           </>,
+        },
+        {
+          q: "Retrouver les points de règle en pleine partie",
+          a: <p style={{ margin: 0 }}>Le bouton <b style={{ color: C.teal }}>📖 Règles</b>, en haut de l'écran du chrono, ouvre les <b>points de règle</b> du jeu en cours — les mêmes que sur sa fiche. Le chiffre entre parenthèses indique combien il y en a. Vous pouvez y <b>ajouter</b> une précision à chaud, <b>corriger</b> ou <b>supprimer</b> les vôtres, puis refermer et reprendre la partie là où vous en étiez. Tout ce qui est écrit ici apparaît immédiatement sur la fiche du jeu, pour tous les membres.</p>,
         },
         {
           q: "Garder l'écran allumé pendant la partie",
@@ -6388,6 +6554,8 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [editing, setEditing] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
   const [showScale, setShowScale] = useState(false); // rappel de l'echelle de notation ALADJ
+  const [showRules, setShowRules] = useState(false); // points de regle du jeu
+  const [ruleCount, setRuleCount] = useState(null);  // null = pas encore compte
   const [showSessions, setShowSessions] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [sessions, setSessions] = useState(null);
@@ -6465,6 +6633,17 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   }, [g.id, currentUser]);
   useEffect(() => { loadStats(); }, [loadStats]);
 
+  // Nombre de points de regle, pour l'afficher sur la pastille sans charger la liste.
+  useEffect(() => {
+    if (!currentUser) { setRuleCount(null); return undefined; }
+    let go = true;
+    (async () => {
+      const { count } = await supabase.from("game_rules").select("id", { count: "exact", head: true }).eq("game_id", g.id);
+      if (go) setRuleCount(count || 0);
+    })();
+    return () => { go = false; };
+  }, [g.id, currentUser]);
+
   // Durée moyenne ventilée par nombre de joueurs (calculée à partir des parties).
   const byCount = useMemo(() => {
     if (!sessions || !sessions.length) return [];
@@ -6503,9 +6682,29 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         <ShoppingBag size={17} /> Acheter chez Ludum
       </a>
       {currentUser && (
-        <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ gameId: g.id }); }}>
+        <Btn full variant="teal" style={{ marginBottom: 12 }} onClick={() => { onClose(); openChrono({ gameId: g.id }); }}>
           <Clock size={17} /> Chronométrer une partie
         </Btn>
+      )}
+
+      {/* Points de regle : la memoire commune de la table */}
+      {currentUser && (
+        <button type="button" onClick={() => setShowRules(true)} title="Voir et compléter les points de règle de ce jeu"
+          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", background: "rgba(30,138,138,.07)", border: `1.5px solid ${C.teal}33`, borderRadius: 13, padding: "12px 16px", marginBottom: 18, cursor: "pointer", textAlign: "left", font: "inherit" }}
+          onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.13)"; }}
+          onMouseLeave={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.07)"; }}>
+          <BookOpen size={21} color={C.teal} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>Points de règle</span>
+            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
+              {ruleCount === null ? "…" : ruleCount === 0 ? "Aucun pour l'instant — ajoutez le premier" : `${ruleCount} point${ruleCount > 1 ? "s" : ""} noté${ruleCount > 1 ? "s" : ""} par les membres`}
+            </span>
+          </span>
+          {ruleCount > 0 && (
+            <span style={{ flexShrink: 0, background: C.teal, color: "#fff", borderRadius: 999, padding: "2px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{ruleCount}</span>
+          )}
+          <ChevronRight size={17} color={C.teal} style={{ flexShrink: 0 }} />
+        </button>
       )}
 
       {/* note moyenne */}
@@ -6828,6 +7027,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       {editing && <EditGameModal g={{ ...g, desc }} onClose={() => setEditing(false)} onSave={async (patch) => { await updateGame(g.id, patch); setEditing(false); setToast("Jeu mis à jour."); }} />}
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
       {showScale && <RatingScaleModal onClose={() => setShowScale(false)} />}
+      {showRules && <GameRulesModal gameId={g.id} gameName={g.name} onClose={() => setShowRules(false)} onCount={setRuleCount} />}
       {showSessions && <SessionsModal sessions={sessions} gameName={g.name} game={g} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
@@ -9491,6 +9691,7 @@ const BACKUP_TABLES = [
   ["game_weights", [["game_id", "owner_id"]]],
   ["game_discoveries", [["game_id", "user_id"]]],
   ["game_comments", [["created_at", "id"]]],
+  ["game_rules", [["created_at", "id"]]],
   ["loans", [["id"], ["created_at"]]],
   ["mechanic_suggestions", [["id"], ["name"]]],
   // Moments jeux
