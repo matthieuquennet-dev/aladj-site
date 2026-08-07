@@ -4379,7 +4379,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Cliquez sur <b>« Proposer une idée »</b>, donnez-lui un titre en une phrase et, si besoin, ajoutez le contexte. L'idée apparaît aussitôt pour tous les décisionnaires.</p>
             <p style={{ margin: "0 0 8px" }}>Chacun peut la <b>soutenir</b> (le pouce à gauche, avec son compteur — pratique pour voir ce qui fait consensus avant même de voter) et la <b>commenter</b> pour en discuter.</p>
-            <p style={{ margin: 0 }}>L'auteur d'une idée (et les administrateurs) peut la marquer <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
+            <p style={{ margin: "0 0 8px" }}>L'auteur d'une idée (et les administrateurs) peut la <b>modifier</b> à tout moment — titre et détails — via le bouton <b>Modifier</b> ; la mention <i>(modifiée)</i> apparaît alors sous l'idée. Les <b>commentaires</b> se corrigent de la même façon, avec le crayon à leur droite.</p>
+            <p style={{ margin: 0 }}>L'auteur (et les administrateurs) peut aussi marquer une idée <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
           </>,
         },
         {
@@ -4391,7 +4392,8 @@ function GuidePage() {
               <li><b>Le quorum</b> : le nombre de votants attendus. Le vote reste valable en deçà, mais l'écart est affiché en clair sur la carte (« il en manque 2 ») — de quoi relancer les retardataires.</li>
               <li><b>La date limite</b> : jour et heure de clôture. Le temps restant s'affiche en permanence.</li>
             </ul>
-            <p style={{ margin: 0 }}>Tous les décisionnaires reçoivent une <b>notification</b> à l'ouverture du vote. L'auteur (et les administrateurs) peut <b>clore le vote en avance</b> ou le supprimer.</p>
+            <p style={{ margin: "0 0 8px" }}>Tous les décisionnaires reçoivent une <b>notification</b> à l'ouverture du vote. L'auteur (et les administrateurs) peut <b>modifier</b> le vote, le <b>clore en avance</b> ou le supprimer.</p>
+            <p style={{ margin: 0 }}><b>Ce qu'on peut modifier, et jusqu'à quand.</b> Tant que <b>personne n'a voté</b>, tout est ouvert : question, réponses, mode de scrutin, quorum, date limite. Dès qu'un <b>premier bulletin</b> est déposé, la structure du scrutin se <b>gèle</b> — on ne peut plus ajouter ni retirer de réponse, ni passer de réponse unique à multiple, car cela fausserait les votes déjà exprimés. Restent modifiables : les <b>textes</b> (une faute de frappe ne change pas le sens d'un vote), le <b>quorum</b> et la <b>date limite</b>. Un bandeau vous rappelle la règle et le nombre de votants concernés.</p>
           </>,
         },
         {
@@ -4400,7 +4402,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Sélectionnez votre ou vos réponses, puis validez. <b>Vous pouvez modifier votre vote autant de fois que vous voulez jusqu'à la clôture</b> : rouvrez la carte, changez votre sélection, revalidez. Pour retirer complètement votre vote, décochez tout et validez.</p>
             <p style={{ margin: "0 0 8px" }}><b>Les résultats restent invisibles tant que le vote est ouvert.</b> Chacun ne voit que son propre bulletin — impossible de se laisser influencer par les votes déjà exprimés, ou de deviner qui a voté quoi. Seul le <b>nombre de votants</b> est affiché en direct, puisqu'il ne révèle rien de la répartition et qu'il sert à suivre le quorum.</p>
             <p style={{ margin: "0 0 8px" }}>À la clôture, les résultats apparaîssent sous forme de <b>barres</b> : voix et pourcentage par réponse, la réponse en tête en ambre, et votre propre choix signalé. Le vote bascule alors dans la liste « Terminés ».</p>
-            <p style={{ margin: 0 }}>Une exception : les <b>administrateurs</b> voient les résultats à tout moment, y compris en cours de vote. Un bandeau violet le rappelle explicitement quand c'est le cas, pour que personne ne s'y trompe.</p>
+            <p style={{ margin: 0 }}>Une exception : les <b>administrateurs</b> peuvent consulter les résultats à tout moment, y compris en cours de vote. Ils restent des votants comme les autres — leur bulletin s'affiche normalement — et les résultats provisoires sont <b>repliés par défaut</b> derrière un lien « Voir les résultats provisoires », précisément pour ne pas influencer leur propre vote. Le dépliant est signalé en violet et mentionne qu'il est réservé aux administrateurs.</p>
           </>,
         },
       ],
@@ -5244,6 +5246,9 @@ function IdeaBox({ setToast }) {
   const [busy, setBusy] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  // Modification d'une idee : son auteur ou un administrateur peuvent la corriger.
+  const [editId, setEditId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ title: "", content: "" });
 
   const load = useCallback(async () => {
     const [a, b, c] = await Promise.all([
@@ -5284,6 +5289,22 @@ function IdeaBox({ setToast }) {
       await supabase.from("decider_idea_supports").insert({ idea_id: id, user_id: currentUser.id });
     }
     await load();
+  };
+
+  const startEdit = (idea) => { setEditId(idea.id); setEditDraft({ title: idea.title, content: idea.content || "" }); };
+
+  const saveEdit = async () => {
+    const t = editDraft.title.trim();
+    if (!t) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("decider_ideas").update({
+      title: t.slice(0, 200), content: editDraft.content.trim().slice(0, 4000), updated_at: new Date().toISOString(),
+    }).eq("id", editId);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null);
+    await load();
+    if (setToast) setToast("Idée modifiée.");
   };
 
   const setStatus = async (idea, status) => {
@@ -5350,6 +5371,19 @@ function IdeaBox({ setToast }) {
                     <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, color: iSupport(idea.id) ? C.amber : "#8a7c6a", marginTop: 2 }}>{sup.length}</span>
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
+                    {editId === idea.id ? (
+                      <div>
+                        <Field label="L'idée en une phrase"><TextInput value={editDraft.title} maxLength={200} autoFocus onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} /></Field>
+                        <Field label="Détails">
+                          <textarea rows={4} value={editDraft.content} maxLength={4000} onChange={(e) => setEditDraft({ ...editDraft, content: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} />
+                        </Field>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editDraft.title.trim()}><Check size={14} /> Enregistrer</Btn>
+                          <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+                        </div>
+                      </div>
+                    ) : (
+                    <>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5, overflowWrap: "anywhere" }}>{idea.title}</span>
                       {done && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>TRANCHÉE</span>}
@@ -5359,6 +5393,7 @@ function IdeaBox({ setToast }) {
                       <span>par {mine ? "vous" : nameOf(idea.author_id)}</span>
                       <DeciderCrownFor id={idea.author_id} size={11} />
                       <span>· {new Date(idea.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}</span>
+                      {idea.updated_at && <span style={{ fontStyle: "italic" }}>(modifiée)</span>}
                     </div>
                     {idea.content && (
                       <p style={{ margin: "9px 0 0", fontSize: 14, color: "#5e5346", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{idea.content}</p>
@@ -5367,6 +5402,7 @@ function IdeaBox({ setToast }) {
                       <Btn size="sm" variant="soft" onClick={() => setOpenId(isOpen ? null : idea.id)}>
                         <MessageCircle size={14} /> {cs.length > 0 ? `${cs.length} commentaire${cs.length > 1 ? "s" : ""}` : "Commenter"}
                       </Btn>
+                      {canTouch && <Btn size="sm" variant="soft" onClick={() => startEdit(idea)}><Edit3 size={14} /> Modifier</Btn>}
                       {canTouch && !done && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "done")}><Check size={14} /> Marquer tranchée</Btn>}
                       {canTouch && done && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "open")}>Rouvrir</Btn>}
                       {canTouch && !archived && <Btn size="sm" variant="soft" onClick={() => setStatus(idea, "archived")}>Archiver</Btn>}
@@ -5374,6 +5410,8 @@ function IdeaBox({ setToast }) {
                       {canTouch && <Btn size="sm" variant="danger" onClick={() => removeIdea(idea)}><Trash2 size={14} /></Btn>}
                     </div>
                     {isOpen && <IdeaComments ideaId={idea.id} rows={cs} onChange={load} nameOf={nameOf} />}
+                    </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -5397,6 +5435,18 @@ function IdeaComments({ ideaId, rows, onChange, nameOf }) {
   const { currentUser, askConfirm } = useApp();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  const saveEdit = async () => {
+    const t = editText.trim();
+    if (!t) return;
+    setBusy(true);
+    await supabase.from("decider_idea_comments")
+      .update({ content: t.slice(0, 2000), updated_at: new Date().toISOString() }).eq("id", editId);
+    setBusy(false); setEditId(null); setEditText("");
+    await onChange();
+  };
 
   const send = async () => {
     const t = text.trim();
@@ -5425,10 +5475,26 @@ function IdeaComments({ ideaId, rows, onChange, nameOf }) {
                 <DeciderCrownFor id={c.author_id} size={11} />
                 <span>· {new Date(c.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
               </div>
-              <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{c.content}</div>
+              {editId === c.id ? (
+                <div>
+                  <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} maxLength={2000} style={{ ...inputStyle, resize: "vertical", marginBottom: 7 }} />
+                  <div style={{ display: "flex", gap: 7 }}>
+                    <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editText.trim()}>Enregistrer</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => { setEditId(null); setEditText(""); }}>Annuler</Btn>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                  {c.content}
+                  {c.updated_at && <span style={{ fontSize: 11.5, color: "#9c8d79", fontStyle: "italic" }}> (modifié)</span>}
+                </div>
+              )}
             </div>
-            {(c.author_id === currentUser?.id || currentUser?.admin) && (
-              <button onClick={() => remove(c)} title="Supprimer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, flexShrink: 0 }}><Trash2 size={14} /></button>
+            {(c.author_id === currentUser?.id || currentUser?.admin) && editId !== c.id && (
+              <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
+                <button onClick={() => { setEditId(c.id); setEditText(c.content); }} title="Modifier" style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
+                <button onClick={() => remove(c)} title="Supprimer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+              </div>
             )}
           </div>
         ))}
@@ -5451,6 +5517,7 @@ function PollBoard({ setToast }) {
   const [results, setResults] = useState({});   // poll_id -> [{ option_id, votes }]
   const [err, setErr] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);   // vote en cours de modification
 
   const load = useCallback(async () => {
     const [p, o, v, st] = await Promise.all([
@@ -5518,7 +5585,7 @@ function PollBoard({ setToast }) {
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
                     st={status[p.id]} result={results[p.id]} users={users}
-                    onChanged={load} onRemove={removePoll} onClose={closeNow} setToast={setToast} />
+                    onChanged={load} onRemove={removePoll} onClose={closeNow} onEdit={setEditing} setToast={setToast} />
                 ))}
               </div>
             </>
@@ -5531,7 +5598,7 @@ function PollBoard({ setToast }) {
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
                     st={status[p.id]} result={results[p.id]} users={users}
-                    onChanged={load} onRemove={removePoll} onClose={closeNow} setToast={setToast} />
+                    onChanged={load} onRemove={removePoll} onClose={closeNow} onEdit={setEditing} setToast={setToast} />
                 ))}
               </div>
             </>
@@ -5539,13 +5606,22 @@ function PollBoard({ setToast }) {
         </>
       )}
 
-      {creating && <CreatePollModal onClose={() => setCreating(false)} onDone={async () => { setCreating(false); await load(); if (setToast) setToast("Vote lancé — les décisionnaires sont prévenus."); }} />}
+      {creating && <PollFormModal onClose={() => setCreating(false)} onDone={async () => { setCreating(false); await load(); if (setToast) setToast("Vote lancé — les décisionnaires sont prévenus."); }} />}
+      {editing && (
+        <PollFormModal
+          poll={editing}
+          options={options.filter((o) => o.poll_id === editing.id)}
+          voterCount={status[editing.id]?.voterCount ?? 0}
+          onClose={() => setEditing(null)}
+          onDone={async () => { setEditing(null); await load(); if (setToast) setToast("Vote modifié."); }}
+        />
+      )}
     </div>
   );
 }
 
 /* ---- Une carte de vote ----------------------------------------------------- */
-function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, onRemove, onClose, setToast }) {
+function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, onRemove, onClose, onEdit, setToast }) {
   const { currentUser } = useApp();
   const [sel, setSel] = useState(myOptionIds);
   const [busy, setBusy] = useState(false);
@@ -5562,7 +5638,11 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
 
   // Les resultats ne sont charges que si le vote est clos, ou si l'on est
   // administrateur : le serveur refuse purement et simplement les autres cas.
-  const showResults = !!result;
+  // MAIS tant que le vote est ouvert, le bulletin reste prioritaire : un
+  // administrateur doit pouvoir voter comme tout le monde dans un vote en cours.
+  const showResults = !!result && closedNow;
+  const canPeek = !!result && !closedNow;   // resultats provisoires (administrateurs)
+  const [peek, setPeek] = useState(false);
   const totalVotes = (result || []).reduce((s, r) => s + (r.votes || 0), 0);
   const maxVotes = Math.max(1, ...(result || []).map((r) => r.votes || 0));
 
@@ -5627,11 +5707,6 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
       {/* Bulletin ou resultats */}
       {showResults ? (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
-          {!closedNow && (
-            <div style={{ fontSize: 12.5, color: C.purple, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", display: "flex", alignItems: "center", gap: 5 }}>
-              <Eye size={13} /> Résultats provisoires — visibles par les administrateurs uniquement
-            </div>
-          )}
           {(result || []).map((r) => {
             const pct = totalVotes > 0 ? Math.round((r.votes / totalVotes) * 100) : 0;
             const isMine = myOptionIds.includes(r.option_id);
@@ -5682,11 +5757,44 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
             )}
             {!iVoted && <span style={{ fontSize: 12.5, color: "#9c8d79" }}>Les résultats seront révélés à la clôture.</span>}
           </div>
+
+          {/* Resultats provisoires : reserves aux administrateurs, replies par
+              defaut pour ne pas influencer son propre vote. */}
+          {canPeek && (
+            <div style={{ marginTop: 6, borderTop: "1px dashed #e6dcc9", paddingTop: 10 }}>
+              <button type="button" onClick={() => setPeek((v) => !v)}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, color: C.purple }}>
+                <Eye size={13} /> {peek ? "Masquer" : "Voir"} les résultats provisoires
+                <span style={{ fontWeight: 400, color: "#9c8d79" }}>· administrateurs uniquement</span>
+              </button>
+              {peek && (
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginTop: 10 }}>
+                  {(result || []).map((r) => {
+                    const tot = (result || []).reduce((a, b) => a + (b.votes || 0), 0);
+                    const mx = Math.max(1, ...(result || []).map((x) => x.votes || 0));
+                    const pct = tot > 0 ? Math.round((r.votes / tot) * 100) : 0;
+                    return (
+                      <div key={r.option_id}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, marginBottom: 3 }}>
+                          <span style={{ color: "#5e5346", minWidth: 0, overflowWrap: "anywhere" }}>{r.label}</span>
+                          <span style={{ flexShrink: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.purple }}>{r.votes} <span style={{ fontSize: 11.5, fontWeight: 600, color: "#9c8d79" }}>({pct} %)</span></span>
+                        </div>
+                        <div style={{ height: 9, background: "#eee4d2", borderRadius: 99, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${tot > 0 ? (r.votes / mx) * 100 : 0}%`, background: C.purple, borderRadius: 99 }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {canManage && (
         <div style={{ display: "flex", gap: 8, marginTop: 14, borderTop: "1px solid #f0e8d8", paddingTop: 12, flexWrap: "wrap" }}>
+          {!closedNow && <Btn size="sm" variant="soft" onClick={() => onEdit(poll)}><Edit3 size={14} /> Modifier</Btn>}
           {!closedNow && <Btn size="sm" variant="soft" onClick={() => onClose(poll)}><Lock size={14} /> Clore maintenant</Btn>}
           <Btn size="sm" variant="danger" onClick={() => onRemove(poll)}><Trash2 size={14} /> Supprimer</Btn>
         </div>
@@ -5695,38 +5803,94 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
   );
 }
 
-/* ---- Creation d'un vote ---------------------------------------------------- */
-function CreatePollModal({ onClose, onDone }) {
+/* ---- Creation ET modification d'un vote ------------------------------------
+   Un seul formulaire pour les deux usages : les regles de validation ne
+   peuvent pas diverger entre la creation et la correction.
+   Une fois qu'au moins une personne a vote, la structure du scrutin est gelee
+   (nombre de reponses, mono/multi) : la modifier fausserait les bulletins deja
+   deposes. Les libelles, eux, restent corrigeables -- une faute de frappe ne
+   change pas le sens d'un vote.
+   --------------------------------------------------------------------------- */
+function PollFormModal({ poll = null, options = [], voterCount = 0, onClose, onDone }) {
   const { currentUser } = useApp();
+  const editMode = !!poll;
+  const frozen = editMode && voterCount > 0;   // structure gelee : des bulletins existent
   const today = new Date().toISOString().slice(0, 10);
   const inAWeek = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const closeD = poll ? new Date(poll.closes_at) : null;
   const [f, setF] = useState({
-    question: "", description: "", multi: false, maxChoices: "",
-    minVoters: 2, closeDate: inAWeek, closeTime: "20:00",
+    question: poll ? poll.question : "",
+    description: poll ? (poll.description || "") : "",
+    multi: poll ? !!poll.multi : false,
+    maxChoices: poll && poll.max_choices ? String(poll.max_choices) : "",
+    minVoters: poll ? poll.min_voters : 2,
+    closeDate: closeD ? `${closeD.getFullYear()}-${String(closeD.getMonth() + 1).padStart(2, "0")}-${String(closeD.getDate()).padStart(2, "0")}` : inAWeek,
+    closeTime: closeD ? `${String(closeD.getHours()).padStart(2, "0")}:${String(closeD.getMinutes()).padStart(2, "0")}` : "20:00",
   });
-  const [opts, setOpts] = useState(["", ""]);
+  // Chaque reponse garde son identifiant : c'est lui qui rattache les bulletins.
+  const [opts, setOpts] = useState(
+    editMode && options.length
+      ? options.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)).map((o) => ({ id: o.id, label: o.label }))
+      : [{ id: null, label: "" }, { id: null, label: "" }]
+  );
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const setOpt = (i, v) => setOpts((a) => a.map((x, j) => j === i ? v : x));
-  const addOpt = () => setOpts((a) => a.length >= 12 ? a : [...a, ""]);
+  const setOpt = (i, v) => setOpts((a) => a.map((x, j) => j === i ? { ...x, label: v } : x));
+  const addOpt = () => setOpts((a) => a.length >= 12 ? a : [...a, { id: null, label: "" }]);
   const delOpt = (i) => setOpts((a) => a.length <= 2 ? a : a.filter((_, j) => j !== i));
 
   const submit = async () => {
     setErr("");
     const q = f.question.trim();
-    const clean = opts.map((o) => o.trim()).filter(Boolean);
+    const kept = opts.map((o) => ({ id: o.id, label: o.label.trim() })).filter((o) => o.label);
+    const labels = kept.map((o) => o.label);
     if (!q) { setErr("Formulez la question soumise au vote."); return; }
-    if (clean.length < 2) { setErr("Il faut au moins deux réponses possibles."); return; }
-    if (new Set(clean.map((c) => c.toLowerCase())).size !== clean.length) { setErr("Deux réponses sont identiques."); return; }
+    if (kept.length < 2) { setErr("Il faut au moins deux réponses possibles."); return; }
+    if (new Set(labels.map((c) => c.toLowerCase())).size !== labels.length) { setErr("Deux réponses sont identiques."); return; }
     const closesAt = new Date(`${f.closeDate}T${f.closeTime}:00`);
     if (isNaN(closesAt.getTime())) { setErr("Date limite invalide."); return; }
     if (closesAt.getTime() <= Date.now()) { setErr("La date limite doit être dans le futur."); return; }
     const minV = Math.max(1, parseInt(f.minVoters, 10) || 1);
     const maxC = f.multi && f.maxChoices ? Math.max(1, parseInt(f.maxChoices, 10)) : null;
-    if (maxC && maxC > clean.length) { setErr("Le nombre maximum de choix dépasse le nombre de réponses."); return; }
+    if (maxC && maxC > kept.length) { setErr("Le nombre maximum de choix dépasse le nombre de réponses."); return; }
 
     setBusy(true);
+
+    // ---- Modification d'un vote existant -----------------------------------
+    if (editMode) {
+      const patch = { question: q.slice(0, 300), description: f.description.trim().slice(0, 4000), min_voters: minV, closes_at: closesAt.toISOString() };
+      if (!frozen) { patch.multi = !!f.multi; patch.max_choices = maxC; }
+      const { error } = await supabase.from("polls").update(patch).eq("id", poll.id);
+      if (error) { setBusy(false); setErr(error.message); return; }
+
+      // libelles corriges
+      for (const o of kept.filter((x) => x.id)) {
+        const before = options.find((x) => x.id === o.id);
+        if (before && before.label !== o.label) {
+          await supabase.from("poll_options").update({ label: o.label.slice(0, 200) }).eq("id", o.id);
+        }
+      }
+      if (!frozen) {
+        const removed = options.filter((o) => !kept.some((k) => k.id === o.id));
+        if (removed.length) await supabase.from("poll_options").delete().in("id", removed.map((o) => o.id));
+        const added = kept.filter((o) => !o.id);
+        if (added.length) {
+          const { error: aErr } = await supabase.from("poll_options")
+            .insert(added.map((o, i) => ({ poll_id: poll.id, label: o.label.slice(0, 200), sort_order: options.length + i })));
+          if (aErr) { setBusy(false); setErr(aErr.message); return; }
+        }
+      }
+      // ordre d'affichage remis a plat
+      for (let i = 0; i < kept.length; i++) {
+        if (kept[i].id) await supabase.from("poll_options").update({ sort_order: i }).eq("id", kept[i].id);
+      }
+      setBusy(false);
+      await onDone();
+      return;
+    }
+
+    // ---- Creation ----------------------------------------------------------
     const { data, error } = await supabase.from("polls").insert({
       author_id: currentUser.id, question: q.slice(0, 300), description: f.description.trim().slice(0, 4000),
       multi: !!f.multi, max_choices: maxC, min_voters: minV, closes_at: closesAt.toISOString(),
@@ -5734,7 +5898,7 @@ function CreatePollModal({ onClose, onDone }) {
     if (error) { setBusy(false); setErr(error.message); return; }
 
     const { error: oErr } = await supabase.from("poll_options")
-      .insert(clean.map((label, i) => ({ poll_id: data.id, label: label.slice(0, 200), sort_order: i })));
+      .insert(labels.map((label, i) => ({ poll_id: data.id, label: label.slice(0, 200), sort_order: i })));
     setBusy(false);
     if (oErr) {
       // Un vote sans reponse n'a aucun sens : on annule tout plutot que de
@@ -5747,8 +5911,16 @@ function CreatePollModal({ onClose, onDone }) {
   };
 
   return (
-    <Modal open onClose={onClose} title="🗳️ Lancer un vote" width={580}>
+    <Modal open onClose={onClose} title={editMode ? "✏️ Modifier le vote" : "🗳️ Lancer un vote"} width={580}>
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      {frozen && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(232,163,23,.11)", borderRadius: 11, padding: "10px 13px", marginBottom: 16 }}>
+          <Info size={16} color={C.amber} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span style={{ fontSize: 13, color: "#5e5346", lineHeight: 1.55 }}>
+            <b>{voterCount} personne{voterCount > 1 ? "s ont" : " a"} déjà voté.</b> Vous pouvez corriger les textes, le quorum et la date limite, mais plus <b>ajouter ni retirer de réponse</b>, ni changer le mode de scrutin : cela fausserait les bulletins déjà déposés.
+          </span>
+        </div>
+      )}
 
       <Field label="La question soumise au vote">
         <TextInput value={f.question} maxLength={300} autoFocus placeholder="Ex. : quelle date pour l'assemblée générale ?" onChange={(e) => setF({ ...f, question: e.target.value })} />
@@ -5762,18 +5934,18 @@ function CreatePollModal({ onClose, onDone }) {
           {opts.map((o, i) => (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <span style={{ width: 20, flexShrink: 0, color: "#c3b49b", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, textAlign: "right" }}>{i + 1}</span>
-              <TextInput value={o} maxLength={200} placeholder={`Réponse ${i + 1}`} onChange={(e) => setOpt(i, e.target.value)} style={{ flex: 1 }} />
-              {opts.length > 2 && (
+              <TextInput value={o.label} maxLength={200} placeholder={`Réponse ${i + 1}`} onChange={(e) => setOpt(i, e.target.value)} style={{ flex: 1 }} />
+              {opts.length > 2 && !frozen && (
                 <button onClick={() => delOpt(i)} title="Retirer cette réponse" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, flexShrink: 0, padding: 0 }}><X size={16} /></button>
               )}
             </div>
           ))}
         </div>
-        {opts.length < 12 && <Btn size="sm" variant="soft" onClick={addOpt} style={{ marginTop: 9 }}><Plus size={14} /> Ajouter une réponse</Btn>}
+        {opts.length < 12 && !frozen && <Btn size="sm" variant="soft" onClick={addOpt} style={{ marginTop: 9 }}><Plus size={14} /> Ajouter une réponse</Btn>}
       </Field>
 
       <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.multi ? "rgba(30,138,138,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.multi ? C.teal : "transparent"}`, marginBottom: 14, cursor: "pointer" }}>
-        <input type="checkbox" checked={f.multi} onChange={(e) => setF({ ...f, multi: e.target.checked, maxChoices: "" })} style={{ width: 18, height: 18, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
+        <input type="checkbox" checked={f.multi} disabled={frozen} onChange={(e) => setF({ ...f, multi: e.target.checked, maxChoices: "" })} style={{ width: 18, height: 18, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
         <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>
           Autoriser plusieurs réponses
           <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 3 }}>
@@ -5798,7 +5970,7 @@ function CreatePollModal({ onClose, onDone }) {
         <Field label="à"><TextInput type="time" value={f.closeTime} onChange={(e) => setF({ ...f, closeTime: e.target.value })} /></Field>
       </div>
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.07)", borderRadius: 11, padding: "10px 13px", marginBottom: 16 }}>
+      <div style={{ display: editMode ? "none" : "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.07)", borderRadius: 11, padding: "10px 13px", marginBottom: 16 }}>
         <Info size={16} color={C.purple} style={{ flexShrink: 0, marginTop: 2 }} />
         <span style={{ fontSize: 13, color: "#5e5346", lineHeight: 1.55 }}>
           Les résultats resteront <b>invisibles jusqu'à la clôture</b> : chacun ne voit que son propre bulletin, et peut le modifier jusqu'au dernier moment. Seuls les administrateurs y ont accès en cours de route. Tous les décisionnaires seront prévenus de l'ouverture du vote.
@@ -5807,7 +5979,7 @@ function CreatePollModal({ onClose, onDone }) {
 
       <div style={{ display: "flex", gap: 10 }}>
         <Btn variant="teal" onClick={submit} disabled={busy}>
-          {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> Lancer le vote</>}
+          {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> {editMode ? "Enregistrer" : "Lancer le vote"}</>}
         </Btn>
         <Btn variant="soft" onClick={onClose}>Annuler</Btn>
       </div>
@@ -12369,14 +12541,19 @@ function MyLudoPage({ setToast, setPage }) {
 
 function StatCard({ icon: Icon, color, n, label, small, onClick, title }) {
   const clickable = typeof onClick === "function";
-  const base = { flex: "1 1 160px", background: C.paper, borderRadius: 18, padding: "18px 22px", border: "1px solid #ece2d0", display: "flex", alignItems: "center", gap: 14, minWidth: 0 };
+  const base = { flex: small ? "1 1 190px" : "1 1 160px", background: C.paper, borderRadius: 18, padding: small ? "16px 16px" : "18px 22px", border: "1px solid #ece2d0", display: "flex", alignItems: "center", gap: small ? 11 : 14, minWidth: 0, boxSizing: "border-box", maxWidth: "100%", overflow: "hidden" };
   const inner = (
     <>
       <span style={{ width: 50, height: 50, borderRadius: 14, background: `${color}1a`, display: "grid", placeItems: "center", flexShrink: 0 }}><Icon size={24} color={color} /></span>
-      <div style={{ minWidth: 0, textAlign: "left" }}>
-        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: small ? 18 : 28, lineHeight: 1 }}>{n}</div>
-        <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
-          {label}{clickable && <ChevronRight size={13} color={color} />}
+      <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+        <div style={{
+          fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy,
+          fontSize: small ? "clamp(14px,3.6vw,18px)" : 28, lineHeight: 1.15,
+          overflowWrap: "anywhere", hyphens: "auto",
+        }}>{n}</div>
+        <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2, display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+          {clickable && <ChevronRight size={13} color={color} style={{ flexShrink: 0 }} />}
         </div>
       </div>
     </>
