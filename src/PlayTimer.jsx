@@ -51,6 +51,48 @@ const initials = (name = '?') =>
    navigateur quand l'onglet passe en arriere-plan : on le redemande au
    retour au premier plan.
    --------------------------------------------------------------------- */
+/* Palette des couleurs de jeu -- identique a celle du site (App.jsx).
+   Elle est redefinie ici car PlayTimer est un module autonome ; les cles
+   doivent rester strictement alignees sur profiles.fav_colors. */
+const GAME_COLORS = [
+  { key: 'rouge',     label: 'Rouge',     hex: '#D64545' },
+  { key: 'bleu',      label: 'Bleu',      hex: '#2F6FB3' },
+  { key: 'vert',      label: 'Vert',      hex: '#3B9B5B' },
+  { key: 'jaune',     label: 'Jaune',     hex: '#E8B21C' },
+  { key: 'orange',    label: 'Orange',    hex: '#E08A1E' },
+  { key: 'violet',    label: 'Violet',    hex: '#7E4FA0' },
+  { key: 'rose',      label: 'Rose',      hex: '#D96BA0' },
+  { key: 'noir',      label: 'Noir',      hex: '#2B2B2B' },
+  { key: 'blanc',     label: 'Blanc',     hex: '#F3EFE6' },
+  { key: 'gris',      label: 'Gris',      hex: '#9AA0A6' },
+  { key: 'marron',    label: 'Marron',    hex: '#8A5A2B' },
+  { key: 'turquoise', label: 'Turquoise', hex: '#1FA8A0' },
+];
+const hexOfColor = (k) => (GAME_COLORS.find((c) => c.key === k) || {}).hex || null;
+// Texte lisible sur un aplat : on calcule la luminance plutot que de tenir
+// une liste de couleurs claires a maintenir a la main.
+function readableOn(hex) {
+  if (!hex) return '#fff';
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 165 ? '#1A3A5C' : '#fff';
+}
+const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+
+/* Ecran large en paysage : on bascule sur la disposition tablette. */
+function useLandscape() {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(orientation: landscape) and (min-width: 820px) and (min-height: 480px)');
+    const on = () => setWide(mq.matches);
+    on();
+    if (mq.addEventListener) { mq.addEventListener('change', on); return () => mq.removeEventListener('change', on); }
+    mq.addListener(on); return () => mq.removeListener(on);
+  }, []);
+  return wide;
+}
+
 const WAKE_LOCK_SUPPORTED = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
 function useKeepAwake(enabled) {
@@ -303,6 +345,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
 
+  // (1) Chronos deja lances sur ce moment jeux : on propose de les rejoindre
+  // plutot que d'en creer un deuxieme par megarde.
+  const [eventSessions, setEventSessions] = useState([]);
+  // (3) Disposition tablette (paysage). null = automatique selon l'ecran.
+  const [tabletPref, setTabletPref] = useState(null);
+  const wideScreen = useLandscape();
+  const tablet = tabletPref === null ? wideScreen : tabletPref;
+  // (2)/(3) Panneaux : choix d'une couleur, composition des equipes
+  const [colorFor, setColorFor] = useState(null);
+  const [teamsOpen, setTeamsOpen] = useState(false);
+
   const sid = session?.id;
   const isHost = !!(session && myUid && session.host_profile_id === myUid);
   const myPlayer = useMemo(
@@ -324,20 +377,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const ids = [...new Set(rows.map((r) => r.profile_id).filter(Boolean))];
     let byId = {};
     if (ids.length) {
-      const { data } = await supabase.from('profiles').select('id,name,avatar_url').in('id', ids);
+      const { data } = await supabase.from('profiles').select('id,name,avatar_url,fav_colors').in('id', ids);
       (data || []).forEach((p) => { byId[p.id] = p; });
     }
     return rows.map((r) => ({
       ...r,
       name: r.profile_id ? (byId[r.profile_id]?.name || 'Membre') : (r.guest_name || 'Invité'),
       avatar_url: r.profile_id ? byId[r.profile_id]?.avatar_url : null,
+      favColors: r.profile_id ? (byId[r.profile_id]?.fav_colors || []) : [],
     }));
   }, [supabase]);
 
   const refetchPlayers = useCallback(async (sessionId) => {
     const { data } = await supabase
       .from('play_session_players')
-      .select('id,profile_id,guest_name,auth_user_id,score')
+      .select('id,profile_id,guest_name,auth_user_id,score,team,color')
       .eq('session_id', sessionId)
       .order('sort_order', { ascending: true, nullsFirst: false })
       .order('joined_at', { ascending: true });
@@ -395,14 +449,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [supabase, refetchTotals, refetchPlayers]);
 
   // ---- rejoindre une partie (membre, ou invité avec son prénom) ------
-  const joinNow = useCallback(async (guestName) => {
+  const joinNow = useCallback(async (guestName, code) => {
+    const theCode = (code || joinCode || '').toUpperCase();
     const { error: e } = await supabase.rpc('join_session', {
-      p_join_code: joinCode,
+      p_join_code: theCode,
       p_guest_name: currentUser ? null : ((guestName && guestName.trim()) || 'Invité'),
     });
     if (e) throw e;
     const { data: sess } = await supabase.from('play_sessions')
-      .select('*').eq('join_code', joinCode.toUpperCase()).single();
+      .select('*').eq('join_code', theCode).single();
     if (!sess) throw new Error('Partie introuvable');
     setSession(sess);
     await refetchPlayers(sess.id);
@@ -466,6 +521,32 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
         // flux HÔTE -> setup
         if (eventId) {
+          // (1) Un chrono tourne peut-etre deja pour ce moment : on le proposera
+          // en haut de l'ecran de preparation, pour rejoindre au lieu de doubler.
+          const { data: act } = await supabase.from('play_sessions')
+            .select('id,join_code,status,game_id,created_at,host_profile_id')
+            .eq('event_id', eventId).in('status', ['lobby', 'running'])
+            .order('created_at', { ascending: false });
+          if ((act || []).length) {
+            const gIds2 = [...new Set(act.map((x) => x.game_id).filter(Boolean))];
+            const hIds = [...new Set(act.map((x) => x.host_profile_id).filter(Boolean))];
+            const [{ data: gs }, { data: hs }, { data: cnt }] = await Promise.all([
+              gIds2.length ? supabase.from('games').select('id,name,image_url').in('id', gIds2) : Promise.resolve({ data: [] }),
+              hIds.length ? supabase.from('profiles').select('id,name').in('id', hIds) : Promise.resolve({ data: [] }),
+              supabase.from('play_session_players').select('session_id').in('session_id', act.map((x) => x.id)),
+            ]);
+            const gByI = {}; (gs || []).forEach((g) => { gByI[g.id] = g; });
+            const hByI = {}; (hs || []).forEach((h) => { hByI[h.id] = h.name; });
+            const nBy = {}; (cnt || []).forEach((r) => { nBy[r.session_id] = (nBy[r.session_id] || 0) + 1; });
+            if (!cancelled) setEventSessions(act.map((x) => ({
+              ...x,
+              gameName: gByI[x.game_id]?.name || 'Partie',
+              gameImg: gByI[x.game_id]?.image_url || null,
+              hostName: hByI[x.host_profile_id] || 'un membre',
+              nPlayers: nBy[x.id] || 0,
+            })));
+          }
+
           const { data: eg } = await supabase.from('event_games').select('game_id').eq('event_id', eventId);
           const gIds = [...new Set((eg || []).map((r) => r.game_id))];
           let gamesData = [];
@@ -668,10 +749,80 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   };
 
   // ---- score en direct (partage entre tous les telephones) -----------
+  // (2) Mode equipe : un score saisi pour un joueur est reporte a l'identique
+  // sur ses coequipiers. C'est bien le meme score, pas une somme : une equipe
+  // marque des points ensemble.
   const setPlayerScore = async (playerId, score) => {
-    setPlayers((ps) => ps.map((p) => (p.id === playerId ? { ...p, score } : p))); // optimiste
-    await rpc('set_player_score', { p_session_id: sid, p_player_id: playerId, p_score: score });
+    const me = players.find((p) => p.id === playerId);
+    const targets = (me && me.team != null)
+      ? players.filter((p) => p.team === me.team)
+      : (me ? [me] : []);
+    const ids = targets.map((p) => p.id);
+    setPlayers((ps) => ps.map((p) => (ids.includes(p.id) ? { ...p, score } : p))); // optimiste
+    for (const id of ids) {
+      await rpc('set_player_score', { p_session_id: sid, p_player_id: id, p_score: score });
+    }
   };
+
+  // ---- equipes et couleurs -------------------------------------------
+  const setPlayerTeam = async (playerId, team) => {
+    setPlayers((ps) => ps.map((p) => (p.id === playerId ? { ...p, team } : p)));
+    await rpc('aladj_set_player_team', { p_session_id: sid, p_player_id: playerId, p_team: team });
+    // Un joueur qui rejoint une equipe adopte aussitot le score de celle-ci.
+    if (team != null) {
+      const mate = players.find((p) => p.id !== playerId && p.team === team);
+      if (mate && (mate.score || 0) !== 0) {
+        setPlayers((ps) => ps.map((p) => (p.id === playerId ? { ...p, score: mate.score } : p)));
+        await rpc('set_player_score', { p_session_id: sid, p_player_id: playerId, p_score: mate.score });
+      }
+    }
+  };
+  const setPlayerColor = async (playerId, color) => {
+    setPlayers((ps) => ps.map((p) => (p.id === playerId ? { ...p, color } : p)));
+    await rpc('aladj_set_player_color', { p_session_id: sid, p_player_id: playerId, p_color: color });
+  };
+
+  // Y a-t-il des equipes ? On le deduit des joueurs : aucun reglage a stocker
+  // en plus, et tous les appareils sont d'accord sans synchronisation dediee.
+  const teamsOn = players.some((p) => p.team != null);
+
+  /* Attribution des couleurs, dans cet ordre :
+       1. la couleur choisie a la main pour cette partie ;
+       2. la premiere couleur preferee du profil encore libre ;
+       3. la premiere couleur libre de la palette.
+     Le premier arrive garde sa couleur : c'est ce qui produit le repli sur la
+     2e ou 3e preference en cas de concurrence. */
+  const colorKeyOf = useMemo(() => {
+    const taken = new Set();
+    const map = {};
+    players.forEach((p) => { if (p.color) { map[p.id] = p.color; taken.add(p.color); } });
+    players.forEach((p) => {
+      if (map[p.id]) return;
+      const fav = (p.favColors || []).find((k) => k && !taken.has(k));
+      if (fav) { map[p.id] = fav; taken.add(fav); }
+    });
+    players.forEach((p, i) => {
+      if (map[p.id]) return;
+      const free = GAME_COLORS.find((c) => !taken.has(c.key));
+      map[p.id] = free ? free.key : GAME_COLORS[i % GAME_COLORS.length].key;
+      taken.add(map[p.id]);
+    });
+    return map;
+  }, [players]);
+
+  // En mode equipe, toute l'equipe prend la couleur de son premier membre.
+  const teamColorKey = useMemo(() => {
+    const m = {};
+    players.forEach((p) => {
+      if (p.team == null) return;
+      if (m[p.team] === undefined) m[p.team] = colorKeyOf[p.id];
+    });
+    return m;
+  }, [players, colorKeyOf]);
+
+  const hexFor = (p) => hexOfColor(
+    (teamsOn && p.team != null && teamColorKey[p.team]) ? teamColorKey[p.team] : colorKeyOf[p.id]
+  ) || ACCENTS[0];
 
   // ---- temps affichés ------------------------------------------------
   const liveExtra = useCallback((pid) => {
@@ -721,18 +872,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     return () => { go = false; };
   }, [supabase, currentUser?.id]);
 
-  const shell = (children) => (
+  const shell = (children, wide) => (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000, background: C.cream, color: C.navy,
+      position: 'fixed', inset: 0, zIndex: 1000, color: wide ? '#EAF1F8' : C.navy,
+      background: wide
+        ? 'radial-gradient(1200px 600px at 15% -10%, #24507d 0%, #16304c 45%, #10233a 100%)'
+        : C.cream,
       fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
     }}>
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '18px 16px 40px' }}>
+      <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.navy }}>
-            Chrono <span style={{ color: C.teal }}>ALADJ</span>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: wide ? '#fff' : C.navy }}>
+            Chrono <span style={{ color: wide ? '#5FD3D3' : C.teal }}>ALADJ</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {(game?.id || session?.game_id) && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
+            {!(wide && phase === 'running') && (game?.id || session?.game_id) && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
               <button onClick={() => setRulesOpen(true)} title="Points de regle de ce jeu"
                 style={{
                   border: `1.5px solid ${C.teal}55`, background: `${C.teal}12`, color: C.teal,
@@ -742,7 +896,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 📖 Regles{rulesCount ? ` (${rulesCount})` : ''}
               </button>
             )}
-            {wake.supported && (phase === 'running' || phase === 'lobby') && (
+            {wideScreen && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
+              <button onClick={() => setTabletPref(tablet ? false : true)}
+                title={tablet ? 'Revenir a la disposition telephone' : 'Passer en disposition tablette'}
+                style={{
+                  border: `1.5px solid ${tablet ? '#5FD3D3' : '#d9cdb6'}`, background: tablet ? 'rgba(95,211,211,.16)' : '#fff',
+                  color: tablet ? '#BFEFEF' : `${C.navy}88`, borderRadius: 999, padding: '6px 12px',
+                  fontFamily: TITLE, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                {tablet ? '📱 Vue téléphone' : '🖥️ Vue tablette'}
+              </button>
+            )}
+            {!(wide && phase === 'running') && wake.supported && (phase === 'running' || phase === 'lobby') && (
               <button onClick={() => setKeepAwake((v) => !v)}
                 title={keepAwake ? "L'ecran reste allume pendant la partie - toucher pour laisser le telephone se mettre en veille" : "Empecher la mise en veille pendant la partie"}
                 style={{
@@ -753,7 +918,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 {wake.active ? '\u2600\ufe0f Ecran allume' : '\ud83c\udf19 Veille normale'}
               </button>
             )}
-            <button onClick={quitNoSave} style={btnGhost}>Quitter</button>
+            <button onClick={quitNoSave} style={{ ...btnGhost, color: wide ? '#9FC0DC' : `${C.navy}99` }}>Quitter</button>
           </div>
         </div>
         {error && (
@@ -764,6 +929,23 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
         {children}
       </div>
+      {colorFor && (
+        <ColorSheet
+          player={players.find((p) => p.id === colorFor)}
+          currentKey={colorKeyOf[colorFor]}
+          takenKeys={players.filter((p) => p.id !== colorFor).map((p) => colorKeyOf[p.id])}
+          onPick={(k) => { setPlayerColor(colorFor, k); setColorFor(null); }}
+          onClose={() => setColorFor(null)}
+        />
+      )}
+      {teamsOpen && (
+        <TeamsSheet
+          players={players}
+          hexFor={hexFor}
+          onSet={setPlayerTeam}
+          onClose={() => setTeamsOpen(false)}
+        />
+      )}
       {rulesOpen && (game?.id || session?.game_id) && (
         <RulesSheet
           supabase={supabase}
@@ -805,6 +987,39 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   if (phase === 'setup') {
     return shell(
       <div>
+        {eventSessions.length > 0 && (
+          <Card>
+            <Label>{eventSessions.length > 1 ? 'Des chronos tournent deja' : 'Un chrono tourne deja'}</Label>
+            <p style={{ fontSize: 13, color: `${C.navy}99`, margin: '2px 0 10px' }}>
+              Sur ce moment jeux. Rejoignez plutot que de lancer un second chrono sur la meme table.
+            </p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {eventSessions.map((s) => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 11, background: '#fff', border: `1.5px solid ${C.teal}44`, borderRadius: 13, padding: '9px 11px' }}>
+                  {s.gameImg
+                    ? <img src={s.gameImg} alt="" style={{ width: 42, height: 42, borderRadius: 9, objectFit: 'cover', flex: '0 0 auto' }} />
+                    : <span style={{ width: 42, height: 42, borderRadius: 9, background: C.teal, flex: '0 0 auto' }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.gameName}</div>
+                    <div style={{ fontSize: 12, color: `${C.navy}99` }}>
+                      lance par {s.hostName} · {s.nPlayers} joueur{s.nPlayers > 1 ? 's' : ''} · {s.status === 'running' ? 'en cours' : 'en attente'}
+                    </div>
+                  </div>
+                  <button style={{ ...btnPrimary, flex: '0 0 auto', padding: '9px 14px', fontSize: 14 }}
+                    onClick={() => {
+                      setPhase('loading');
+                      joinNow(null, s.join_code).catch((err) => { setError(err.message || String(err)); setPhase('setup'); });
+                    }}>
+                    Rejoindre
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ textAlign: 'center', fontSize: 12.5, color: `${C.navy}77`, marginTop: 12, fontWeight: 700 }}>
+              — ou lancez une nouvelle partie ci-dessous —
+            </div>
+          </Card>
+        )}
         <Card>
           <Label>Jeu</Label>
           {eventGames.length > 1 ? (
@@ -943,6 +1158,194 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       );
     };
 
+    // ---------- disposition tablette (paysage) ----------
+    if (tablet) {
+      const bigPhase = (ph, label, total, started, color, disabled) => {
+        const running = activePhase === ph;
+        const paused = !running && started;
+        return (
+          <button onClick={disabled ? undefined : () => togglePhase(ph)} disabled={disabled}
+            style={{
+              flex: 1, borderRadius: 20, padding: '14px 16px', textAlign: 'left',
+              cursor: disabled ? 'default' : 'pointer', color: '#fff', minWidth: 0,
+              background: running
+                ? `linear-gradient(140deg, ${color}, ${color}bb)`
+                : (paused ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.07)'),
+              border: `1.5px solid ${running ? color : 'rgba(255,255,255,.14)'}`,
+              boxShadow: running ? `0 10px 30px -12px ${color}` : 'none',
+              opacity: disabled ? .35 : 1, transition: 'background .2s, box-shadow .2s',
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5, opacity: running ? 1 : .8, letterSpacing: .2 }}>
+              <span style={{ fontSize: 13 }}>{running ? '⏸' : (paused ? '▶' : '○')}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+            </div>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,4.4vw,48px)', lineHeight: 1.05, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+              {fmt(total)}
+            </div>
+          </button>
+        );
+      };
+
+      const chip = (label, on, onClick, tint) => (
+        <button onClick={onClick} style={{
+          border: `1.5px solid ${on ? (tint || '#5FD3D3') : 'rgba(255,255,255,.18)'}`,
+          background: on ? `${tint || '#5FD3D3'}22` : 'rgba(255,255,255,.05)',
+          color: on ? (tint || '#5FD3D3') : '#B9CDE0', borderRadius: 999, padding: '9px 16px',
+          fontFamily: TITLE, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
+        }}>{label}</button>
+      );
+
+      const cols = players.length <= 2 ? 2 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
+
+      return shell(
+        <div>
+          {scoreFor && (() => {
+            const sp = players.find((p) => p.id === scoreFor);
+            return sp ? (
+              <ScorePad key={sp.id} name={sp.name + (sp.team != null ? ` · équipe ${TEAM_LETTERS[sp.team]}` : '')} initialScore={sp.score || 0}
+                onClose={() => setScoreFor(null)}
+                onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
+            ) : null;
+          })()}
+
+          {/* Trois grands blocs de phase */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+            {bigPhase('setup', 'Mise en place', setupTotal, setupTotal > 0, '#1E8A8A', hasPlayed)}
+            {bigPhase('play', 'Partie', playTotal, (session?.play_seconds || 0) > 0, '#E8A317', hasWrapped)}
+            {bigPhase('teardown', 'Rangement', teardownTotal, teardownTotal > 0, '#6B3A7A', !hasPlayed)}
+          </div>
+
+          {/* Bandeau du jeu */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 18, padding: '10px 16px', marginBottom: 14 }}>
+            {game?.image_url
+              ? <img src={game.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', flex: '0 0 auto', boxShadow: '0 4px 14px rgba(0,0,0,.35)' }} />
+              : <span style={{ width: 52, height: 52, borderRadius: 12, background: 'rgba(255,255,255,.12)', flex: '0 0 auto' }} />}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game?.name || 'Partie en cours'}</div>
+              <div style={{ fontSize: 13, color: '#9FC0DC', display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 1 }}>
+                <span>Partie {session?.current_game || 1}</span>
+                {simul && <span style={{ color: '#C6A2DA' }}>· Simultané</span>}
+                {neutral && <span style={{ color: '#F0C46A' }}>· En pause</span>}
+                {teamsOn && <span style={{ color: '#5FD3D3' }}>· Mode équipe</span>}
+                {session?.join_code && <span>· Code {session.join_code}</span>}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
+              <div style={{ fontSize: 11, letterSpacing: 1, color: '#7FA3C4', fontWeight: 700, textTransform: 'uppercase' }}>Durée de jeu</div>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 30, color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmt(totalElapsed)}</div>
+            </div>
+          </div>
+
+          {/* Carres joueurs */}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 12, marginBottom: 14 }}>
+            {players.map((p) => {
+              const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
+              const clickable = activePhase === 'play';
+              const hex = hexFor(p);
+              const ink = readableOn(hex);
+              return (
+                <div key={p.id}
+                  onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
+                  style={{
+                    position: 'relative', borderRadius: 22, padding: '14px 16px 12px', minHeight: 168,
+                    display: 'flex', flexDirection: 'column',
+                    cursor: clickable ? 'pointer' : 'default',
+                    background: active ? `linear-gradient(150deg, ${hex}, ${hex}cc)` : 'rgba(255,255,255,.07)',
+                    border: `2px solid ${active ? '#fff' : `${hex}88`}`,
+                    boxShadow: active ? `0 16px 42px -14px ${hex}, 0 0 0 4px ${hex}33` : 'inset 0 0 0 1px rgba(255,255,255,.04)',
+                    transition: 'background .18s, box-shadow .18s, border-color .18s',
+                  }}>
+                  {/* Liseré de couleur, toujours visible même carré inactif */}
+                  {!active && <span style={{ position: 'absolute', left: 16, right: 16, top: 0, height: 4, borderRadius: '0 0 4px 4px', background: hex }} />}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
+                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={44} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, lineHeight: 1.15, color: active ? ink : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                      <div style={{ fontSize: 11.5, color: active ? `${ink}bb` : '#9FC0DC', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {p.team != null && <span style={{ fontWeight: 800 }}>Équipe {TEAM_LETTERS[p.team]}</span>}
+                        {!p.auth_user_id && <span>sans tél</span>}
+                      </div>
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
+                      style={{ flex: '0 0 auto', width: 26, height: 26, borderRadius: 8, cursor: 'pointer',
+                        background: hex, border: `2px solid ${active ? ink : 'rgba(255,255,255,.55)'}` }} />
+                  </div>
+
+                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
+                    style={{
+                      marginTop: 'auto', border: 'none', background: 'transparent', cursor: 'pointer',
+                      textAlign: 'left', padding: 0, color: active ? ink : '#fff', width: '100%',
+                    }}>
+                    <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(38px,5vw,58px)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                      {p.score || 0}
+                      <span style={{ fontSize: 15, opacity: .65, marginLeft: 5 }}>pts</span>
+                    </span>
+                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 4 }}>
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: active ? ink : '#BFD6EA', fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
+                    {active && <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: .6, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Barre du bas : accessoires et commandes de l'hote */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, alignItems: 'center', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 18, padding: '11px 14px' }}>
+            {chip(teamsOn ? '👥 Équipes' : '👥 Mode équipe', teamsOn, () => setTeamsOpen(true))}
+            {wake.supported && chip(wake.active ? '☀️ Écran allumé' : '🌙 Veille normale', wake.active, () => setKeepAwake((v) => !v), '#E8A317')}
+            {(game?.id || session?.game_id) && chip(`📖 Règles${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
+            {isHost && activePhase === 'play' && !simul && chip(neutral ? '▶ Reprendre' : '⏸ Pause', !!neutral, toggleNeutral, '#E8A317')}
+            {isHost && activePhase === 'play' && !simul && chip('🔁 Nouvelle partie', false, openNewGame)}
+            {isHost && activePhase === 'play' && !simul && chip('⚡ Tous en même temps', false, simulEnter, '#B784D0')}
+            {isHost && activePhase === 'play' && simul && chip('▶ Relancer tout le monde', true, simulResumeAll)}
+            {isHost && activePhase === 'play' && simul && chip('Mode normal', false, simulExit)}
+            <span style={{ flex: 1 }} />
+            {isHost && (
+              <button onClick={end} style={{
+                border: 'none', background: 'linear-gradient(140deg,#B5283A,#8d1f2d)', color: '#fff',
+                borderRadius: 999, padding: '11px 24px', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
+                cursor: 'pointer', boxShadow: '0 10px 26px -12px #B5283A',
+              }}>Terminer la partie</button>
+            )}
+          </div>
+
+          {newGamePrompt && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(10,25,42,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
+                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminee</div>
+                <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
+                  {anyScore ? 'Qui a gagne cette partie ? Le vainqueur est deduit des scores.' : 'Qui a gagne cette partie ? (laisse vide pour un cooperatif)'}
+                </div>
+                <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+                  {players.map((p) => {
+                    const won = newGameWinners.includes(p.id);
+                    return (
+                      <button key={p.id} onClick={() => { setWinnersTouched(true); toggleNewGameWinner(p.id); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
+                          border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
+                        <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={30} />
+                        <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                        {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
+                        <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
+                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>,
+        true
+      );
+    }
+
     return shell(
       <div>
         {scoreFor && (() => {
@@ -1048,15 +1451,20 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
                 style={{
                   background: C.white, borderRadius: 16, padding: '12px 14px',
-                  border: `2px solid ${active ? ACCENTS[i % ACCENTS.length] : 'transparent'}`,
-                  boxShadow: active ? `0 0 0 3px ${ACCENTS[i % ACCENTS.length]}22` : '0 1px 4px rgba(0,0,0,0.06)',
+                  border: `2px solid ${active ? hexFor(p) : `${hexFor(p)}40`}`,
+                  boxShadow: active ? `0 0 0 3px ${hexFor(p)}22` : '0 1px 4px rgba(0,0,0,0.06)',
                   cursor: clickable ? 'pointer' : 'default', transition: 'border-color .15s',
                 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Avatar name={p.name} url={p.avatar_url} color={ACCENTS[i % ACCENTS.length]} size={38} />
+                  <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={38} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
-                    {!p.auth_user_id && <div style={{ fontSize: 11, color: `${C.navy}88` }}>sans tel</div>}
+                    <div style={{ fontSize: 11, color: `${C.navy}88`, display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
+                        style={{ width: 11, height: 11, borderRadius: 3, background: hexFor(p), border: '1px solid rgba(0,0,0,.15)', cursor: 'pointer', flexShrink: 0 }} />
+                      {p.team != null && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
+                      {!p.auth_user_id && <span>sans tel</span>}
+                    </div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
                     style={{ border: `1.5px solid ${C.amber}`, background: '#FDF4E0', color: '#8a6a1f', borderRadius: 999,
@@ -1070,7 +1478,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                       style={{ ...orderBtn, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
                   </div>
                 </div>
-                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? ACCENTS[i % ACCENTS.length] : C.navy }}>
+                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? hexFor(p) : C.navy }}>
                   {fmt(shown(p.id))}
                 </div>
               </div>
@@ -1081,6 +1489,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>{teamsOn ? 'Equipes' : 'Mode equipe'}</button>
             {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
             {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
@@ -1169,6 +1578,87 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 }
 
 // ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
+/* Palette : choisir a la main la couleur d'un joueur. */
+function ColorSheet({ player, currentKey, takenKeys, onPick, onClose }) {
+  if (!player) return null;
+  const taken = new Set(takenKeys || []);
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 560, padding: '16px 16px 26px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>Couleur de {player.name}</div>
+          <button onClick={onClose} style={btnGhost}>Fermer</button>
+        </div>
+        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 14 }}>
+          Les couleurs deja prises par un autre joueur sont marquees d'un point.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 9 }}>
+          {GAME_COLORS.map((c) => {
+            const on = c.key === currentKey;
+            return (
+              <button key={c.key} onClick={() => onPick(c.key)} title={taken.has(c.key) ? `${c.label} (deja pris)` : c.label}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 4px', borderRadius: 13, cursor: 'pointer',
+                  border: on ? `2.5px solid ${C.navy}` : '1.5px solid #e6dcc9', background: '#fff' }}>
+                <span style={{ width: 34, height: 34, borderRadius: 10, background: c.hex, border: '1px solid rgba(0,0,0,.15)', position: 'relative' }}>
+                  {taken.has(c.key) && !on && <span style={{ position: 'absolute', top: 3, right: 3, width: 7, height: 7, borderRadius: '50%', background: '#fff', boxShadow: '0 0 0 1.5px rgba(0,0,0,.35)' }} />}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{c.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={() => onPick(null)} style={{ ...btnSecondary, width: '100%', marginTop: 12 }}>
+          Revenir a la couleur automatique
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* Composition des equipes. Un joueur sans equipe joue pour lui-meme. */
+function TeamsSheet({ players, hexFor, onSet, onClose }) {
+  const used = [...new Set(players.map((p) => p.team).filter((x) => x != null))].sort((a, b) => a - b);
+  const nextFree = (() => { for (let i = 0; i < TEAM_LETTERS.length; i++) if (!used.includes(i)) return i; return null; })();
+  const choices = nextFree == null ? used : [...used, nextFree];
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 Mode equipe</div>
+          <button onClick={onClose} style={btnGhost}>Fermer</button>
+        </div>
+        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 14, lineHeight: 1.5 }}>
+          Attribuez une equipe a chaque joueur. Le score saisi pour l'un est aussitot
+          reporté sur ses coequipiers, et toute l'equipe partage la même couleur.
+          Laissez sur <b>Seul</b> les joueurs qui jouent pour eux-mêmes.
+        </div>
+        <div style={{ display: 'grid', gap: 9 }}>
+          {players.map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 11, background: '#fff', border: '1px solid #e6dcc9', borderRadius: 13, padding: '9px 11px', flexWrap: 'wrap' }}>
+              <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={32} />
+              <span style={{ flex: 1, minWidth: 90, fontWeight: 700 }}>{p.name}</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button onClick={() => onSet(p.id, null)}
+                  style={{ padding: '6px 12px', borderRadius: 9, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 13,
+                    border: p.team == null ? `2px solid ${C.navy}` : '1.5px solid #e6dcc9', background: p.team == null ? C.navy : '#fff', color: p.team == null ? '#fff' : `${C.navy}99` }}>
+                  Seul
+                </button>
+                {choices.map((n) => (
+                  <button key={n} onClick={() => onSet(p.id, n)}
+                    style={{ width: 38, padding: '6px 0', borderRadius: 9, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 14,
+                      border: p.team === n ? `2px solid ${C.teal}` : '1.5px solid #e6dcc9', background: p.team === n ? C.teal : '#fff', color: p.team === n ? '#fff' : `${C.navy}99` }}>
+                    {TEAM_LETTERS[n]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScoreDirPicker({ value, onChange, saved, compact }) {
   const opts = [
     { v: 'high', t: 'Le plus grand score gagne' },
