@@ -4311,12 +4311,41 @@ function GuidePage() {
           q: "Lancer un chrono",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
-            <p style={{ margin: 0 }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
+            <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
+            <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
           </>,
         },
         {
           q: "Retrouver les points de règle en pleine partie",
           a: <p style={{ margin: 0 }}>Le bouton <b style={{ color: C.teal }}>📖 Règles</b>, en haut de l'écran du chrono, ouvre les <b>points de règle</b> du jeu en cours — les mêmes que sur sa fiche. Le chiffre entre parenthèses indique combien il y en a. Vous pouvez y <b>ajouter</b> une précision à chaud, <b>corriger</b> ou <b>supprimer</b> les vôtres, puis refermer et reprendre la partie là où vous en étiez. Tout ce qui est écrit ici apparaît immédiatement sur la fiche du jeu, pour tous les membres.</p>,
+        },
+        {
+          q: "Jouer en équipes",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans le chrono, le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes : chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</p>
+            <p style={{ margin: "0 0 8px" }}>Dès lors, le <b>score saisi pour un joueur est reporté à l'identique sur ses coéquipiers</b> — c'est bien le même score, pas une addition : une équipe marque ses points ensemble. Un joueur qui rejoint une équipe en cours de partie hérite aussitôt du score de celle-ci. Les coéquipiers partagent aussi la <b>même couleur</b> à l'écran.</p>
+            <p style={{ margin: 0 }}>Même chose pour une partie <b>non chronométrée</b> : dans « Enregistrer une partie », cochez <b>Partie en équipes</b> et attribuez les lettres. Le pavé de score rappelle l'équipe concernée, et le trophée reste à cocher joueur par joueur.</p>
+          </>,
+        },
+        {
+          q: "Les couleurs des joueurs",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Chaque joueur reçoit automatiquement une couleur, dans cet ordre : sa <b>couleur préférée</b> renseignée sur son profil, puis sa deuxième, puis sa troisième si les précédentes sont déjà prises — et à défaut la première couleur libre de la palette. Le premier arrivé garde la sienne.</p>
+            <p style={{ margin: 0 }}>Vous pouvez toujours <b>changer une couleur à la main</b> : touchez la pastille colorée sur la carte du joueur pour ouvrir le nuancier. Les couleurs déjà prises par quelqu'un d'autre y sont signalées d'un point blanc, et un bouton permet de revenir à l'attribution automatique. Le choix vaut pour cette partie et se voit sur tous les appareils.</p>
+          </>,
+        },
+        {
+          q: "Le mode tablette (écran en paysage)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur un <b>grand écran en paysage</b> — typiquement un iPad posé au milieu de la table — le chrono bascule tout seul sur une <b>disposition dédiée</b>, pensée pour être lue à un mètre de distance.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>En haut, les <b>trois grands blocs</b> de phase : mise en place, partie, rangement, avec leur chrono en très gros.</li>
+              <li>En dessous, le <b>jeu en cours</b> avec sa miniature, le numéro de manche et la durée de jeu.</li>
+              <li>Puis les <b>carrés joueurs</b>, chacun à sa couleur : photo, nom, <b>score en très grand</b> (touchez-le pour le modifier) et temps de jeu juste en dessous. Le joueur dont c'est le tour voit son carré s'allumer entièrement.</li>
+              <li>En bas, la <b>barre des accessoires</b> : mode équipe, écran allumé, points de règle, et les commandes de l'hôte (pause, nouvelle partie, terminer).</li>
+            </ul>
+            <p style={{ margin: 0 }}>Un bouton <b>📱 Vue téléphone</b> / <b>🖥️ Vue tablette</b> en haut à droite permet de forcer l'une ou l'autre disposition si le choix automatique ne vous convient pas.</p>
+          </>,
         },
         {
           q: "Garder l'écran allumé pendant la partie",
@@ -6743,9 +6772,12 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           )}
 
           {currentUser && !expired && (
-            <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
-              <Clock size={17} /> Lancer le chrono de la partie
-            </Btn>
+            <>
+              <EventLiveChronos eventId={e.id} />
+              <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
+                <Clock size={17} /> Lancer le chrono de la partie
+              </Btn>
+            </>
           )}
 
           {/* JEUX JOUÉS */}
@@ -6803,6 +6835,65 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 }
 
 /* ---- Section : jeux joués lors d'un moment ---- */
+/* Chronos deja lances sur un moment jeux.
+   Sans cet encart, deux personnes autour de la meme table lancaient chacune
+   leur chrono sans le savoir : on propose desormais de rejoindre l'existant. */
+function EventLiveChronos({ eventId }) {
+  const { openChrono, users, games } = useApp();
+  const [rows, setRows] = useState([]);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("play_sessions")
+      .select("id,join_code,status,game_id,host_profile_id,created_at")
+      .eq("event_id", eventId).in("status", ["lobby", "running"])
+      .order("created_at", { ascending: false });
+    if (!data || !data.length) { setRows([]); return; }
+    const { data: pl } = await supabase.from("play_session_players")
+      .select("session_id").in("session_id", data.map((x) => x.id));
+    const n = {};
+    (pl || []).forEach((r) => { n[r.session_id] = (n[r.session_id] || 0) + 1; });
+    setRows(data.map((x) => ({ ...x, nPlayers: n[x.id] || 0 })));
+  }, [eventId]);
+
+  useEffect(() => {
+    load();
+    // Une partie peut demarrer pendant qu'on regarde la fiche : on rafraichit.
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  if (!rows.length) return null;
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15.5, margin: "0 0 9px", display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, boxShadow: `0 0 0 3px ${C.red}33` }} />
+        {rows.length > 1 ? "Chronos en cours" : "Chrono en cours"}
+      </h4>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+        {rows.map((r) => {
+          const g = (games || []).find((x) => x.id === r.game_id);
+          const host = (users || []).find((u) => u.id === r.host_profile_id);
+          return (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1.5px solid ${C.teal}44`, borderRadius: 13, padding: "9px 12px", minWidth: 0 }}>
+              <span style={{ width: 40, height: 40, borderRadius: 9, flexShrink: 0, background: g && g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {g ? g.name : "Partie en cours"}
+                </span>
+                <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>
+                  lancé par {host ? host.name : "un membre"} · {r.nPlayers} joueur{r.nPlayers > 1 ? "s" : ""} · {r.status === "running" ? "en cours" : "en attente"}
+                </span>
+              </span>
+              <Btn size="sm" variant="teal" onClick={() => openChrono({ joinCode: r.join_code })}>Rejoindre</Btn>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EventPlayedGames({ e, isParticipant, canManage }) {
   const { games, currentUser, addPlayedGame, removePlayedGame, setEventPlayCount, askConfirm } = useApp();
   const counterBtn = { width: 24, height: 24, borderRadius: 7, border: "1.5px solid #d9cdb6", background: "#fff", color: C.navy, fontSize: 15, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center", padding: 0, flexShrink: 0 };
@@ -11772,10 +11863,12 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   // Passe à true dès qu'on coche un trophée à la main : on cesse alors le calcul auto.
   const [winnersTouched, setWinnersTouched] = useState(false);
   const [scorePadFor, setScorePadFor] = useState(null); // joueur dont on saisit le score
+  // Mode equipe : le score saisi pour un joueur vaut pour tous ses coequipiers.
+  const [teamsOn, setTeamsOn] = useState(false);
   useEffect(() => {
     if (open) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
-      setWinnersTouched(false); setScorePadFor(null);
+      setWinnersTouched(false); setScorePadFor(null); setTeamsOn(false);
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
       setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
@@ -11793,8 +11886,23 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false, score: "" }]); };
   const addGuest = () => { const n = guestName.trim(); if (!n) return; setParts((pr) => [...pr, { key: "g" + Date.now(), userId: null, guestName: n, name: n, isWinner: false, score: "" }]); setGuestName(""); };
   const toggleWin = (key) => { setWinnersTouched(true); setParts((pr) => pr.map((p) => (p.key === key ? { ...p, isWinner: !p.isWinner } : p))); };
-  const setScore = (key, v) => setParts((pr) => pr.map((p) => (p.key === key ? { ...p, score: v } : p)));
+  // Un score saisi se reporte a l'identique sur les coequipiers : une equipe
+  // marque des points ensemble, on ne les additionne pas.
+  const setScore = (key, v) => setParts((pr) => {
+    const src = pr.find((p) => p.key === key);
+    const t = src && src.team != null ? src.team : null;
+    return pr.map((p) => ((p.key === key || (t != null && p.team === t)) ? { ...p, score: v } : p));
+  });
+  const setTeam = (key, team) => setParts((pr) => {
+    const mate = team == null ? null : pr.find((p) => p.key !== key && p.team === team && String(p.score ?? "").trim() !== "");
+    return pr.map((p) => (p.key === key ? { ...p, team, score: mate ? mate.score : p.score } : p));
+  });
   const removeP = (key) => setParts((pr) => pr.filter((p) => p.key !== key));
+  const teamsUsed = [...new Set(parts.map((p) => p.team).filter((x) => x != null))].sort((a, b) => a - b);
+  const nextTeam = (() => { for (let i = 0; i < 8; i++) if (!teamsUsed.includes(i)) return i; return null; })();
+  const teamChoices = nextTeam == null ? teamsUsed : [...teamsUsed, nextTeam];
+  const TEAM_L = ["A", "B", "C", "D", "E", "F", "G", "H"];
+  const TEAM_HEX = [C.teal, C.amber, C.purple, C.red, "#2F6FB3", "#3B9B5B", "#D96BA0", "#8A5A2B"];
 
   // Le sens du score suit la fiche du jeu choisi (par défaut : le plus grand gagne).
   const selectedGame = useMemo(() => (games || []).find((g) => g.id === gameId) || null, [games, gameId]);
@@ -11878,8 +11986,25 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— touche «&nbsp;pts&nbsp;» pour le pavé de score, sinon appuie sur 🏆</span></span>
           {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
           {parts.map((p) => (
-            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
-              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.userId ? "" : " · invité"}</span>
+            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderLeft: teamsOn && p.team != null ? `5px solid ${TEAM_HEX[p.team % TEAM_HEX.length]}` : `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
+              <span style={{ flex: 1, minWidth: 90, fontWeight: 600, color: C.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.userId ? "" : " · invité"}</span>
+              {teamsOn && (
+                <span style={{ display: "inline-flex", gap: 4, flexShrink: 0 }}>
+                  <button type="button" onClick={() => setTeam(p.key, null)} title="Joue pour lui-même"
+                    style={{ padding: "4px 8px", borderRadius: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12,
+                      border: p.team == null ? `2px solid ${C.navy}` : "1.5px solid #e6dcc9", background: p.team == null ? C.navy : "#fff", color: p.team == null ? "#fff" : "#9c8d79" }}>
+                    Seul
+                  </button>
+                  {teamChoices.map((n) => (
+                    <button key={n} type="button" onClick={() => setTeam(p.key, n)} title={`Équipe ${TEAM_L[n]}`}
+                      style={{ width: 28, padding: "4px 0", borderRadius: 7, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5,
+                        border: p.team === n ? `2px solid ${TEAM_HEX[n % TEAM_HEX.length]}` : "1.5px solid #e6dcc9",
+                        background: p.team === n ? TEAM_HEX[n % TEAM_HEX.length] : "#fff", color: p.team === n ? "#fff" : "#9c8d79" }}>
+                      {TEAM_L[n]}
+                    </button>
+                  ))}
+                </span>
+              )}
               <span style={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${hasScore(p) ? C.amber : "#e6dcc9"}`, background: hasScore(p) ? "#FDF4E0" : "#fff" }}>
                 <button type="button" onClick={() => setScorePadFor(p.key)} title={`Noter le score de ${p.name} (facultatif)`}
                   style={{ border: "none", background: "transparent", padding: "6px 9px", minWidth: 44, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: hasScore(p) ? "#8a6a1f" : "#b6a78f" }}>
@@ -11916,6 +12041,19 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
               </div>
             </div>
           )}
+          {parts.length > 1 && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 11, cursor: "pointer",
+              background: teamsOn ? "rgba(30,138,138,.09)" : "rgba(26,58,92,.04)", border: `1.5px solid ${teamsOn ? C.teal : "transparent"}` }}>
+              <input type="checkbox" checked={teamsOn} onChange={(ev) => { setTeamsOn(ev.target.checked); if (!ev.target.checked) setParts((pr) => pr.map((p) => ({ ...p, team: null }))); }}
+                style={{ width: 17, height: 17, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>
+                👥 Partie en équipes
+                <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 2 }}>
+                  Attribuez une lettre à chaque joueur : le score saisi pour l'un sera <b>repris à l'identique</b> pour ses coéquipiers.
+                </span>
+              </span>
+            </label>
+          )}
           <select value="" onChange={(e) => { if (e.target.value) addMember(e.target.value); }} style={fieldStyle}>
             <option value="">+ Ajouter un membre…</option>
             {available.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -11933,7 +12071,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
       {scorePadFor && (() => {
         const p = parts.find((x) => x.key === scorePadFor);
         return p ? (
-          <ScorePadOverlay key={p.key} name={p.name} initialScore={Number(p.score) || 0}
+          <ScorePadOverlay key={p.key} name={p.name + (teamsOn && p.team != null ? ` · équipe ${TEAM_L[p.team]}` : "")} initialScore={Number(p.score) || 0}
             onClose={() => setScorePadFor(null)}
             onApply={(v) => { setScore(p.key, String(v)); setScorePadFor(null); }} />
         ) : null;
