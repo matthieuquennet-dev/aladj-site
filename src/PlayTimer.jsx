@@ -211,7 +211,7 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: C.cream, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 560,
-        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch',
+        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: C.navy, minWidth: 0 }}>
@@ -983,7 +983,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       background: wide
         ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
         : C.cream,
-      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
     }}>
       <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1746,7 +1746,7 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
 
   return (
     <div onClick={busy ? undefined : onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>🎲 On enchaîne sur quoi ?</div>
           <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
@@ -1828,7 +1828,7 @@ function TeamsSheet({ players, hexFor, onSet, onClose }) {
   const choices = nextFree == null ? used : [...used, nextFree];
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 Mode equipe</div>
           <button onClick={onClose} style={btnGhost}>Fermer</button>
