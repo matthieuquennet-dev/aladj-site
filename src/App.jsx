@@ -466,6 +466,7 @@ function ConfirmDialog({ state, onClose }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state, onClose]);
+  useScrollLock(!!state);
   if (!state) return null;
   const { title = "Confirmer ?", message = "", confirmLabel = "Confirmer", cancelLabel = "Annuler", danger = true } = state;
   return (
@@ -605,6 +606,7 @@ function ScoreDirectionField({ value, onChange }) {
 function ScorePadOverlay({ name, initialScore, onClose, onApply }) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  useScrollLock(true);   // le pave couvre l'ecran : la page derriere doit rester figee
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
     window.addEventListener("keydown", onKey, true);
@@ -3154,6 +3156,8 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   const downOnOverlay = useRef(false);
   const overlayRef = useRef(null);
 
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const h = (e) => e.key === "Escape" && onClose();
@@ -3185,7 +3189,8 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000,
+        overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
       }}>
       <div style={{
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
@@ -3201,6 +3206,47 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       </div>
     </div>
   );
+}
+
+/* -----------------------------------------------------------------------------
+   VERROU DE DEFILEMENT
+   Tant qu'une fenetre est ouverte, la page derriere ne doit pas bouger.
+   Compteur global : les fenetres s'empilent (une fiche de jeu ouvre une
+   confirmation, qui ouvre un pave de score...) et le verrou ne doit sauter
+   qu'a la fermeture de la derniere.
+   On fige le <body> en position: fixed en memorisant le defilement, plutot que
+   par overflow: hidden -- seule methode qui tienne sur Safari iOS.
+   --------------------------------------------------------------------------- */
+let __aladjScrollLocks = 0;
+let __aladjScrollY = 0;
+
+function useScrollLock(active) {
+  useEffect(() => {
+    if (!active || typeof document === "undefined") return undefined;
+    const b = document.body;
+    if (__aladjScrollLocks === 0) {
+      __aladjScrollY = window.scrollY || window.pageYOffset || 0;
+      b.style.position = "fixed";
+      b.style.top = `-${__aladjScrollY}px`;
+      b.style.left = "0";
+      b.style.right = "0";
+      b.style.width = "100%";
+      b.style.overflow = "hidden";
+    }
+    __aladjScrollLocks += 1;
+    return () => {
+      __aladjScrollLocks = Math.max(0, __aladjScrollLocks - 1);
+      if (__aladjScrollLocks === 0) {
+        b.style.position = "";
+        b.style.top = "";
+        b.style.left = "";
+        b.style.right = "";
+        b.style.width = "";
+        b.style.overflow = "";
+        window.scrollTo(0, __aladjScrollY);
+      }
+    };
+  }, [active]);
 }
 
 /* ---- Badge ---- */
@@ -6660,8 +6706,11 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
     await updateComment(editingId, editText); setEditingId(null); setEditText("");
   };
 
+  useScrollLock(true);   // cette fenetre n'est montee que lorsqu'elle est visible
+
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px",
+      overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
       background: overlayBg, transition: "background .4s", backdropFilter: "blur(3px)" }}>
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
@@ -13055,6 +13104,10 @@ export default function App() {
           .aladj-modal-body { padding: 16px !important; }
         }
         button { font-family: inherit; }
+        /* Le geste de defilement ne doit jamais « deborder » d'une fenetre vers la
+           page qui se trouve derriere. Applique aussi aux zones defilantes
+           internes (listes de jeux, grilles d'extensions...). */
+        .aladj-modal-body, .aladj-modal-body * { overscroll-behavior: contain; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
