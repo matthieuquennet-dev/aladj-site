@@ -4220,7 +4220,9 @@ function GuidePage() {
                 <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color="#9A8F7E" label="Privé — vue administrateur" /><Legend color={C.navy} label="Aujourd'hui" outline />
               </span>
             </Illu>
-            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un. Un 🎂 signale l'anniversaire d'un membre — et la fiche d'un moment ce jour-là le rappelle fièrement.</p>
+            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un.</p>
+            <p style={{ margin: "6px 0 0" }}>Un 🎂 signale l'anniversaire d'un membre. <b>Cliquez sur ce jour</b> pour savoir de qui il s'agit : la fenêtre donne le nom, la photo et l'âge fêté, et un clic sur la personne ouvre sa fiche. Pratique pour souhaiter un anniversaire qui ne tombe pas un jour de moment jeux — et si l'envie vous prend, un bouton propose d'organiser quelque chose ce jour-là. Quand un moment existe déjà à cette date, sa fiche le rappelle fièrement.</p>
+            <p style={{ margin: "6px 0 0" }}>L'anniversaire apparaît aussi sur la <b>fiche de chaque membre</b>, sous son nom, avec son âge si l'année est renseignée. Il passe en ambre quand il approche (moins de 30 jours).</p>
           </>,
         },
         {
@@ -5059,6 +5061,19 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
                   </button>
                 )}
                 {member.city && <span style={{ fontSize: 13, color: "#8a7c6a", display: "inline-flex", alignItems: "center", gap: 3 }}><MapPin size={13} /> {member.city}</span>}
+                {birthdayLabel(member) && (() => {
+                  const j = daysUntilBirthday(member);
+                  const age = memberAge(member);
+                  const soon = j != null && j <= 30;
+                  return (
+                    <span title={j === 0 ? "C'est aujourd'hui !" : `Dans ${j} jour${j > 1 ? "s" : ""}`}
+                      style={{ fontSize: 13, color: soon ? C.amber : "#8a7c6a", fontWeight: soon ? 700 : 400, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      🎂 {birthdayLabel(member)}
+                      {age != null && <span style={{ color: "#9c8d79", fontWeight: 400 }}>· {age} ans</span>}
+                      {j === 0 && <span style={{ color: C.amber, fontWeight: 700 }}>· c'est aujourd'hui !</span>}
+                    </span>
+                  );
+                })()}
               </div>
               {/* liens externes */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -6160,7 +6175,9 @@ function EventsPage({ onAuth, setToast }) {
   const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
   const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
   const [selected, setSelected] = useState(null);
-  const [dayPicker, setDayPicker] = useState(null); // plusieurs moments le même jour → fenêtre de choix
+  const [dayPicker, setDayPicker] = useState(null);
+  const [birthdayDay, setBirthdayDay] = useState(null); // { iso, members, past }
+  const [birthdayMember, setBirthdayMember] = useState(null); // fiche ouverte depuis la liste // plusieurs moments le même jour → fenêtre de choix
   const [calSub, setCalSub] = useState(false); // fenêtre « s'abonner au calendrier »
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
@@ -6220,29 +6237,30 @@ function EventsPage({ onAuth, setToast }) {
             const todayIso = new Date().toISOString().slice(0, 10);
             const isPast = cell.iso < todayIso;
             const hasEv = cell.events.length > 0;
-            // clic : sur un événement → ouvre sa fiche ; sur case vide future → crée à cette date
+            const cellBirthdays = birthdayMembersOn(cell.iso, users);
+            // clic : sur un événement → ouvre sa fiche ; sur un anniversaire seul → dit
+            // de qui il s'agit (l'infobulle du gateau est invisible au doigt) ;
+            // sur case vide future → propose de créer un moment à cette date.
             const handleClick = () => {
               if (hasEv) {
                 if (cell.events.length === 1) setSelected(cell.events[0].id);
                 else setDayPicker(cell.events);
                 return;
               }
+              if (cellBirthdays.length > 0) { setBirthdayDay({ iso: cell.iso, members: cellBirthdays, past: isPast }); return; }
               if (!isPast && currentUser) { setPresetDate(cell.iso); setShowCreate(true); }
             };
-            const clickable = hasEv || (!isPast && currentUser);
+            const clickable = hasEv || cellBirthdays.length > 0 || (!isPast && currentUser);
             return (
               <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} className="aladj-cal-cell" style={{
                 aspectRatio: "1", minWidth: 0, border: isToday ? `2px solid ${C.navy}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
                 cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", overflow: "hidden", opacity: isPast && !hasEv ? 0.5 : 1,
               }}>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy }}>{cell.d}</span>
-                {(() => {
-                  const bd = birthdayMembersOn(cell.iso, users);
-                  return bd.length > 0 ? (
-                    <span title={`Anniversaire de ${bd.map((u) => u.name).join(", ")} 🎉`}
-                      style={{ position: "absolute", top: 2, right: 4, fontSize: 11, lineHeight: 1 }}>🎂</span>
-                  ) : null;
-                })()}
+                {cellBirthdays.length > 0 && (
+                  <span title={`Anniversaire de ${cellBirthdays.map((u) => u.name).join(", ")} 🎉`}
+                    style={{ position: "absolute", top: 2, right: 4, fontSize: 11, lineHeight: 1 }}>🎂</span>
+                )}
                 {cell.events.slice(0, 2).map((e) => {
                   const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
                   const dimmed = isEventDimmed(e, currentUser);
@@ -6282,6 +6300,52 @@ function EventsPage({ onAuth, setToast }) {
           </div>
         </Modal>
       )}
+      {birthdayDay && (
+        <Modal open onClose={() => setBirthdayDay(null)} title={`🎂 Anniversaire${birthdayDay.members.length > 1 ? "s" : ""} du ${formatDateFr(birthdayDay.iso)}`} width={480}>
+          <p style={{ margin: "0 0 16px", fontSize: 14, color: "#6e6256", lineHeight: 1.55 }}>
+            {birthdayDay.members.length > 1
+              ? "Plusieurs membres fêtent leur anniversaire ce jour-là."
+              : "Un membre fête son anniversaire ce jour-là."}
+            {" "}Un petit mot fait toujours plaisir, même hors moment jeux.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+            {birthdayDay.members.map((u) => {
+              const age = memberAge(u);
+              return (
+                <button key={u.id} type="button" onClick={() => { setBirthdayMember(u.id); setBirthdayDay(null); }}
+                  title={`Voir la fiche de ${u.name}`}
+                  style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(232,163,23,.09)", border: `1.5px solid ${C.amber}44`, borderRadius: 14, padding: "10px 13px", cursor: "pointer", textAlign: "left", minWidth: 0, font: "inherit" }}
+                  onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(232,163,23,.18)"; }}
+                  onMouseLeave={(ev) => { ev.currentTarget.style.background = "rgba(232,163,23,.09)"; }}>
+                  <span style={{ width: 46, height: 46, borderRadius: 13, flexShrink: 0, overflow: "hidden", background: u.role === "decideur" ? C.amber : C.teal, display: "grid", placeItems: "center" }}>
+                    {u.avatar
+                      ? <img src={u.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 19 }}>{u.name[0].toUpperCase()}</span>}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16 }}>
+                      {u.name}<DeciderCrownFor id={u.id} size={12} />
+                    </span>
+                    <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
+                      {age != null
+                        ? (birthdayDay.past ? `a eu ${age} ans` : `fête ses ${age + (daysUntilBirthday(u) === 0 ? 0 : 1)} ans`)
+                        : birthdayLabel(u, false)}
+                    </span>
+                  </span>
+                  <ChevronRight size={17} color={C.amber} style={{ flexShrink: 0 }} />
+                </button>
+              );
+            })}
+          </div>
+          {!birthdayDay.past && currentUser && (
+            <Btn full variant="soft" style={{ marginTop: 16 }}
+              onClick={() => { setPresetDate(birthdayDay.iso); setBirthdayDay(null); setShowCreate(true); }}>
+              <Plus size={15} /> Proposer un moment jeux ce jour-là
+            </Btn>
+          )}
+        </Modal>
+      )}
+      {birthdayMember && <MemberLibraryModal memberId={birthdayMember} onClose={() => setBirthdayMember(null)} setToast={setToast} onAuth={onAuth} />}
       {calSub && <CalendarSubscribeModal onClose={() => setCalSub(false)} setToast={setToast} />}
       {selectedEvent && <EventDetailModal e={selectedEvent} onClose={() => setSelected(null)} onJoin={toggleJoin} onRemove={async (id) => { await removeEvent(id); setSelected(null); setToast("Moment jeux supprimé."); }} onAuth={onAuth} />}
     </div>
@@ -11214,6 +11278,26 @@ function AdminMechanicsSection({ setToast }) {
 const COTISATION_EUR = 20;
 // Paiement en ligne : mettre à true quand le compte Stripe de l'association sera actif.
 const ONLINE_PAYMENT_ENABLED = false;
+
+// Anniversaire d'un membre en clair : « 14 mars » ou « 14 mars 1987 ».
+// L'annee reste facultative : beaucoup ne renseignent que le jour et le mois.
+function birthdayLabel(u, withYear = true) {
+  if (!u || !u.birthDay || !u.birthMonth) return null;
+  const mois = ["janvier", "février", "mars", "avril", "mai", "juin",
+                "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+  const m = mois[Number(u.birthMonth) - 1] || "";
+  return `${Number(u.birthDay)} ${m}${withYear && u.birthYear ? " " + u.birthYear : ""}`;
+}
+
+// Prochain anniversaire d'un membre, en nombre de jours (0 = aujourd'hui).
+function daysUntilBirthday(u) {
+  if (!u || !u.birthDay || !u.birthMonth) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(now.getFullYear(), Number(u.birthMonth) - 1, Number(u.birthDay));
+  if (next < today) next = new Date(now.getFullYear() + 1, Number(u.birthMonth) - 1, Number(u.birthDay));
+  return Math.round((next - today) / 86400000);
+}
 
 // Membres dont l'anniversaire tombe à la date donnée (AAAA-MM-JJ).
 function birthdayMembersOn(dateIso, users) {
