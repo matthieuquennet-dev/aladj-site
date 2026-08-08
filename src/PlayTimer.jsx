@@ -1293,7 +1293,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       // de laisser du vide sous les cartes.
       const rows = n <= 4 ? n : Math.ceil(n / 2);
       const cols = n <= 4 ? 1 : 2;
-      const rowH = `clamp(88px, calc((100vh - 430px) / ${rows}), 210px)`;
+      const rowH = `clamp(104px, calc((100vh - 420px) / ${rows}), 230px)`;
 
       const bigPhase = (ph, label, total, started, color, disabled) => {
         const running = activePhase === ph;
@@ -1406,13 +1406,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
                   {/* Identite */}
                   <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    gap: 5, width: 'clamp(84px,8vw,132px)', marginLeft: active ? 0 : 6 }}>
-                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={72} />
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(14px,1.25vw,20px)',
-                      lineHeight: 1.15, color: ink, textAlign: 'center', maxWidth: '100%',
+                    gap: 6, width: 'clamp(112px,12vw,208px)', marginLeft: active ? 0 : 6 }}>
+                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={78} />
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(19px,2.05vw,34px)',
+                      lineHeight: 1.1, color: ink, textAlign: 'center', maxWidth: '100%',
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                     {p.team != null && (
-                      <span style={{ fontSize: 'clamp(10px,.85vw,13px)', fontWeight: 800, letterSpacing: .4,
+                      <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .4,
                         color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
                     )}
                   </div>
@@ -1421,20 +1421,20 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
                     style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
                       padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(46px, ${n <= 4 ? '7vw' : '4.4vw'}, 118px)`,
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(52px, ${n <= 4 ? '7.4vw' : '4.8vw'}, 128px)`,
                       lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
-                    <span style={{ fontSize: 'clamp(11px,.95vw,15px)', letterSpacing: 1.4, fontWeight: 700,
+                    <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
                       opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
                   </button>
 
                   {/* Chrono du joueur, a droite */}
                   <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-                    justifyContent: 'center', gap: 3, width: 'clamp(96px,9.5vw,180px)' }}>
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(24px,2.5vw,44px)',
+                    justifyContent: 'center', gap: 3, width: 'clamp(118px,12vw,224px)' }}>
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,3.15vw,58px)',
                       lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
                     {active
-                      ? <span style={{ fontSize: 'clamp(10px,.9vw,14px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
-                      : <span style={{ fontSize: 'clamp(10px,.9vw,14px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
+                      ? <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
+                      : <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
                   </div>
 
                   {/* Pastille de couleur */}
