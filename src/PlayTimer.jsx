@@ -355,6 +355,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // (2)/(3) Panneaux : choix d'une couleur, composition des equipes
   const [colorFor, setColorFor] = useState(null);
   const [teamsOpen, setTeamsOpen] = useState(false);
+  // (4) Enchainer un autre jeu sans quitter le chrono.
+  const [nextPicker, setNextPicker] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [nextQuery, setNextQuery] = useState('');
+  const [nextHits, setNextHits] = useState([]);
+  const [resultSaved, setResultSaved] = useState(false);
 
   const sid = session?.id;
   const isHost = !!(session && myUid && session.host_profile_id === myUid);
@@ -482,6 +488,37 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [session?.id, refetchSession, refetchPlayers, refetchTotals, subscribe]);
+
+  // (4) Un autre appareil a enchaine sur un nouveau jeu : on suit sans rien
+  // demander. C'est tout l'interet -- personne n'a a ressaisir quoi que ce soit.
+  useEffect(() => {
+    const nid = session?.next_session_id;
+    if (!nid || nid === sid || switching) return undefined;
+    let go = true;
+    (async () => {
+      const { data: s2 } = await supabase.from('play_sessions').select('id,join_code').eq('id', nid).maybeSingle();
+      if (!go || !s2) return;
+      try { await supabase.rpc('join_session', { p_join_code: s2.join_code, p_guest_name: null }); } catch (e) { /* deja present */ }
+      if (!go) return;
+      await switchToSession(nid);
+    })();
+    return () => { go = false; };
+  }, [session?.next_session_id]); // eslint-disable-line
+
+  // Recherche du jeu suivant.
+  useEffect(() => {
+    if (!nextPicker) return undefined;
+    let go = true;
+    const q = nextQuery.trim();
+    const tid = setTimeout(async () => {
+      const base = supabase.from('games').select('id,name,play_time,image_url,score_direction');
+      const { data } = q
+        ? await base.ilike('name', `%${q}%`).order('name').limit(12)
+        : await base.order('name').limit(12);
+      if (go) setNextHits(data || []);
+    }, q ? 250 : 0);
+    return () => { go = false; clearTimeout(tid); };
+  }, [nextPicker, nextQuery, supabase]);
 
   // ---- horloge live (uniquement en partie) ---------------------------
   useEffect(() => {
@@ -737,6 +774,71 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     if (e) { setError(e.message || String(e)); return; }
     onExit();
   };
+  // (4) Reprendre la main sur une autre session : on remet a zero tout ce qui
+  // appartenait a la partie precedente (chronos, vainqueurs, recap).
+  const switchToSession = useCallback(async (nid) => {
+    setSummary(null); setWinnerIds([]); setWinnersTouched(false);
+    setTotals({}); setOpenSegs({}); setNewGamePrompt(false); setNewGameWinners([]);
+    setScoreFor(null); setResultSaved(false); setGame(null); setError(null);
+    const s2 = await refetchSession(nid);
+    await refetchPlayers(nid);
+    await refetchTotals(nid);
+    subscribe(nid);
+    setPhase(s2?.status === 'lobby' ? 'lobby' : 'running');
+  }, [refetchSession, refetchPlayers, refetchTotals, subscribe]);
+
+  // (4) L'hote choisit le jeu suivant : nouvelle session, memes joueurs,
+  // memes equipes, memes couleurs. Les autres appareils suivent tout seuls
+  // grace au chainage next_session_id.
+  const continueWithGame = async (g) => {
+    if (switching) return;
+    setSwitching(true); setError(null);
+    try {
+      // 1. Le resultat de la partie qui s'acheve doit etre enregistre d'abord.
+      if (!resultSaved) {
+        const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
+        if (e0) throw e0;
+        setResultSaved(true);
+      }
+      // 2. Nouvelle session sur le meme moment jeux (s'il y en a un).
+      const { data, error: e1 } = await supabase.rpc('create_session', {
+        p_game_id: g.id,
+        p_event_id: session?.event_id || null,
+        p_box_duration_min: g.play_time || null,
+      });
+      if (e1) throw e1;
+      const row = Array.isArray(data) ? data[0] : data;
+      const nid = row.session_id;
+
+      // 3. On recopie les joueurs (add_player dedoublonne les membres).
+      for (const p of players) {
+        if (p.profile_id && p.profile_id === myUid) continue; // l'hote est deja la
+        await supabase.rpc('add_player', {
+          p_session_id: nid, p_profile_id: p.profile_id || null, p_guest_name: p.guest_name || null,
+        });
+      }
+      // 4. ... puis leurs equipes et leurs couleurs.
+      const { data: np } = await supabase.from('play_session_players')
+        .select('id,profile_id,guest_name').eq('session_id', nid);
+      for (const p of players) {
+        if (p.team == null && !p.color) continue;
+        const m = (np || []).find((x) => (p.profile_id ? x.profile_id === p.profile_id : x.guest_name === p.guest_name));
+        if (!m) continue;
+        if (p.team != null) await supabase.rpc('aladj_set_player_team', { p_session_id: nid, p_player_id: m.id, p_team: p.team });
+        if (p.color) await supabase.rpc('aladj_set_player_color', { p_session_id: nid, p_player_id: m.id, p_color: p.color });
+      }
+      // 5. On designe la suite : les telephones deja connectes basculent seuls.
+      await supabase.rpc('aladj_link_next_session', { p_old: sid, p_new: nid });
+
+      setNextPicker(false); setNextQuery(''); setNextHits([]);
+      await switchToSession(nid);
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setSwitching(false);
+    }
+  };
+
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
   const togglePhase = (ph) => rpc('toggle_phase', { p_session_id: sid, p_phase: ph });
   const simulEnter = () => rpc('simul_enter', { p_session_id: sid });
@@ -874,16 +976,19 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const shell = (children, wide) => (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000, color: wide ? '#EAF1F8' : C.navy,
+      position: 'fixed', inset: 0, zIndex: 1000, color: C.navy,
+      // Vue tablette : on reste dans les tons chaleureux du site. Le fond bleu
+      // nuit essaye precedemment ecrasait les couleurs des joueurs et jurait
+      // avec le reste de l'application.
       background: wide
-        ? 'radial-gradient(1200px 600px at 15% -10%, #24507d 0%, #16304c 45%, #10233a 100%)'
+        ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
         : C.cream,
       fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
     }}>
       <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: wide ? '#fff' : C.navy }}>
-            Chrono <span style={{ color: wide ? '#5FD3D3' : C.teal }}>ALADJ</span>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: wide ? 26 : 22, color: C.navy }}>
+            Chrono <span style={{ color: C.teal }}>ALADJ</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {!(wide && phase === 'running') && (game?.id || session?.game_id) && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
@@ -900,8 +1005,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               <button onClick={() => setTabletPref(tablet ? false : true)}
                 title={tablet ? 'Revenir a la disposition telephone' : 'Passer en disposition tablette'}
                 style={{
-                  border: `1.5px solid ${tablet ? '#5FD3D3' : '#d9cdb6'}`, background: tablet ? 'rgba(95,211,211,.16)' : '#fff',
-                  color: tablet ? '#BFEFEF' : `${C.navy}88`, borderRadius: 999, padding: '6px 12px',
+                  border: `1.5px solid ${tablet ? C.teal : '#d9cdb6'}`, background: tablet ? 'rgba(30,138,138,.12)' : '#fff',
+                  color: tablet ? C.teal : `${C.navy}88`, borderRadius: 999, padding: '6px 12px',
                   fontFamily: TITLE, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
                 {tablet ? '📱 Vue téléphone' : '🖥️ Vue tablette'}
@@ -918,7 +1023,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 {wake.active ? '\u2600\ufe0f Ecran allume' : '\ud83c\udf19 Veille normale'}
               </button>
             )}
-            <button onClick={quitNoSave} style={{ ...btnGhost, color: wide ? '#9FC0DC' : `${C.navy}99` }}>Quitter</button>
+            <button onClick={quitNoSave} style={{ ...btnGhost, fontSize: wide ? 17 : 15 }}>Quitter</button>
           </div>
         </div>
         {error && (
@@ -929,6 +1034,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
         {children}
       </div>
+      {nextPicker && (
+        <NextGameSheet
+          eventGames={eventGames}
+          hits={nextHits}
+          query={nextQuery}
+          onQuery={setNextQuery}
+          busy={switching}
+          onPick={continueWithGame}
+          onClose={() => { if (!switching) { setNextPicker(false); setNextQuery(''); } }}
+        />
+      )}
       {colorFor && (
         <ColorSheet
           player={players.find((p) => p.id === colorFor)}
@@ -945,6 +1061,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           onSet={setPlayerTeam}
           onClose={() => setTeamsOpen(false)}
         />
+      )}
+      {switching && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(60,45,25,.45)', display: 'grid', placeItems: 'center' }}>
+          <div style={{ background: C.cream, color: C.navy, borderRadius: 18, padding: '18px 26px', fontFamily: TITLE, fontWeight: 600, fontSize: 18 }}>
+            Préparation du jeu suivant…
+          </div>
+        </div>
       )}
       {rulesOpen && (game?.id || session?.game_id) && (
         <RulesSheet
@@ -1159,43 +1282,62 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     };
 
     // ---------- disposition tablette (paysage) ----------
+    // Pensee pour un iPad pose au milieu de la table : tout doit se lire a un
+    // metre. Les tailles sont exprimees en vw/vh bornees par clamp() pour
+    // grandir avec la dalle, et les cartes joueurs sont horizontales
+    // (identite a gauche, score au centre, chrono a droite) plutot que
+    // verticales -- c'est ce qui remplit vraiment la largeur.
     if (tablet) {
+      const n = players.length || 1;
+      // Hauteur d'une ligne joueur : on occupe la place disponible plutot que
+      // de laisser du vide sous les cartes.
+      const rows = n <= 4 ? n : Math.ceil(n / 2);
+      const cols = n <= 4 ? 1 : 2;
+      const rowH = `clamp(88px, calc((100vh - 430px) / ${rows}), 210px)`;
+
       const bigPhase = (ph, label, total, started, color, disabled) => {
         const running = activePhase === ph;
         const paused = !running && started;
         return (
           <button onClick={disabled ? undefined : () => togglePhase(ph)} disabled={disabled}
             style={{
-              flex: 1, borderRadius: 20, padding: '14px 16px', textAlign: 'left',
-              cursor: disabled ? 'default' : 'pointer', color: '#fff', minWidth: 0,
-              background: running
-                ? `linear-gradient(140deg, ${color}, ${color}bb)`
-                : (paused ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.07)'),
-              border: `1.5px solid ${running ? color : 'rgba(255,255,255,.14)'}`,
-              boxShadow: running ? `0 10px 30px -12px ${color}` : 'none',
-              opacity: disabled ? .35 : 1, transition: 'background .2s, box-shadow .2s',
+              flex: 1, borderRadius: 20, padding: 'clamp(10px,1.3vw,18px) clamp(12px,1.6vw,22px)',
+              textAlign: 'left', cursor: disabled ? 'default' : 'pointer', minWidth: 0,
+              background: running ? `linear-gradient(140deg, ${color}, ${color}cc)` : '#fff',
+              color: running ? '#fff' : C.navy,
+              border: `2px solid ${running ? color : (paused ? `${color}66` : '#E7DCC7')}`,
+              boxShadow: running ? `0 14px 30px -14px ${color}` : '0 2px 8px rgba(90,70,40,.07)',
+              opacity: disabled ? .4 : 1, transition: 'background .2s, box-shadow .2s, border-color .2s',
             }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5, opacity: running ? 1 : .8, letterSpacing: .2 }}>
-              <span style={{ fontSize: 13 }}>{running ? '⏸' : (paused ? '▶' : '○')}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: TITLE, fontWeight: 600,
+              fontSize: 'clamp(14px,1.35vw,21px)', opacity: running ? 1 : .75, letterSpacing: .2 }}>
+              <span>{running ? '⏸' : (paused ? '▶' : '○')}</span>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
             </div>
-            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,4.4vw,48px)', lineHeight: 1.05, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(32px,3.9vw,62px)',
+              lineHeight: 1.05, marginTop: 2, fontVariantNumeric: 'tabular-nums',
+              color: running ? '#fff' : (started ? color : '#C9BBA2') }}>
               {fmt(total)}
             </div>
           </button>
         );
       };
 
-      const chip = (label, on, onClick, tint) => (
+      // Les accessoires sont de gros carres : sur une tablette, une pastille
+      // fine se rate une fois sur deux.
+      const tile = (icon, label, on, onClick, tint) => (
         <button onClick={onClick} style={{
-          border: `1.5px solid ${on ? (tint || '#5FD3D3') : 'rgba(255,255,255,.18)'}`,
-          background: on ? `${tint || '#5FD3D3'}22` : 'rgba(255,255,255,.05)',
-          color: on ? (tint || '#5FD3D3') : '#B9CDE0', borderRadius: 999, padding: '9px 16px',
-          fontFamily: TITLE, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap',
-        }}>{label}</button>
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5,
+          minHeight: 'clamp(74px,7.6vh,104px)', padding: '8px 10px', borderRadius: 18, cursor: 'pointer',
+          border: `2px solid ${on ? (tint || C.teal) : '#E7DCC7'}`,
+          background: on ? `${tint || C.teal}18` : '#fff',
+          color: on ? (tint || C.teal) : C.navy,
+          boxShadow: '0 2px 8px rgba(90,70,40,.07)', textAlign: 'center',
+        }}>
+          <span style={{ fontSize: 'clamp(20px,1.9vw,28px)', lineHeight: 1 }}>{icon}</span>
+          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(12px,1.05vw,16px)', lineHeight: 1.2 }}>{label}</span>
+        </button>
       );
-
-      const cols = players.length <= 2 ? 2 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
 
       return shell(
         <div>
@@ -1209,115 +1351,121 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           })()}
 
           {/* Trois grands blocs de phase */}
-          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-            {bigPhase('setup', 'Mise en place', setupTotal, setupTotal > 0, '#1E8A8A', hasPlayed)}
-            {bigPhase('play', 'Partie', playTotal, (session?.play_seconds || 0) > 0, '#E8A317', hasWrapped)}
-            {bigPhase('teardown', 'Rangement', teardownTotal, teardownTotal > 0, '#6B3A7A', !hasPlayed)}
+          <div style={{ display: 'flex', gap: 'clamp(8px,1vw,14px)', marginBottom: 'clamp(8px,1vw,14px)' }}>
+            {bigPhase('setup', 'Mise en place', setupTotal, setupTotal > 0, C.teal, hasPlayed)}
+            {bigPhase('play', 'Partie', playTotal, (session?.play_seconds || 0) > 0, C.amber, hasWrapped)}
+            {bigPhase('teardown', 'Rangement', teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
           </div>
 
           {/* Bandeau du jeu */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 18, padding: '10px 16px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: '#fff',
+            border: '1px solid #E7DCC7', borderRadius: 18, padding: '10px clamp(12px,1.4vw,20px)',
+            marginBottom: 'clamp(8px,1vw,14px)', boxShadow: '0 2px 8px rgba(90,70,40,.06)' }}>
             {game?.image_url
-              ? <img src={game.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', flex: '0 0 auto', boxShadow: '0 4px 14px rgba(0,0,0,.35)' }} />
-              : <span style={{ width: 52, height: 52, borderRadius: 12, background: 'rgba(255,255,255,.12)', flex: '0 0 auto' }} />}
+              ? <img src={game.image_url} alt="" style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, objectFit: 'cover', flex: '0 0 auto' }} />
+              : <span style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game?.name || 'Partie en cours'}</div>
-              <div style={{ fontSize: 13, color: '#9FC0DC', display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 1 }}>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(20px,2.1vw,32px)', color: C.navy, lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {game?.name || 'Partie en cours'}
+              </div>
+              <div style={{ fontSize: 'clamp(12px,1.05vw,16px)', color: '#9c8d79', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <span>Partie {session?.current_game || 1}</span>
-                {simul && <span style={{ color: '#C6A2DA' }}>· Simultané</span>}
-                {neutral && <span style={{ color: '#F0C46A' }}>· En pause</span>}
-                {teamsOn && <span style={{ color: '#5FD3D3' }}>· Mode équipe</span>}
+                {simul && <span style={{ color: C.purple, fontWeight: 700 }}>· Simultané</span>}
+                {neutral && <span style={{ color: C.amber, fontWeight: 700 }}>· En pause</span>}
+                {teamsOn && <span style={{ color: C.teal, fontWeight: 700 }}>· Mode équipe</span>}
                 {session?.join_code && <span>· Code {session.join_code}</span>}
               </div>
             </div>
             <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
-              <div style={{ fontSize: 11, letterSpacing: 1, color: '#7FA3C4', fontWeight: 700, textTransform: 'uppercase' }}>Durée de jeu</div>
-              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 30, color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmt(totalElapsed)}</div>
+              <div style={{ fontSize: 'clamp(10px,.8vw,13px)', letterSpacing: 1, color: '#b6a78f', fontWeight: 700, textTransform: 'uppercase' }}>Durée de jeu</div>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(26px,2.6vw,42px)', color: C.navy, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmt(totalElapsed)}</div>
             </div>
           </div>
 
-          {/* Carres joueurs */}
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 12, marginBottom: 14 }}>
+          {/* Cartes joueurs : identite / score / chrono */}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 'clamp(8px,1vw,14px)', marginBottom: 'clamp(8px,1vw,14px)' }}>
             {players.map((p) => {
               const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
-              const clickable = activePhase === 'play';
+              const clickable = gamePhase === 'play';
               const hex = hexFor(p);
-              const ink = readableOn(hex);
+              const ink = active ? readableOn(hex) : C.navy;
               return (
                 <div key={p.id}
                   onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
                   style={{
-                    position: 'relative', borderRadius: 22, padding: '14px 16px 12px', minHeight: 168,
-                    display: 'flex', flexDirection: 'column',
-                    cursor: clickable ? 'pointer' : 'default',
-                    background: active ? `linear-gradient(150deg, ${hex}, ${hex}cc)` : 'rgba(255,255,255,.07)',
-                    border: `2px solid ${active ? '#fff' : `${hex}88`}`,
-                    boxShadow: active ? `0 16px 42px -14px ${hex}, 0 0 0 4px ${hex}33` : 'inset 0 0 0 1px rgba(255,255,255,.04)',
+                    position: 'relative', display: 'flex', alignItems: 'center', gap: 'clamp(10px,1.2vw,20px)',
+                    minHeight: rowH, borderRadius: 20, padding: '10px clamp(12px,1.5vw,22px)',
+                    cursor: clickable ? 'pointer' : 'default', overflow: 'hidden',
+                    background: active ? `linear-gradient(115deg, ${hex}, ${hex}d0)` : '#fff',
+                    border: `2px solid ${active ? hex : '#E7DCC7'}`,
+                    boxShadow: active ? `0 16px 36px -16px ${hex}` : '0 2px 8px rgba(90,70,40,.07)',
                     transition: 'background .18s, box-shadow .18s, border-color .18s',
                   }}>
-                  {/* Liseré de couleur, toujours visible même carré inactif */}
-                  {!active && <span style={{ position: 'absolute', left: 16, right: 16, top: 0, height: 4, borderRadius: '0 0 4px 4px', background: hex }} />}
+                  {/* Bande de couleur : l'identite visuelle reste lisible meme carte inactive */}
+                  {!active && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, background: hex }} />}
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
-                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={44} />
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, lineHeight: 1.15, color: active ? ink : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                      <div style={{ fontSize: 11.5, color: active ? `${ink}bb` : '#9FC0DC', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {p.team != null && <span style={{ fontWeight: 800 }}>Équipe {TEAM_LETTERS[p.team]}</span>}
-                        {!p.auth_user_id && <span>sans tél</span>}
-                      </div>
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
-                      style={{ flex: '0 0 auto', width: 26, height: 26, borderRadius: 8, cursor: 'pointer',
-                        background: hex, border: `2px solid ${active ? ink : 'rgba(255,255,255,.55)'}` }} />
+                  {/* Identite */}
+                  <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    gap: 5, width: 'clamp(84px,8vw,132px)', marginLeft: active ? 0 : 6 }}>
+                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={72} />
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(14px,1.25vw,20px)',
+                      lineHeight: 1.15, color: ink, textAlign: 'center', maxWidth: '100%',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    {p.team != null && (
+                      <span style={{ fontSize: 'clamp(10px,.85vw,13px)', fontWeight: 800, letterSpacing: .4,
+                        color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
+                    )}
                   </div>
 
+                  {/* Score, au centre et en tres grand */}
                   <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
-                    style={{
-                      marginTop: 'auto', border: 'none', background: 'transparent', cursor: 'pointer',
-                      textAlign: 'left', padding: 0, color: active ? ink : '#fff', width: '100%',
-                    }}>
-                    <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(38px,5vw,58px)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-                      {p.score || 0}
-                      <span style={{ fontSize: 15, opacity: .65, marginLeft: 5 }}>pts</span>
-                    </span>
+                    style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+                      padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(46px, ${n <= 4 ? '7vw' : '4.4vw'}, 118px)`,
+                      lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
+                    <span style={{ fontSize: 'clamp(11px,.95vw,15px)', letterSpacing: 1.4, fontWeight: 700,
+                      opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
                   </button>
 
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 4 }}>
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: active ? ink : '#BFD6EA', fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
-                    {active && <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: .6, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>}
+                  {/* Chrono du joueur, a droite */}
+                  <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+                    justifyContent: 'center', gap: 3, width: 'clamp(96px,9.5vw,180px)' }}>
+                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(24px,2.5vw,44px)',
+                      lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
+                    {active
+                      ? <span style={{ fontSize: 'clamp(10px,.9vw,14px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
+                      : <span style={{ fontSize: 'clamp(10px,.9vw,14px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
                   </div>
+
+                  {/* Pastille de couleur */}
+                  <button onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
+                    style={{ position: 'absolute', top: 10, right: 12, width: 22, height: 22, borderRadius: 7,
+                      cursor: 'pointer', background: hex, border: `2px solid ${active ? ink : '#fff'}`,
+                      boxShadow: '0 0 0 1px rgba(0,0,0,.12)' }} />
                 </div>
               );
             })}
           </div>
 
-          {/* Barre du bas : accessoires et commandes de l'hote */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, alignItems: 'center', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 18, padding: '11px 14px' }}>
-            {chip(teamsOn ? '👥 Équipes' : '👥 Mode équipe', teamsOn, () => setTeamsOpen(true))}
-            {wake.supported && chip(wake.active ? '☀️ Écran allumé' : '🌙 Veille normale', wake.active, () => setKeepAwake((v) => !v), '#E8A317')}
-            {(game?.id || session?.game_id) && chip(`📖 Règles${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
-            {isHost && activePhase === 'play' && !simul && chip(neutral ? '▶ Reprendre' : '⏸ Pause', !!neutral, toggleNeutral, '#E8A317')}
-            {isHost && activePhase === 'play' && !simul && chip('🔁 Nouvelle partie', false, openNewGame)}
-            {isHost && activePhase === 'play' && !simul && chip('⚡ Tous en même temps', false, simulEnter, '#B784D0')}
-            {isHost && activePhase === 'play' && simul && chip('▶ Relancer tout le monde', true, simulResumeAll)}
-            {isHost && activePhase === 'play' && simul && chip('Mode normal', false, simulExit)}
-            <span style={{ flex: 1 }} />
-            {isHost && (
-              <button onClick={end} style={{
-                border: 'none', background: 'linear-gradient(140deg,#B5283A,#8d1f2d)', color: '#fff',
-                borderRadius: 999, padding: '11px 24px', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
-                cursor: 'pointer', boxShadow: '0 10px 26px -12px #B5283A',
-              }}>Terminer la partie</button>
-            )}
+          {/* Accessoires et commandes, en gros carres */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,168px), 1fr))', gap: 'clamp(8px,.9vw,12px)' }}>
+            {tile('👥', teamsOn ? 'Équipes' : 'Mode équipe', teamsOn, () => setTeamsOpen(true))}
+            {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
+            {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
+            {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
+            {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
+            {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
+            {isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
+            {isHost && gamePhase === 'play' && simul && tile('↩', 'Mode normal', false, simulExit, C.purple)}
+            {isHost && tile('🏁', 'Terminer la partie', false, end, C.red)}
           </div>
 
           {newGamePrompt && (
-            <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(10,25,42,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
-                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminee</div>
+                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Manche terminée</div>
                 <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                  {anyScore ? 'Qui a gagne cette partie ? Le vainqueur est deduit des scores.' : 'Qui a gagne cette partie ? (laisse vide pour un cooperatif)'}
+                  {anyScore ? 'Qui a gagné cette manche ? Le vainqueur est déduit des scores.' : 'Qui a gagné cette manche ? (laisse vide pour un coopératif)'}
                 </div>
                 <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
                   {players.map((p) => {
@@ -1336,7 +1484,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
-                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
+                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Manche suivante →'}</button>
                 </div>
               </div>
             </div>
@@ -1490,11 +1638,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>{teamsOn ? 'Equipes' : 'Mode equipe'}</button>
-            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
-            {activePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
-            {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
-            {activePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
+            {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
+            {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
+            {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
+            {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
+            {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
             <button style={{ ...btnSecondary, flex: 1 }} onClick={quitNoSave}>Quitter sans enregistrer</button>
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
@@ -1566,10 +1714,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             );
           })}
         </Card>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button style={{ ...btnGhost, flex: 1 }} onClick={onExit}>Fermer sans enregistrer</button>
-          <button style={{ ...btnPrimary, flex: 1 }} onClick={saveResultAndExit} disabled={savingResult}>{savingResult ? 'Enregistrement…' : 'Enregistrer le résultat'}</button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button style={{ ...btnGhost, flex: '1 1 140px' }} onClick={onExit}>Fermer sans enregistrer</button>
+          <button style={{ ...btnPrimary, flex: '1 1 180px' }} onClick={saveResultAndExit} disabled={savingResult || switching}>{savingResult ? 'Enregistrement…' : 'Enregistrer et quitter'}</button>
         </div>
+        {isHost && (
+          <button style={{ ...btnSecondary, width: '100%', marginTop: 10, background: C.teal, color: C.white, border: 'none' }}
+            onClick={() => setNextPicker(true)} disabled={savingResult || switching}>
+            🎲 Enregistrer et enchaîner un autre jeu
+          </button>
+        )}
+        <p style={{ fontSize: 12.5, color: `${C.navy}99`, textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
+          {isHost
+            ? "Les mêmes joueurs, les mêmes équipes et les mêmes couleurs sont repris — et tous les téléphones déjà connectés basculent tout seuls sur le nouveau jeu."
+            : "L'hôte peut enchaîner sur un autre jeu : votre écran suivra automatiquement."}
+        </p>
       </div>
     );
   }
@@ -1578,6 +1737,53 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 }
 
 // ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
+/* Choisir le jeu suivant, sans quitter le chrono ni ressaisir les joueurs. */
+function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose }) {
+  const seen = new Set();
+  const list = [];
+  (eventGames || []).forEach((g) => { if (!seen.has(g.id)) { seen.add(g.id); list.push({ ...g, _fromEvent: true }); } });
+  (hits || []).forEach((g) => { if (!seen.has(g.id)) { seen.add(g.id); list.push(g); } });
+
+  return (
+    <div onClick={busy ? undefined : onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>🎲 On enchaîne sur quoi ?</div>
+          <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
+        </div>
+        <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '4px 0 14px', lineHeight: 1.55 }}>
+          Le résultat de la partie qui vient de s'achever est enregistré, puis un nouveau
+          chrono démarre avec <b>les mêmes joueurs</b>, les mêmes équipes et les mêmes couleurs.
+          Les téléphones déjà connectés basculent tout seuls.
+        </p>
+
+        <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Chercher un jeu…"
+          style={{ ...input, marginBottom: 12 }} disabled={busy} autoFocus />
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 9 }}>
+          {list.length === 0 && <div style={{ color: `${C.navy}88`, fontSize: 14 }}>Aucun jeu trouvé.</div>}
+          {list.map((g) => (
+            <button key={g.id} onClick={() => onPick(g)} disabled={busy}
+              style={{ display: 'flex', alignItems: 'center', gap: 11, background: '#fff', border: '1.5px solid #e6dcc9',
+                borderRadius: 14, padding: '9px 11px', cursor: busy ? 'default' : 'pointer', textAlign: 'left',
+                minWidth: 0, opacity: busy ? .6 : 1 }}>
+              {g.image_url
+                ? <img src={g.image_url} alt="" style={{ width: 46, height: 46, borderRadius: 10, objectFit: 'cover', flex: '0 0 auto' }} />
+                : <span style={{ width: 46, height: 46, borderRadius: 10, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 15, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                <span style={{ display: 'block', fontSize: 12, color: `${C.navy}88` }}>
+                  {g._fromEvent ? 'jeu du moment' : (g.play_time ? `${g.play_time} min` : 'ludothèque')}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* Palette : choisir a la main la couleur d'un joueur. */
 function ColorSheet({ player, currentKey, takenKeys, onPick, onClose }) {
   if (!player) return null;
