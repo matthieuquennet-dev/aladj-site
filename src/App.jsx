@@ -4291,6 +4291,10 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Confirmer une partie enregistrée par quelqu'un d'autre",
+          a: <p style={{ margin: 0 }}>Quand un membre enregistre une partie où vous figurez, elle apparaît dans <b>Mon espace</b> → <b>Parties à confirmer</b>. La case <b>« j'ai gagné »</b> arrive <b>déjà cochée</b> si celui qui a saisi la partie vous a déclaré vainqueur — la mention « vous êtes déclaré vainqueur » et votre score le rappellent sous le nom du jeu. Vous restez libre de la décocher (ou de la cocher) avant de valider : c'est votre confirmation qui fait foi. Auparavant la case était toujours vide, et beaucoup de victoires se perdaient au moment de confirmer.</p>,
+        },
+        {
           q: "Retirer une partie de mon historique",
           a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, ouvrez un jeu puis la corbeille à côté d'une partie : elle quitte votre historique et vos statistiques (les autres joueurs ne sont pas affectés). Le site <b>retient votre décision</b> : la partie ne reviendra plus vous demander « as-tu joué à ce jeu ? » dans « Parties à confirmer ». Auparavant, une partie retirée à la main réapparaîssait aussitôt en suggestion — ce n'est plus le cas.</p>,
         },
@@ -4320,6 +4324,14 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Le bouton <b style={{ color: C.teal }}>📖 Règles</b>, en haut de l'écran du chrono, ouvre les <b>points de règle</b> du jeu en cours — les mêmes que sur sa fiche. Le chiffre entre parenthèses indique combien il y en a. Vous pouvez y <b>ajouter</b> une précision à chaud, <b>corriger</b> ou <b>supprimer</b> les vôtres, puis refermer et reprendre la partie là où vous en étiez. Tout ce qui est écrit ici apparaît immédiatement sur la fiche du jeu, pour tous les membres.</p>,
         },
         {
+          q: "Enchaîner un autre jeu sans quitter le chrono",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>C'est la façon de faire quand une tablette reste posée au milieu de la table toute la soirée. À la fin d'une partie, l'hôte dispose de trois sorties : <b>Fermer sans enregistrer</b>, <b>Enregistrer et quitter</b>, ou <b>🎲 Enregistrer et enchaîner un autre jeu</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>La troisième enregistre le résultat, puis ouvre la liste des jeux — ceux du moment jeux d'abord, puis toute la ludothèque par recherche. Un clic, et un nouveau chrono démarre avec <b>les mêmes joueurs, les mêmes équipes et les mêmes couleurs</b>. Plus rien à ressaisir.</p>
+            <p style={{ margin: 0 }}>Et surtout : <b>tous les téléphones déjà connectés basculent tout seuls</b> sur le nouveau jeu. Personne n'a à rescanner un code ni à relancer quoi que ce soit — l'écran de chacun suit l'hôte.</p>
+          </>,
+        },
+        {
           q: "Jouer en équipes",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans le chrono, le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes : chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</p>
@@ -4341,8 +4353,8 @@ function GuidePage() {
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li>En haut, les <b>trois grands blocs</b> de phase : mise en place, partie, rangement, avec leur chrono en très gros.</li>
               <li>En dessous, le <b>jeu en cours</b> avec sa miniature, le numéro de manche et la durée de jeu.</li>
-              <li>Puis les <b>carrés joueurs</b>, chacun à sa couleur : photo, nom, <b>score en très grand</b> (touchez-le pour le modifier) et temps de jeu juste en dessous. Le joueur dont c'est le tour voit son carré s'allumer entièrement.</li>
-              <li>En bas, la <b>barre des accessoires</b> : mode équipe, écran allumé, points de règle, et les commandes de l'hôte (pause, nouvelle partie, terminer).</li>
+              <li>Puis les <b>cartes joueurs</b>, une par ligne : à gauche la photo et le nom (avec l'équipe s'il y en a une), au centre le <b>score en très grand</b> — touchez-le pour le modifier — et à droite le <b>temps de jeu</b>. Le joueur dont c'est le tour voit sa carte s'allumer entièrement dans sa couleur ; les autres gardent une bande colorée sur le bord. Les tailles s'adaptent à la dalle : plus l'écran est grand, plus les chiffres le sont.</li>
+              <li>En bas, les <b>gros boutons</b> : mode équipe, écran allumé, points de règle, et les commandes de l'hôte (pause, manche suivante, tous en même temps, terminer).</li>
             </ul>
             <p style={{ margin: 0 }}>Un bouton <b>📱 Vue téléphone</b> / <b>🖥️ Vue tablette</b> en haut à droite permet de forcer l'une ou l'autre disposition si le choix automatique ne vous convient pas.</p>
           </>,
@@ -10547,7 +10559,7 @@ function FamilySection({ setToast }) {
 }
 
 function EventPlaySuggestions() {
-  const { eventPlaySuggestions, confirmEventPlay, dismissEventPlay, myPendingPlays, confirmPlayParticipation, declinePlayParticipation, games, users } = useApp();
+  const { eventPlaySuggestions, confirmEventPlay, dismissEventPlay, myPendingPlays, confirmPlayParticipation, declinePlayParticipation, games, users, currentUser } = useApp();
   const [busy, setBusy] = useState(null);
   const [wonSet, setWonSet] = useState({});
   const total = eventPlaySuggestions.length + (myPendingPlays || []).length;
@@ -10563,7 +10575,12 @@ function EventPlaySuggestions() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
         {(myPendingPlays || []).map((pl) => {
           const k = "play|" + pl.id;
-          const won = !!wonSet[k];
+          // Le statut de vainqueur declare par celui qui a saisi la partie sert
+          // de valeur par defaut : sans cela, un gagnant devait se re-declarer
+          // lui-meme et beaucoup de victoires se perdaient en chemin.
+          const myPart = (pl.participants || []).find((pt) => pt.userId === currentUser?.id);
+          const declaredWin = !!(myPart && myPart.isWinner);
+          const won = k in wonSet ? wonSet[k] : declaredWin;
           const isBusy = busy === k;
           const gName = (games || []).find((g) => g.id === pl.gameId)?.name || "Jeu";
           const recorder = (users || []).find((u) => u.id === pl.recordedBy)?.name || "Un membre";
@@ -10571,9 +10588,13 @@ function EventPlaySuggestions() {
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "10px 13px" }}>
               <div style={{ flex: 1, minWidth: 150 }}>
                 <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{gName}</div>
-                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Partie du {new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })} · enregistrée par {recorder}</div>
+                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>
+                  Partie du {new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })} · enregistrée par {recorder}
+                  {declaredWin && <span style={{ color: C.amber, fontWeight: 700 }}> · vous êtes déclaré vainqueur</span>}
+                  {myPart && myPart.score != null && myPart.score !== "" && <span> · {myPart.score} pts</span>}
+                </div>
               </div>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49", cursor: "pointer" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, fontWeight: won ? 700 : 400, color: won ? "#8a6a1f" : "#6b5d49", cursor: "pointer" }}>
                 <input type="checkbox" checked={won} onChange={() => setWonSet((p) => ({ ...p, [k]: !won }))} /> j'ai gagné
               </label>
               <div style={{ display: "flex", gap: 6 }}>
