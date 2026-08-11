@@ -466,7 +466,6 @@ function ConfirmDialog({ state, onClose }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state, onClose]);
-  useScrollLock(!!state);
   if (!state) return null;
   const { title = "Confirmer ?", message = "", confirmLabel = "Confirmer", cancelLabel = "Annuler", danger = true } = state;
   return (
@@ -606,7 +605,6 @@ function ScoreDirectionField({ value, onChange }) {
 function ScorePadOverlay({ name, initialScore, onClose, onApply }) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  useScrollLock(true);   // le pave couvre l'ecran : la page derriere doit rester figee
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
     window.addEventListener("keydown", onKey, true);
@@ -3156,8 +3154,6 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   const downOnOverlay = useRef(false);
   const overlayRef = useRef(null);
 
-  useScrollLock(open);
-
   useEffect(() => {
     if (!open) return;
     const h = (e) => e.key === "Escape" && onClose();
@@ -3189,8 +3185,7 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000,
-        overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
       }}>
       <div style={{
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
@@ -3206,47 +3201,6 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       </div>
     </div>
   );
-}
-
-/* -----------------------------------------------------------------------------
-   VERROU DE DEFILEMENT
-   Tant qu'une fenetre est ouverte, la page derriere ne doit pas bouger.
-   Compteur global : les fenetres s'empilent (une fiche de jeu ouvre une
-   confirmation, qui ouvre un pave de score...) et le verrou ne doit sauter
-   qu'a la fermeture de la derniere.
-   On fige le <body> en position: fixed en memorisant le defilement, plutot que
-   par overflow: hidden -- seule methode qui tienne sur Safari iOS.
-   --------------------------------------------------------------------------- */
-let __aladjScrollLocks = 0;
-let __aladjScrollY = 0;
-
-function useScrollLock(active) {
-  useEffect(() => {
-    if (!active || typeof document === "undefined") return undefined;
-    const b = document.body;
-    if (__aladjScrollLocks === 0) {
-      __aladjScrollY = window.scrollY || window.pageYOffset || 0;
-      b.style.position = "fixed";
-      b.style.top = `-${__aladjScrollY}px`;
-      b.style.left = "0";
-      b.style.right = "0";
-      b.style.width = "100%";
-      b.style.overflow = "hidden";
-    }
-    __aladjScrollLocks += 1;
-    return () => {
-      __aladjScrollLocks = Math.max(0, __aladjScrollLocks - 1);
-      if (__aladjScrollLocks === 0) {
-        b.style.position = "";
-        b.style.top = "";
-        b.style.left = "";
-        b.style.right = "";
-        b.style.width = "";
-        b.style.overflow = "";
-        window.scrollTo(0, __aladjScrollY);
-      }
-    };
-  }, [active]);
 }
 
 /* ---- Badge ---- */
@@ -4365,6 +4319,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
             <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
             <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
+            <p style={{ margin: "8px 0 0" }}><b>Les « jeux joués » du moment se remplissent tout seuls.</b> Le jeu choisi dans le chrono s'ajoute immédiatement à la fiche du moment, et chaque <b>manche supplémentaire</b> relève son compteur de parties. Plus rien à ressaisir après coup — et pas de doublon : les demandes de confirmation envoyées aux participants tiennent compte de ce que le chrono a déjà enregistré. Si vous aviez relevé le compteur à la main pour des parties non chronométrées, votre chiffre est conservé : le chrono ne le fait jamais redescendre.</p>
           </>,
         },
         {
@@ -4392,6 +4347,14 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Chaque joueur reçoit automatiquement une couleur, dans cet ordre : sa <b>couleur préférée</b> renseignée sur son profil, puis sa deuxième, puis sa troisième si les précédentes sont déjà prises — et à défaut la première couleur libre de la palette. Le premier arrivé garde la sienne.</p>
             <p style={{ margin: 0 }}>Vous pouvez toujours <b>changer une couleur à la main</b> : touchez la pastille colorée sur la carte du joueur pour ouvrir le nuancier. Les couleurs déjà prises par quelqu'un d'autre y sont signalées d'un point blanc, et un bouton permet de revenir à l'attribution automatique. Le choix vaut pour cette partie et se voit sur tous les appareils.</p>
+          </>,
+        },
+        {
+          q: "Rejoindre une partie en scannant un QR code",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dès qu'un chrono est lancé, un <b>QR code</b> s'affiche à côté du code à six caractères. Chacun le scanne avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — et arrive directement dans la partie, sans rien saisir.</p>
+            <p style={{ margin: "0 0 8px" }}>En <b>vue tablette</b>, le code affiché dans le bandeau du jeu est cliquable : il ouvre un grand QR au centre de l'écran, lisible depuis l'autre bout de la table. Pratique quand un joueur arrive en cours de soirée.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>Le QR est fabriqué par le site lui-même, sans passer par aucun service extérieur : le code de votre partie ne quitte jamais votre navigateur.</p>
           </>,
         },
         {
@@ -6706,11 +6669,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
     await updateComment(editingId, editText); setEditingId(null); setEditText("");
   };
 
-  useScrollLock(true);   // cette fenetre n'est montee que lorsqu'elle est visible
-
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px",
-      overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
       background: overlayBg, transition: "background .4s", backdropFilter: "blur(3px)" }}>
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
@@ -13104,10 +13064,6 @@ export default function App() {
           .aladj-modal-body { padding: 16px !important; }
         }
         button { font-family: inherit; }
-        /* Le geste de defilement ne doit jamais « deborder » d'une fenetre vers la
-           page qui se trouve derriere. Applique aussi aux zones defilantes
-           internes (listes de jeux, grilles d'extensions...). */
-        .aladj-modal-body, .aladj-modal-body * { overscroll-behavior: contain; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
