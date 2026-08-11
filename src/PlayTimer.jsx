@@ -43,6 +43,289 @@ const fmt = (s) => {
 const initials = (name = '?') =>
   name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
+/* =============================================================================
+   QR CODE — encodeur autonome
+   Aucune dependance externe : ni bibliotheque npm, ni service en ligne. Le code
+   de partie ne sort donc jamais du navigateur, et un QR s'affiche meme si la
+   connexion est mauvaise.
+
+   Perimetre volontairement restreint a ce dont on a besoin :
+     - mode octet (une URL) ;
+     - niveau de correction M (~15 % de tolerance, bon compromis) ;
+     - versions 1 a 6, soit jusqu'a 106 caracteres -- tres au-dela d'un lien
+       du type https://aladj.fr/?chrono=ABC123.
+   S'en tenir aux versions 1-6 evite d'avoir a ecrire le bloc d'information de
+   version (obligatoire seulement a partir de la version 7).
+   ============================================================================= */
+
+// ---- Corps de Galois GF(256), polynome generateur 0x11d ---------------------
+const QR_EXP = new Array(512);
+const QR_LOG = new Array(256);
+(function initGaloisField() {
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    QR_EXP[i] = x;
+    QR_LOG[x] = i;
+    x <<= 1;
+    if (x & 256) x ^= 0x11d;
+  }
+  for (let i = 255; i < 512; i++) QR_EXP[i] = QR_EXP[i - 255];
+})();
+
+const gfMul = (a, b) => (a === 0 || b === 0 ? 0 : QR_EXP[QR_LOG[a] + QR_LOG[b]]);
+
+function rsGenerator(n) {
+  let g = [1];
+  for (let i = 0; i < n; i++) {
+    const next = new Array(g.length + 1).fill(0);
+    for (let j = 0; j < g.length; j++) {
+      next[j] ^= g[j];
+      next[j + 1] ^= gfMul(g[j], QR_EXP[i]);
+    }
+    g = next;
+  }
+  return g;
+}
+
+function rsRemainder(data, nsym) {
+  const gen = rsGenerator(nsym);
+  const res = data.concat(new Array(nsym).fill(0));
+  for (let i = 0; i < data.length; i++) {
+    const coef = res[i];
+    if (!coef) continue;
+    for (let j = 1; j <= nsym; j++) res[i + j] ^= gfMul(gen[j], coef);
+  }
+  return res.slice(data.length);
+}
+
+/* Niveau M, versions 1 a 6.
+   [ codewords de correction par bloc, blocs groupe 1, donnees/bloc groupe 1,
+     blocs groupe 2, donnees/bloc groupe 2 ] */
+const QR_M = {
+  1: [10, 1, 16, 0, 0],
+  2: [16, 1, 28, 0, 0],
+  3: [26, 1, 44, 0, 0],
+  4: [18, 2, 32, 0, 0],
+  5: [24, 2, 43, 0, 0],
+  6: [16, 4, 27, 0, 0],
+};
+// Centre des motifs d'alignement (aucun en version 1).
+const QR_ALIGN = { 1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34] };
+// Information de format, niveau M, masques 0 a 7 (15 bits, deja masques).
+const QR_FORMAT_M = [0x5412, 0x5125, 0x5e7c, 0x5b4b, 0x45f9, 0x40ce, 0x4f97, 0x4aa0];
+
+function qrCapacity(version) {
+  const [ec, b1, d1, b2, d2] = QR_M[version];
+  return b1 * d1 + b2 * d2;
+}
+
+/* Encode le texte en matrice booleenne, ou renvoie null si c'est trop long. */
+function makeQrMatrix(text) {
+  const bytes = Array.from(new TextEncoder().encode(text));
+
+  let version = 0;
+  for (let v = 1; v <= 6; v++) {
+    // 4 bits de mode + 8 bits de longueur = 1,5 octet d'en-tete
+    if (bytes.length + 2 <= qrCapacity(v)) { version = v; break; }
+  }
+  if (!version) return null;
+
+  const [ecPerBlock, b1, d1, b2, d2] = QR_M[version];
+  const totalData = qrCapacity(version);
+
+  // ---- flux binaire ----
+  const bits = [];
+  const push = (value, len) => { for (let i = len - 1; i >= 0; i--) bits.push((value >> i) & 1); };
+  push(0b0100, 4);          // mode octet
+  push(bytes.length, 8);    // compteur (8 bits pour les versions 1 a 9)
+  bytes.forEach((b) => push(b, 8));
+  for (let i = 0; i < 4 && bits.length < totalData * 8; i++) bits.push(0);  // terminateur
+  while (bits.length % 8) bits.push(0);
+
+  const codewords = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let v = 0;
+    for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+    codewords.push(v);
+  }
+  const PAD = [0xec, 0x11];
+  let k = 0;
+  while (codewords.length < totalData) codewords.push(PAD[k++ % 2]);
+
+  // ---- decoupage en blocs, correction d'erreurs, entrelacement ----
+  const blocks = [];
+  let pos = 0;
+  for (let i = 0; i < b1; i++) { blocks.push(codewords.slice(pos, pos + d1)); pos += d1; }
+  for (let i = 0; i < b2; i++) { blocks.push(codewords.slice(pos, pos + d2)); pos += d2; }
+  const ecBlocks = blocks.map((bl) => rsRemainder(bl, ecPerBlock));
+
+  const finalCw = [];
+  const maxData = Math.max(d1, d2);
+  for (let i = 0; i < maxData; i++) blocks.forEach((bl) => { if (i < bl.length) finalCw.push(bl[i]); });
+  for (let i = 0; i < ecPerBlock; i++) ecBlocks.forEach((bl) => finalCw.push(bl[i]));
+
+  // ---- trame ----
+  const size = version * 4 + 17;
+  const mod = Array.from({ length: size }, () => new Array(size).fill(null)); // null = libre
+  const reserved = Array.from({ length: size }, () => new Array(size).fill(false));
+
+  const setF = (r, c, v) => { if (r >= 0 && c >= 0 && r < size && c < size) { mod[r][c] = v; reserved[r][c] = true; } };
+
+  const finder = (r0, c0) => {
+    for (let r = -1; r <= 7; r++) {
+      for (let c = -1; c <= 7; c++) {
+        const inside = r >= 0 && r <= 6 && c >= 0 && c <= 6;
+        const ring = inside && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
+        setF(r0 + r, c0 + c, inside ? ring : false);
+      }
+    }
+  };
+  finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+
+  for (let i = 8; i < size - 8; i++) { setF(6, i, i % 2 === 0); setF(i, 6, i % 2 === 0); }
+
+  const centers = QR_ALIGN[version];
+  centers.forEach((r0) => centers.forEach((c0) => {
+    // pas de motif d'alignement sous un motif de detection
+    if ((r0 <= 8 && c0 <= 8) || (r0 <= 8 && c0 >= size - 9) || (r0 >= size - 9 && c0 <= 8)) return;
+    for (let r = -2; r <= 2; r++) for (let c = -2; c <= 2; c++) {
+      setF(r0 + r, c0 + c, Math.max(Math.abs(r), Math.abs(c)) !== 1);
+    }
+  }));
+
+  setF(size - 8, 8, true);   // module sombre
+
+  // zones reservees a l'information de format
+  for (let i = 0; i <= 8; i++) { if (!reserved[8][i]) setF(8, i, false); if (!reserved[i][8]) setF(i, 8, false); }
+  for (let i = 0; i < 8; i++) { if (!reserved[8][size - 1 - i]) setF(8, size - 1 - i, false); if (!reserved[size - 1 - i][8]) setF(size - 1 - i, 8, false); }
+
+  // ---- placement des donnees, en zigzag depuis le bas a droite ----
+  let bitIdx = 0;
+  const dataBits = [];
+  finalCw.forEach((cw) => { for (let i = 7; i >= 0; i--) dataBits.push((cw >> i) & 1); });
+
+  let upward = true;
+  for (let col = size - 1; col > 0; col -= 2) {
+    if (col === 6) col--;              // la colonne 6 porte le motif de synchronisation
+    for (let i = 0; i < size; i++) {
+      const row = upward ? size - 1 - i : i;
+      for (let c = 0; c < 2; c++) {
+        const cc = col - c;
+        if (reserved[row][cc]) continue;
+        mod[row][cc] = bitIdx < dataBits.length ? dataBits[bitIdx++] === 1 : false;
+      }
+    }
+    upward = !upward;
+  }
+
+  // ---- masques : on retient celui qui minimise la penalite ----
+  const maskFn = [
+    (r, c) => (r + c) % 2 === 0,
+    (r) => r % 2 === 0,
+    (r, c) => c % 3 === 0,
+    (r, c) => (r + c) % 3 === 0,
+    (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+    (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
+    (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
+    (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+  ];
+
+  const penalty = (m) => {
+    let p = 0;
+    // regle 1 : suites de 5 modules ou plus de meme couleur
+    for (let r = 0; r < size; r++) {
+      let run = 1;
+      for (let c = 1; c < size; c++) {
+        if (m[r][c] === m[r][c - 1]) { run++; } else { if (run >= 5) p += 3 + (run - 5); run = 1; }
+      }
+      if (run >= 5) p += 3 + (run - 5);
+    }
+    for (let c = 0; c < size; c++) {
+      let run = 1;
+      for (let r = 1; r < size; r++) {
+        if (m[r][c] === m[r - 1][c]) { run++; } else { if (run >= 5) p += 3 + (run - 5); run = 1; }
+      }
+      if (run >= 5) p += 3 + (run - 5);
+    }
+    // regle 2 : blocs 2x2 uniformes
+    for (let r = 0; r < size - 1; r++) for (let c = 0; c < size - 1; c++) {
+      const v = m[r][c];
+      if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) p += 3;
+    }
+    // regle 3 : motifs ressemblant a un motif de detection
+    const pat1 = [true, false, true, true, true, false, true, false, false, false, false];
+    const pat2 = [false, false, false, false, true, false, true, true, true, false, true];
+    const match = (arr, pat) => pat.every((v, i) => arr[i] === v);
+    for (let r = 0; r < size; r++) for (let c = 0; c <= size - 11; c++) {
+      const row = m[r].slice(c, c + 11);
+      if (match(row, pat1) || match(row, pat2)) p += 40;
+    }
+    for (let c = 0; c < size; c++) for (let r = 0; r <= size - 11; r++) {
+      const col = [];
+      for (let i = 0; i < 11; i++) col.push(m[r + i][c]);
+      if (match(col, pat1) || match(col, pat2)) p += 40;
+    }
+    // regle 4 : desequilibre clair/sombre
+    let dark = 0;
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (m[r][c]) dark++;
+    const ratio = (dark * 100) / (size * size);
+    p += Math.floor(Math.abs(ratio - 50) / 5) * 10;
+    return p;
+  };
+
+  let best = null, bestMask = 0, bestScore = Infinity;
+  for (let mask = 0; mask < 8; mask++) {
+    const m = mod.map((row) => row.slice());
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+      if (!reserved[r][c] && maskFn[mask](r, c)) m[r][c] = !m[r][c];
+    }
+    // information de format (deux exemplaires)
+    const fmt = QR_FORMAT_M[mask];
+    const bit = (i) => ((fmt >> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) m[8][i] = bit(14 - i);
+    m[8][7] = bit(8); m[8][8] = bit(7); m[7][8] = bit(6);
+    for (let i = 9; i <= 14; i++) m[14 - i][8] = bit(14 - i);
+    for (let i = 0; i <= 7; i++) m[size - 1 - i][8] = bit(i);
+    for (let i = 8; i <= 14; i++) m[8][size - 15 + i] = bit(i);
+    m[size - 8][8] = true;
+
+    const sc = penalty(m);
+    if (sc < bestScore) { bestScore = sc; best = m; bestMask = mask; }
+  }
+
+  return best;
+}
+
+/* Rend le QR sous forme de SVG : net a toutes les tailles, aucun canvas. */
+function QrCode({ text, size = 200, quiet = 4, dark = '#1A3A5C', light = '#fff', title }) {
+  const matrix = useMemo(() => {
+    try { return makeQrMatrix(text); } catch (e) { return null; }
+  }, [text]);
+  if (!matrix) return null;
+  const n = matrix.length;
+  const total = n + quiet * 2;
+  const rects = [];
+  for (let r = 0; r < n; r++) {
+    // On regroupe les modules sombres contigus : moins de rectangles, SVG plus leger.
+    let c = 0;
+    while (c < n) {
+      if (!matrix[r][c]) { c++; continue; }
+      let len = 1;
+      while (c + len < n && matrix[r][c + len]) len++;
+      rects.push(<rect key={`${r}-${c}`} x={c + quiet} y={r + quiet} width={len} height={1} fill={dark} />);
+      c += len;
+    }
+  }
+  return (
+    <svg viewBox={`0 0 ${total} ${total}`} width={size} height={size} role="img"
+      aria-label={title || 'QR code'} shapeRendering="crispEdges"
+      style={{ display: 'block', borderRadius: 12, background: light }}>
+      <rect x="0" y="0" width={total} height={total} fill={light} />
+      {rects}
+    </svg>
+  );
+}
+
 /* ---------------------------------------------------------------------
    Garder l'ecran allume pendant une partie (Screen Wake Lock API).
    Un vrai affichage sur l'ecran verrouille n'est pas possible depuis un
@@ -211,7 +494,7 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: C.cream, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 560,
-        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: C.navy, minWidth: 0 }}>
@@ -356,6 +639,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [colorFor, setColorFor] = useState(null);
   const [teamsOpen, setTeamsOpen] = useState(false);
   // (4) Enchainer un autre jeu sans quitter le chrono.
+  const [qrOpen, setQrOpen] = useState(false);   // grand QR de jonction (vue tablette)
   const [nextPicker, setNextPicker] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [nextQuery, setNextQuery] = useState('');
@@ -691,6 +975,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       await refetchPlayers(sessionId);
       await refetchTotals(sessionId);
       subscribe(sessionId);
+      await syncEventGame(sessionId);   // le jeu rejoint les jeux joues du moment
       if (sess?.status === 'lobby') setPhase('lobby');
     } catch (err) { setError(err.message || String(err)); }
   };
@@ -752,6 +1037,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     try { setError(null); const { error: e } = await supabase.rpc(fn, args); if (e) throw e; }
     catch (err) { setError(err.message || String(err)); }
   };
+  // (1) Le chrono tient les "jeux joues" du moment a jour tout seul : le jeu
+  // choisi s'y ajoute, et chaque manche releve son compteur de parties. Sans
+  // cela, il fallait ressaisir tout cela a la main sur la fiche du moment.
+  // La fonction est sans effet quand le chrono n'est rattache a aucun moment.
+  const syncEventGame = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    try { await supabase.rpc('aladj_sync_event_game', { p_session_id: sessionId }); } catch (e) { /* sans gravite */ }
+  }, [supabase]);
+
   const start = () => rpc('start_session', { p_session_id: sid });
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
@@ -759,7 +1053,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const openNewGame = () => { setNewGameWinners(autoWinners); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
-  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
+  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -832,6 +1126,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
       setNextPicker(false); setNextQuery(''); setNextHits([]);
       await switchToSession(nid);
+      await syncEventGame(nid);         // le nouveau jeu aussi
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -983,7 +1278,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       background: wide
         ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
         : C.cream,
-      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
     }}>
       <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1061,6 +1356,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           onSet={setPlayerTeam}
           onClose={() => setTeamsOpen(false)}
         />
+      )}
+      {qrOpen && joinLink && (
+        <div onClick={() => setQrOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.55)', display: 'grid', placeItems: 'center', padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: C.cream, borderRadius: 26, padding: 'clamp(20px,2.5vw,36px)', textAlign: 'center', boxShadow: '0 30px 80px rgba(60,45,25,.35)', maxWidth: '92vw' }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(20px,2.2vw,32px)', color: C.navy, marginBottom: 4 }}>
+              Rejoindre la partie
+            </div>
+            <div style={{ fontSize: 'clamp(13px,1.2vw,18px)', color: `${C.navy}99`, marginBottom: 16 }}>
+              Scannez avec l'appareil photo de votre téléphone
+            </div>
+            <div style={{ display: 'grid', placeItems: 'center' }}>
+              <QrCode text={joinLink} size={Math.min(420, typeof window !== 'undefined' ? Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.5) : 320)} title="Rejoindre la partie" />
+            </div>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,3.4vw,52px)', letterSpacing: 7, color: C.teal, marginTop: 14 }}>
+              {session?.join_code}
+            </div>
+            <div style={{ fontSize: 'clamp(12px,1.1vw,16px)', color: `${C.navy}88`, marginTop: 2 }}>
+              ou saisissez ce code dans le chrono
+            </div>
+            <button onClick={() => setQrOpen(false)} style={{ ...btnSecondary, marginTop: 18, width: '100%' }}>Fermer</button>
+          </div>
+        </div>
       )}
       {switching && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1400, background: 'rgba(60,45,25,.45)', display: 'grid', placeItems: 'center' }}>
@@ -1210,15 +1529,25 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       <div>
         <Card>
           <Label>Code de la partie</Label>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 46, letterSpacing: 6, color: C.teal, textAlign: 'center' }}>
-            {session?.join_code}
+          <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: tablet ? 62 : 46, letterSpacing: 6, color: C.teal, textAlign: 'center' }}>
+                {session?.join_code}
+              </div>
+            </div>
+            {joinLink && (
+              <div style={{ flex: '0 0 auto', textAlign: 'center' }}>
+                <QrCode text={joinLink} size={tablet ? 210 : 148} title="Scanner pour rejoindre la partie" />
+                <div style={{ fontSize: 11.5, color: `${C.navy}88`, marginTop: 5, fontWeight: 700, letterSpacing: .3 }}>SCANNER POUR REJOINDRE</div>
+              </div>
+            )}
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => navigator.clipboard?.writeText(session.join_code)}>Copier le code</button>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => navigator.clipboard?.writeText(joinLink)}>Copier le lien</button>
           </div>
           <p style={{ fontSize: 13, color: `${C.navy}99`, marginTop: 8 }}>
-            Chacun ouvre le lien (ou saisit le code) sur son téléphone pour suivre son propre temps.
+            Chacun scanne le QR code avec l'appareil photo de son téléphone — ou ouvre le lien, ou saisit le code — pour suivre son propre temps.
           </p>
         </Card>
 
@@ -1373,7 +1702,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 {simul && <span style={{ color: C.purple, fontWeight: 700 }}>· Simultané</span>}
                 {neutral && <span style={{ color: C.amber, fontWeight: 700 }}>· En pause</span>}
                 {teamsOn && <span style={{ color: C.teal, fontWeight: 700 }}>· Mode équipe</span>}
-                {session?.join_code && <span>· Code {session.join_code}</span>}
+                {session?.join_code && (
+                  <button type="button" onClick={() => setQrOpen(true)} title="Afficher le QR code pour rejoindre la partie"
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.teal, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                    · Code {session.join_code} ▦
+                  </button>
+                )}
               </div>
             </div>
             <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
@@ -1746,7 +2080,7 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
 
   return (
     <div onClick={busy ? undefined : onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>🎲 On enchaîne sur quoi ?</div>
           <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
@@ -1828,7 +2162,7 @@ function TeamsSheet({ players, hexFor, onSet, onClose }) {
   const choices = nextFree == null ? used : [...used, nextFree];
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 Mode equipe</div>
           <button onClick={onClose} style={btnGhost}>Fermer</button>
