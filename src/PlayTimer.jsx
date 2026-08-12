@@ -427,12 +427,80 @@ function useKeepAwake(enabled) {
 }
 
 /* ---------------------------------------------------------------------
+   Dictee vocale (Web Speech API).
+   Sur une table de jeu, taper un point de regle a une main est penible :
+   on propose de le dicter. La reconnaissance est faite par le navigateur
+   (Chrome, Safari iOS 14.5+) ; ailleurs le bouton n'apparait tout
+   simplement pas et la saisie au clavier reste la seule option.
+   --------------------------------------------------------------------- */
+const SPEECH_API = (typeof window !== 'undefined')
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
+  : null;
+
+function DictateButton({ onText, big = false, disabled }) {
+  const [listening, setListening] = useState(false);
+  const [err, setErr] = useState(null);
+  const recRef = useRef(null);
+
+  useEffect(() => () => { try { recRef.current && recRef.current.stop(); } catch (e) {} }, []);
+
+  if (!SPEECH_API) return null;
+
+  const toggle = () => {
+    setErr(null);
+    if (listening) { try { recRef.current && recRef.current.stop(); } catch (e) {} return; }
+    let rec;
+    try { rec = new SPEECH_API(); } catch (e) { setErr("Dictee indisponible sur cet appareil."); return; }
+    rec.lang = 'fr-FR';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (ev) => {
+      let txt = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) txt += ev.results[i][0].transcript;
+      }
+      if (txt.trim()) onText(txt.trim());
+    };
+    rec.onerror = (ev) => {
+      setErr(ev?.error === 'not-allowed'
+        ? "Micro refuse : autorisez-le dans les reglages du navigateur."
+        : "La dictee s'est interrompue.");
+      setListening(false);
+    };
+    rec.onend = () => setListening(false);
+    recRef.current = rec;
+    try { rec.start(); setListening(true); } catch (e) { setErr("Impossible de demarrer la dictee."); }
+  };
+
+  return (
+    <div>
+      <button type="button" onClick={toggle} disabled={disabled}
+        title={listening ? 'Arreter la dictee' : 'Dicter le point de regle'}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+          border: `1.5px solid ${listening ? C.red : '#d9cdb6'}`,
+          background: listening ? '#fdecee' : '#fff',
+          color: listening ? C.red : `${C.navy}aa`,
+          borderRadius: 999, padding: big ? '11px 18px' : '8px 14px',
+          fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(15px,1.35vw,20px)' : 14,
+        }}>
+        <span className={listening ? 'aladj-bounce' : undefined} style={{ fontSize: big ? 20 : 16, lineHeight: 1 }}>
+          {listening ? '⏺' : '🎤'}
+        </span>
+        {listening ? "J'écoute… (toucher pour arrêter)" : 'Dicter'}
+      </button>
+      {err && <div style={{ fontSize: 12.5, color: C.red, marginTop: 6, fontWeight: 600 }}>{err}</div>}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
    Points de regle, version chronometre.
    Meme contenu que la fiche du jeu (table game_rules), consultable et
    modifiable sans quitter la partie : c'est justement au moment ou la
    question se pose qu'on a besoin de la reponse.
    --------------------------------------------------------------------- */
-function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose, onCount }) {
+function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose, onCount, big = false }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   const [draft, setDraft] = useState('');
@@ -491,18 +559,20 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
   };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: big ? 'rgba(60,45,25,.5)' : 'rgba(26,58,92,.55)', display: 'flex', alignItems: big ? 'center' : 'flex-end', justifyContent: 'center', padding: big ? '3vh 3vw' : 0 }}>
       <div onClick={(e) => e.stopPropagation()} style={{
-        background: C.cream, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 560,
-        maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 24px', WebkitOverflowScrolling: 'touch',
+        background: C.cream, borderRadius: big ? 26 : '20px 20px 0 0', width: '100%', maxWidth: big ? 1000 : 560,
+        maxHeight: big ? '94vh' : '86vh', overflowY: 'auto', padding: big ? 'clamp(20px,2.4vw,34px)' : '16px 16px 24px',
+        WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+        boxShadow: big ? '0 30px 80px rgba(60,45,25,.35)' : 'none',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19, color: C.navy, minWidth: 0 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(26px,2.6vw,40px)' : 19, color: C.navy, minWidth: 0 }}>
             📖 Points de regle
           </div>
-          <button onClick={onClose} style={btnGhost}>Fermer</button>
+          <button onClick={onClose} style={{ ...btnGhost, fontSize: big ? 19 : 15 }}>Fermer</button>
         </div>
-        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>{gameName || 'Ce jeu'}</div>
+        <div style={{ fontSize: big ? 'clamp(15px,1.4vw,22px)' : 13, color: `${C.navy}99`, marginBottom: big ? 20 : 12 }}>{gameName || 'Ce jeu'}</div>
 
         {err && (
           <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`, borderRadius: 12, padding: '9px 12px', marginBottom: 10, fontWeight: 600, fontSize: 13 }}>{err}</div>
@@ -511,28 +581,30 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
         {rows === null ? (
           <div style={{ color: `${C.navy}88`, fontSize: 14, padding: '10px 0' }}>Chargement...</div>
         ) : rows.length === 0 ? (
-          <div style={{ color: `${C.navy}88`, fontSize: 14, padding: '10px 0' }}>
+          <div style={{ color: `${C.navy}88`, fontSize: big ? 'clamp(17px,1.6vw,24px)' : 14, padding: '10px 0' }}>
             Aucun point de regle pour ce jeu.{currentUser ? ' Notez le premier : il sera visible par tous, ici comme sur la fiche du jeu.' : ''}
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
             {rows.map((r, i) => (
-              <div key={r.id} style={{ display: 'flex', gap: 10, background: '#fff', border: '1px solid #e6dcc9', borderRadius: 12, padding: '10px 12px' }}>
-                <span style={{ flex: '0 0 auto', width: 24, height: 24, borderRadius: 8, background: C.teal, color: '#fff', display: 'grid', placeItems: 'center', fontFamily: TITLE, fontWeight: 600, fontSize: 13 }}>{i + 1}</span>
+              <div key={r.id} style={{ display: 'flex', gap: big ? 16 : 10, background: '#fff', border: '1px solid #e6dcc9', borderRadius: big ? 16 : 12, padding: big ? 'clamp(14px,1.4vw,20px)' : '10px 12px' }}>
+                <span style={{ flex: '0 0 auto', width: big ? 40 : 24, height: big ? 40 : 24, borderRadius: big ? 12 : 8, background: C.teal, color: '#fff', display: 'grid', placeItems: 'center', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(18px,1.7vw,24px)' : 13 }}>{i + 1}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {editId === r.id ? (
                     <div>
-                      <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} maxLength={2000}
-                        style={{ ...input, resize: 'vertical', marginBottom: 8 }} />
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button style={{ ...btnPrimary, padding: '8px 14px', fontSize: 14 }} onClick={saveEdit} disabled={busy || !editText.trim()}>Enregistrer</button>
-                        <button style={btnGhost} onClick={() => { setEditId(null); setEditText(''); }}>Annuler</button>
+                      <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={big ? 5 : 3} maxLength={2000}
+                        style={{ ...input, resize: 'vertical', marginBottom: 8, fontSize: big ? 'clamp(17px,1.6vw,24px)' : 16, lineHeight: 1.45 }} />
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button style={{ ...btnPrimary, padding: big ? '12px 20px' : '8px 14px', fontSize: big ? 17 : 14 }} onClick={saveEdit} disabled={busy || !editText.trim()}>Enregistrer</button>
+                        <DictateButton big={big} disabled={busy}
+                          onText={(txt) => setEditText((d) => (d.trim() ? `${d.trim()} ${txt}` : txt))} />
+                        <button style={{ ...btnGhost, fontSize: big ? 17 : 15 }} onClick={() => { setEditId(null); setEditText(''); }}>Annuler</button>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div style={{ fontSize: 14.5, color: C.navy, lineHeight: 1.5, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{r.content}</div>
-                      <div style={{ fontSize: 11.5, color: `${C.navy}77`, marginTop: 4 }}>
+                      <div style={{ fontSize: big ? 'clamp(19px,1.85vw,28px)' : 14.5, color: C.navy, lineHeight: 1.45, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{r.content}</div>
+                      <div style={{ fontSize: big ? 'clamp(12px,1.1vw,16px)' : 11.5, color: `${C.navy}77`, marginTop: big ? 7 : 4 }}>
                         par {currentUser && r.author_id === currentUser.id ? 'vous' : (names[r.author_id] || 'un membre')}
                       </div>
                     </>
@@ -554,17 +626,22 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
         {!currentUser ? (
           <div style={{ fontSize: 13, color: `${C.navy}88` }}>Seuls les membres connectes peuvent ajouter un point de regle.</div>
         ) : !adding ? (
-          <button style={{ ...btnSecondary, width: '100%' }} onClick={() => setAdding(true)}>+ Ajouter un point de regle</button>
+          <button style={{ ...btnSecondary, width: '100%', fontSize: big ? 'clamp(17px,1.5vw,22px)' : 15, padding: big ? '16px 18px' : '12px 16px' }} onClick={() => setAdding(true)}>+ Ajouter un point de regle</button>
         ) : (
           <div>
-            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} maxLength={2000} autoFocus
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={big ? 5 : 3} maxLength={2000} autoFocus
               placeholder="Ex. : on ne defausse qu'une fois par tour, meme avec la carte Marchand."
-              style={{ ...input, resize: 'vertical', marginBottom: 8 }} />
+              style={{ ...input, resize: 'vertical', marginBottom: 8, fontSize: big ? 'clamp(17px,1.6vw,24px)' : 16, lineHeight: 1.45 }} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+              <DictateButton big={big} disabled={busy}
+                onText={(txt) => setDraft((d) => (d.trim() ? `${d.trim()} ${txt}` : txt))} />
+              {SPEECH_API && <span style={{ fontSize: 12.5, color: `${C.navy}88` }}>La dictee s'ajoute au texte deja saisi.</span>}
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button style={{ ...btnPrimary, flex: 1, opacity: busy || !draft.trim() ? 0.6 : 1 }} onClick={submitNew} disabled={busy || !draft.trim()}>
+              <button style={{ ...btnPrimary, flex: 1, opacity: busy || !draft.trim() ? 0.6 : 1, fontSize: big ? 'clamp(16px,1.45vw,21px)' : 15, padding: big ? '15px 18px' : '12px 16px' }} onClick={submitNew} disabled={busy || !draft.trim()}>
                 {busy ? 'Enregistrement...' : 'Ajouter'}
               </button>
-              <button style={btnGhost} onClick={() => { setAdding(false); setDraft(''); }}>Annuler</button>
+              <button style={{ ...btnGhost, fontSize: big ? 18 : 15 }} onClick={() => { setAdding(false); setDraft(''); }}>Annuler</button>
             </div>
           </div>
         )}
@@ -589,6 +666,26 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [error, setError] = useState(null);
   // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
   const [keepAwake, setKeepAwake] = useState(true);
+  // (3) Temps moyens deja observes sur ce jeu : reperes utiles pour savoir si
+  // l'on est en avance ou en retard. Calcules sur les parties terminees.
+  const [avgTimes, setAvgTimes] = useState(null);
+  useEffect(() => {
+    const gid = game?.id || session?.game_id;
+    if (!gid) { setAvgTimes(null); return undefined; }
+    let go = true;
+    (async () => {
+      const { data } = await supabase.from('play_sessions')
+        .select('setup_seconds,play_seconds,teardown_seconds,current_game')
+        .eq('game_id', gid).eq('status', 'done').limit(200);
+      if (!go) return;
+      const rows = (data || []).filter((r) => (r.play_seconds || 0) > 0);
+      if (!rows.length) { setAvgTimes(null); return; }
+      const avg = (k) => Math.round(rows.reduce((a, r) => a + (r[k] || 0), 0) / rows.length);
+      setAvgTimes({ n: rows.length, setup: avg('setup_seconds'), play: avg('play_seconds'), teardown: avg('teardown_seconds') });
+    })();
+    return () => { go = false; };
+  }, [supabase, game?.id, session?.game_id]);
+
   // Points de regle du jeu en cours (voir RulesSheet plus haut).
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesCount, setRulesCount] = useState(null);
@@ -627,6 +724,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
+  // Session reellement suivie : sert a ignorer les evenements temps reel d'une
+  // session qu'on vient de quitter (cf. changement de jeu).
+  const activeSidRef = useRef(null);
 
   // (1) Chronos deja lances sur ce moment jeux : on propose de les rejoindre
   // plutot que d'en creer un deuxieme par megarde.
@@ -719,21 +819,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const refetchSession = useCallback(async (sessionId) => {
     const { data } = await supabase.from('play_sessions').select('*').eq('id', sessionId).single();
-    if (data) setSession(data);
+    // On n'ecrase l'etat que si la reponse concerne bien la session suivie :
+    // une requete lancee avant un changement de jeu peut arriver apres.
+    if (data && (!activeSidRef.current || data.id === activeSidRef.current)) setSession(data);
     return data;
   }, [supabase]);
 
   // ---- abonnement Realtime ------------------------------------------
   const subscribe = useCallback((sessionId) => {
     if (channelRef.current) supabase.removeChannel(channelRef.current);
+    activeSidRef.current = sessionId;
     const ch = supabase
       .channel(`play_session_${sessionId}`)
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'play_sessions', filter: `id=eq.${sessionId}` },
-        (payload) => { setSession(payload.new); refetchTotals(sessionId, payload.new?.current_game); })
+        (payload) => {
+          // Un evenement en retard, emis par une session qu'on a quittee, ne
+          // doit surtout pas ramener l'ancien jeu a l'ecran.
+          if (activeSidRef.current && payload.new?.id !== activeSidRef.current) return;
+          setSession(payload.new);
+          refetchTotals(sessionId, payload.new?.current_game);
+        })
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'play_session_players', filter: `session_id=eq.${sessionId}` },
-        () => refetchPlayers(sessionId))
+        () => { if (activeSidRef.current === sessionId) refetchPlayers(sessionId); })
       .subscribe();
     channelRef.current = ch;
   }, [supabase, refetchTotals, refetchPlayers]);
@@ -1071,13 +1180,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // (4) Reprendre la main sur une autre session : on remet a zero tout ce qui
   // appartenait a la partie precedente (chronos, vainqueurs, recap).
   const switchToSession = useCallback(async (nid) => {
+    // On se reabonne EN PREMIER : cela ferme le canal de l'ancienne session et
+    // fixe la session de reference, sinon un evenement en retard la ramenerait.
+    subscribe(nid);
     setSummary(null); setWinnerIds([]); setWinnersTouched(false);
     setTotals({}); setOpenSegs({}); setNewGamePrompt(false); setNewGameWinners([]);
     setScoreFor(null); setResultSaved(false); setGame(null); setError(null);
     const s2 = await refetchSession(nid);
     await refetchPlayers(nid);
     await refetchTotals(nid);
-    subscribe(nid);
+    // (2) Tant que la partie n'a pas demarre, on reste sur l'ecran de
+    // preparation : c'est la qu'on ajuste la tablee (quelqu'un est parti, un
+    // autre s'installe) avant de lancer le chrono.
     setPhase(s2?.status === 'lobby' ? 'lobby' : 'running');
   }, [refetchSession, refetchPlayers, refetchTotals, subscribe]);
 
@@ -1278,7 +1392,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       background: wide
         ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
         : C.cream,
-      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+      fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
     }}>
       <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1393,6 +1507,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           supabase={supabase}
           currentUser={currentUser}
           isAdmin={isAdmin}
+          big={tablet}
           gameId={game?.id || session?.game_id}
           gameName={game?.name || ''}
           onClose={() => setRulesOpen(false)}
@@ -1624,12 +1739,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       const cols = n <= 4 ? 1 : 2;
       const rowH = `clamp(104px, calc((100vh - 420px) / ${rows}), 230px)`;
 
+      // Repere discret : moyenne observee sur ce jeu, et duree annoncee sur sa
+      // fiche pour la phase de partie.
+      const avgOf = { setup: avgTimes?.setup, play: avgTimes?.play, teardown: avgTimes?.teardown };
       const bigPhase = (ph, label, total, started, color, disabled) => {
         const running = activePhase === ph;
         const paused = !running && started;
+        const moy = avgOf[ph];
+        const prevu = ph === 'play' && game?.play_time ? Number(game.play_time) * 60 : null;
         return (
           <button onClick={disabled ? undefined : () => togglePhase(ph)} disabled={disabled}
-            style={{
+            style={{ position: 'relative',
               flex: 1, borderRadius: 20, padding: 'clamp(10px,1.3vw,18px) clamp(12px,1.6vw,22px)',
               textAlign: 'left', cursor: disabled ? 'default' : 'pointer', minWidth: 0,
               background: running ? `linear-gradient(140deg, ${color}, ${color}cc)` : '#fff',
@@ -1648,6 +1768,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               color: running ? '#fff' : (started ? color : '#C9BBA2') }}>
               {fmt(total)}
             </div>
+            {moy != null && moy > 0 && (
+              <span title={`Moyenne sur ${avgTimes.n} partie${avgTimes.n > 1 ? 's' : ''} de ce jeu`}
+                style={{ position: 'absolute', top: 'clamp(9px,1.1vw,15px)', right: 'clamp(11px,1.3vw,18px)',
+                  fontSize: 'clamp(10px,.92vw,15px)', fontWeight: 700, letterSpacing: .2,
+                  color: running ? 'rgba(255,255,255,.85)' : '#a89a86' }}>
+                moy. {fmt(moy)}
+              </span>
+            )}
+            {prevu != null && (
+              <span title="Durée annoncée sur la fiche du jeu"
+                style={{ position: 'absolute', bottom: 'clamp(8px,1vw,14px)', right: 'clamp(11px,1.3vw,18px)',
+                  fontSize: 'clamp(10px,.92vw,15px)', fontWeight: 700, letterSpacing: .2,
+                  color: running ? 'rgba(255,255,255,.85)' : '#a89a86' }}>
+                prévu {fmt(prevu)}
+              </span>
+            )}
           </button>
         );
       };
@@ -2080,7 +2216,7 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
 
   return (
     <div onClick={busy ? undefined : onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>🎲 On enchaîne sur quoi ?</div>
           <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
@@ -2162,7 +2298,7 @@ function TeamsSheet({ players, hexFor, onSet, onClose }) {
   const choices = nextFree == null ? used : [...used, nextFree];
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', padding: '16px 16px 26px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
           <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 Mode equipe</div>
           <button onClick={onClose} style={btnGhost}>Fermer</button>
