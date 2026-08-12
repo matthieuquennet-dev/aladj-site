@@ -666,6 +666,26 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [error, setError] = useState(null);
   // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
   const [keepAwake, setKeepAwake] = useState(true);
+  // Points de regle du jeu en cours (voir RulesSheet plus haut).
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [rulesCount, setRulesCount] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [myUid, setMyUid] = useState(null);
+
+  // session live
+  const [session, setSession] = useState(null);     // ligne play_sessions
+  const [players, setPlayers] = useState([]);        // play_session_players + nom/avatar résolus
+  const [winnerIds, setWinnerIds] = useState([]);    // play_session_players.id des vainqueurs
+  const [savingResult, setSavingResult] = useState(false);
+  const [totals, setTotals] = useState({});          // player_id -> { total, max }
+  const [newGamePrompt, setNewGamePrompt] = useState(false);
+  const [newGameWinners, setNewGameWinners] = useState([]);
+  const [openSegs, setOpenSegs] = useState({});      // player_id -> started_at (segments ouverts ; mode simultané)
+  const [summary, setSummary] = useState(null);      // v_session_summary (fin)
+
+  // setup (hôte)
+  const [game, setGame] = useState(null);            // { id, name, play_time, image_url }
+
   // (3) Temps moyens deja observes sur ce jeu : reperes utiles pour savoir si
   // l'on est en avance ou en retard. Calcules sur les parties terminees.
   const [avgTimes, setAvgTimes] = useState(null);
@@ -686,25 +706,6 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     return () => { go = false; };
   }, [supabase, game?.id, session?.game_id]);
 
-  // Points de regle du jeu en cours (voir RulesSheet plus haut).
-  const [rulesOpen, setRulesOpen] = useState(false);
-  const [rulesCount, setRulesCount] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [myUid, setMyUid] = useState(null);
-
-  // session live
-  const [session, setSession] = useState(null);     // ligne play_sessions
-  const [players, setPlayers] = useState([]);        // play_session_players + nom/avatar résolus
-  const [winnerIds, setWinnerIds] = useState([]);    // play_session_players.id des vainqueurs
-  const [savingResult, setSavingResult] = useState(false);
-  const [totals, setTotals] = useState({});          // player_id -> { total, max }
-  const [newGamePrompt, setNewGamePrompt] = useState(false);
-  const [newGameWinners, setNewGameWinners] = useState([]);
-  const [openSegs, setOpenSegs] = useState({});      // player_id -> started_at (segments ouverts ; mode simultané)
-  const [summary, setSummary] = useState(null);      // v_session_summary (fin)
-
-  // setup (hôte)
-  const [game, setGame] = useState(null);            // { id, name, play_time, image_url }
   const [eventGames, setEventGames] = useState([]);  // jeux d'une soirée
   const [boxMin, setBoxMin] = useState('');
   const [draft, setDraft] = useState([]);            // joueurs à ajouter (avant création)
