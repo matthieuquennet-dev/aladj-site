@@ -710,6 +710,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [boxMin, setBoxMin] = useState('');
   const [draft, setDraft] = useState([]);            // joueurs à ajouter (avant création)
   const [guestInput, setGuestInput] = useState('');
+  // Carnet d'invites du foyer : raccourci de saisie pour les habitues.
+  // Seul le carnet de celui qui lance la partie est propose -- c'est lui qui
+  // connait ses invites, et chaque foyer garde le sien.
+  const [guestBook, setGuestBook] = useState([]);
+  const [guestBusy, setGuestBusy] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const [memberHits, setMemberHits] = useState([]);
 
@@ -899,6 +904,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     return () => { go = false; };
   }, [session?.next_session_id]); // eslint-disable-line
 
+  // Chargement du carnet d'invites (une fois, a l'ouverture du chrono).
+  useEffect(() => {
+    if (!currentUser?.id) { setGuestBook([]); return undefined; }
+    let go = true;
+    (async () => {
+      const { data } = await supabase.rpc('aladj_my_guests');
+      if (go) setGuestBook(data || []);
+    })();
+    return () => { go = false; };
+  }, [supabase, currentUser?.id]);
+
   // Recherche du jeu suivant.
   useEffect(() => {
     if (!nextPicker) return undefined;
@@ -1048,6 +1064,26 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [memberQuery, supabase]);
 
   // ---- actions -------------------------------------------------------
+  // Ajouter un invite du carnet a la tablee (sans doublon).
+  const addGuestFromBook = (name) => {
+    const nm = (name || '').trim();
+    if (!nm) return;
+    if (draft.some((d) => !d.profileId && (d.name || '').toLowerCase() === nm.toLowerCase())) return;
+    setDraft((ds) => [...ds, { key: 'gb' + Date.now() + Math.random(), profileId: null, guestName: nm, name: nm, avatar_url: null }]);
+  };
+
+  // Garder un invite saisi a la main pour les prochaines parties.
+  const keepGuest = async (name) => {
+    if (guestBusy) return;
+    setGuestBusy(true);
+    try {
+      await supabase.rpc('aladj_add_guest', { p_name: name });
+      const { data } = await supabase.rpc('aladj_my_guests');
+      setGuestBook(data || []);
+    } catch (e) { /* sans gravite : c'est un confort, pas une obligation */ }
+    setGuestBusy(false);
+  };
+
   const addGuestDraft = () => {
     const n = guestInput.trim();
     if (!n) return;
@@ -1606,12 +1642,53 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               onRemove={() => removeDraft(d.key)} />
           ))}
 
+          {/* Carnet d'invites : les habitues, en un clic */}
+          {(() => {
+            const libres = guestBook.filter((g) => !draft.some((d) => !d.profileId && (d.name || '').toLowerCase() === g.name.toLowerCase()));
+            if (!libres.length) return null;
+            return (
+              <div style={{ marginTop: 12 }}>
+                <Label>Mes invités</Label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {libres.map((g) => (
+                    <button key={g.id} onClick={() => addGuestFromBook(g.name)} title={`Ajouter ${g.name}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: C.white,
+                        border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999,
+                        padding: '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
+                      <span style={{ color: C.purple, fontWeight: 800 }}>+</span> {g.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <input value={guestInput} placeholder="Nom d'un invité" style={{ ...input, flex: 1 }}
               onChange={(e) => setGuestInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && addGuestDraft()} />
             <button style={btnSecondary} onClick={addGuestDraft}>+ Invité</button>
           </div>
+
+          {/* Proposition de garder les invites saisis a la main */}
+          {(() => {
+            const nouveaux = draft.filter((d) => !d.profileId && d.name
+              && !guestBook.some((g) => g.name.toLowerCase() === (d.name || '').toLowerCase()));
+            if (!nouveaux.length || !currentUser) return null;
+            return (
+              <div style={{ marginTop: 10, fontSize: 13, color: `${C.navy}99` }}>
+                Ils reviendront ?{' '}
+                {nouveaux.map((d) => (
+                  <button key={d.key} onClick={() => keepGuest(d.name)} disabled={guestBusy}
+                    title={`Garder ${d.name} dans mes invités`}
+                    style={{ background: 'none', border: 'none', padding: 0, margin: '0 6px 0 0', cursor: 'pointer',
+                      color: C.purple, fontFamily: BODY, fontSize: 13, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                    garder {d.name}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           <div style={{ marginTop: 8, position: 'relative' }}>
             <input value={memberQuery} placeholder="Chercher un membre…" style={input}
               onChange={(e) => setMemberQuery(e.target.value)} />
