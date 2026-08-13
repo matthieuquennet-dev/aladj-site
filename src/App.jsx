@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, createContext
 import {
   Dice5, Dice1, Calendar, Library, Home, LogIn, LogOut, UserPlus, Plus, Star, Search,
   Download, MapPin, Clock, Users, X, Menu, Trophy, Filter, Check, ChevronRight,
-  Heart, ThumbsUp, Sparkles, BookOpen, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
+  Heart, ThumbsUp, Sparkles, BookOpen, RotateCcw, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil
@@ -802,6 +802,10 @@ function AppProvider({ children }) {
   // affiner, et « Mon espace » pour proposer de réafficher.
   const [dismissedRecos, setDismissedRecos] = useState([]);
   const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial (le mien)
+  // Carnet d'invités du foyer : un simple raccourci de saisie pour les invités
+  // récurrents (l'ami de Justine, le voisin de Léo). Aucune statistique ne leur
+  // est rattachée — pour cela, mieux vaut devenir membre du site.
+  const [householdGuests, setHouseholdGuests] = useState([]);
   const [householdByUser, setHouseholdByUser] = useState({}); // user_id -> ids des membres de son foyer
   const [fatalError, setFatalError] = useState(null);
   // Garde anti-chevauchement : si un rechargement est déjà en cours, on note qu'il
@@ -1946,6 +1950,38 @@ function AppProvider({ children }) {
   }, [currentUser]);
 
   // ---- Regroupement familial (foyers) ----
+  const reloadGuests = useCallback(async () => {
+    if (!currentUserIdRef.current) { setHouseholdGuests([]); return; }
+    const { data } = await supabase.rpc("aladj_my_guests");
+    setHouseholdGuests(data || []);
+  }, []);
+  useEffect(() => { reloadGuests(); }, [reloadGuests, currentUser]);
+
+  const addHouseholdGuest = useCallback(async (name) => {
+    const n = (name || "").trim();
+    if (!n) return { error: "Indiquez un nom." };
+    const { error } = await supabase.rpc("aladj_add_guest", { p_name: n });
+    if (error) return { error: error.message };
+    await reloadGuests();
+    return {};
+  }, [reloadGuests]);
+
+  const removeHouseholdGuest = useCallback(async (id) => {
+    const { error } = await supabase.rpc("aladj_remove_guest", { p_id: id });
+    if (error) return { error: error.message };
+    await reloadGuests();
+    return {};
+  }, [reloadGuests]);
+
+  const renameHouseholdGuest = useCallback(async (id, name) => {
+    const n = (name || "").trim();
+    if (!n) return { error: "Indiquez un nom." };
+    const { error } = await supabase.rpc("aladj_rename_guest", { p_id: id, p_name: n });
+    if (error) return { error: error.message };
+    await reloadGuests();
+    return {};
+  }, [reloadGuests]);
+
   const inviteToHousehold = useCallback(async (memberId) => {
     if (!currentUser) return { error: "Connectez-vous." };
     const { error } = await supabase.rpc("household_invite", { p_invitee_id: memberId });
@@ -2360,7 +2396,7 @@ function AppProvider({ children }) {
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedRecos, dismissReco, restoreReco,
     setRetroEmails,
-    household, householdByUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
+    household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
@@ -4484,6 +4520,20 @@ function GuidePage() {
         {
           q: "Confirmer une partie enregistrée par quelqu'un d'autre",
           a: <p style={{ margin: 0 }}>Quand un membre enregistre une partie où vous figurez, elle apparaît dans <b>Mon espace</b> → <b>Parties à confirmer</b>. La case <b>« j'ai gagné »</b> arrive <b>déjà cochée</b> si celui qui a saisi la partie vous a déclaré vainqueur — la mention « vous êtes déclaré vainqueur » et votre score le rappellent sous le nom du jeu. Vous restez libre de la décocher (ou de la cocher) avant de valider : c'est votre confirmation qui fait foi. Auparavant la case était toujours vide, et beaucoup de victoires se perdaient au moment de confirmer.</p>,
+        },
+        {
+          q: "Enchaîner plusieurs parties d'affilée",
+          a: <p style={{ margin: 0 }}>Après avoir enregistré une partie, la fenêtre ne se referme plus tout de suite : elle propose de <b>repartir avec les mêmes joueurs</b>. Deux raccourcis — <b>une autre partie du même jeu</b>, ou <b>mêmes joueurs mais autre jeu</b>. Les équipes sont conservées, seuls les scores et les trophées repartent à zéro, et tout reste modifiable ensuite. Un compteur discret indique combien de parties vous avez enregistrées dans la foulée. Sinon, « Terminé pour aujourd'hui » referme la fenêtre.</p>,
+        },
+        {
+          q: "Mes invités réguliers : les enregistrer une fois pour toutes",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Vous jouez souvent avec les mêmes amis, qui ne sont pas membres du site ? Plutôt que de retaper leur prénom à chaque partie, gardez-les dans le <b>carnet d'invités</b> de votre foyer.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Pour en ajouter un</b>, trois chemins : depuis <b>Mon espace → Ma famille → Nos invités réguliers</b> ; à la fin d'un enregistrement de partie, en cliquant sur « Garder [prénom] » ; ou dans le chronomètre, via le lien « garder [prénom] » sous la saisie. C'est toujours un <b>geste volontaire</b> : rien ne s'enregistre tout seul.</p>
+            <p style={{ margin: "0 0 8px" }}>Ils apparaissent ensuite sous <b>« Mes invités »</b>, en pastilles cliquables, au moment d'enregistrer une partie comme au lancement d'un chronomètre. Un clic, et ils sont à table.</p>
+            <p style={{ margin: "0 0 8px" }}>Le carnet est <b>commun à toute la famille</b> : si vous partagez un foyer, vous voyez les invités des uns et des autres, et chacun peut les renommer ou les retirer depuis « Ma famille ». Seul le carnet de la personne qui lance la partie est proposé — chaque foyer garde le sien, et deux « Jean » dans deux familles différentes ne se mélangent pas.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>Ce ne sont que des prénoms, un simple raccourci de saisie : aucune statistique, aucun classement, aucun historique ne leur est rattaché. Retirer un invité du carnet ne change rien aux parties déjà enregistrées. Pour qu'un ami ait vraiment ses statistiques, le mieux reste qu'il devienne membre du site.</p>
+          </>,
         },
         {
           q: "Retirer une partie de mon historique",
@@ -10850,7 +10900,12 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
    ============================================================================= */
 // Section "Ma famille" : foyer partageant une ludothèque commune
 function FamilySection({ setToast }) {
-  const { household, users, currentUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold } = useApp();
+  const { household, users, currentUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
+    householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, askConfirm } = useApp();
+  const [guestDraft, setGuestDraft] = useState("");
+  const [guestEditId, setGuestEditId] = useState(null);
+  const [guestEditName, setGuestEditName] = useState("");
+  const [guestBusy, setGuestBusy] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -10933,6 +10988,70 @@ function FamilySection({ setToast }) {
       ) : (
         <Btn size="sm" variant="ghost" onClick={() => setConfirmLeave(true)}><LogOut size={14} /> Quitter la famille</Btn>
       ))}
+
+      {/* Carnet d'invités : les habitués qu'on retrouve autour de la table.
+          Partagé par tout le foyer, sans statistiques ni compte associé. */}
+      <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 20, paddingTop: 18 }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15.5, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 7 }}>
+          <Users size={16} color={C.purple} /> Nos invités réguliers
+          {householdGuests.length > 0 && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: C.purple, borderRadius: 999, padding: "1px 8px" }}>{householdGuests.length}</span>
+          )}
+        </h4>
+        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#8a7c6a", lineHeight: 1.55 }}>
+          Les amis qui jouent souvent avec vous. Une fois enregistrés ici, ils sont proposés d'un clic
+          quand vous enregistrez une partie ou lancez un chronomètre — plus besoin de retaper leur nom.
+          {memberIds.length > 1 ? " Ce carnet est commun à toute la famille." : ""}
+          <span style={{ display: "block", marginTop: 4, color: "#9c8d79" }}>
+            Ce ne sont que des noms : aucune statistique ne leur est rattachée. Pour cela, mieux vaut devenir membre du site.
+          </span>
+        </p>
+
+        {householdGuests.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7, marginBottom: 12 }}>
+            {householdGuests.map((g) => (
+              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "8px 12px", minWidth: 0 }}>
+                {guestEditId === g.id ? (
+                  <>
+                    <input value={guestEditName} autoFocus onChange={(e) => setGuestEditName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("gsave-" + g.id)?.click(); } }}
+                      style={{ flex: 1, minWidth: 0, padding: "7px 10px", borderRadius: 9, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, color: C.navy }} />
+                    <Btn id={"gsave-" + g.id} size="sm" variant="teal" disabled={guestBusy || !guestEditName.trim()}
+                      onClick={async () => { setGuestBusy(true); const r = await renameHouseholdGuest(g.id, guestEditName); setGuestBusy(false); if (r?.error) setToast(r.error); else setGuestEditId(null); }}>
+                      <Check size={14} />
+                    </Btn>
+                    <Btn size="sm" variant="soft" onClick={() => setGuestEditId(null)}>Annuler</Btn>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ width: 32, height: 32, borderRadius: 10, flexShrink: 0, background: `${C.purple}1f`, display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.purple, fontSize: 14 }}>
+                      {g.name[0].toUpperCase()}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <button onClick={() => { setGuestEditId(g.id); setGuestEditName(g.name); }} title="Renommer"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, flexShrink: 0 }}><Edit3 size={15} /></button>
+                    <button title="Retirer du carnet" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, flexShrink: 0 }}
+                      onClick={async () => {
+                        if (!(await askConfirm({ title: `Retirer ${g.name} ?`, message: "Il ne sera plus proposé lors de vos parties. Les parties déjà enregistrées ne changent pas.", confirmLabel: "Retirer" }))) return;
+                        const r = await removeHouseholdGuest(g.id); if (r?.error) setToast(r.error);
+                      }}><Trash2 size={15} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={guestDraft} onChange={(e) => setGuestDraft(e.target.value)} maxLength={60}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("gadd")?.click(); } }}
+            placeholder="Prénom d'un invité régulier" style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy }} />
+          <Btn id="gadd" variant="soft" disabled={guestBusy || !guestDraft.trim()}
+            onClick={async () => { setGuestBusy(true); const r = await addHouseholdGuest(guestDraft); setGuestBusy(false); if (r?.error) setToast(r.error); else setGuestDraft(""); }}>
+            <Plus size={15} /> Ajouter
+          </Btn>
+        </div>
+      </div>
 
       {showPicker && (
         <Modal open onClose={() => setShowPicker(false)} title="Inviter un membre dans la famille" width={460}>
@@ -12288,7 +12407,7 @@ function MyPlaysSection({ setToast }) {
 }
 
 function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
-  const { games, users, currentUser, recordManualPlay, reload } = useApp();
+  const { games, users, currentUser, recordManualPlay, reload, householdGuests, addHouseholdGuest } = useApp();
   const [gameId, setGameId] = useState(defaultGameId || "");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [parts, setParts] = useState([]);
@@ -12303,10 +12422,13 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [scorePadFor, setScorePadFor] = useState(null); // joueur dont on saisit le score
   // Mode equipe : le score saisi pour un joueur vaut pour tous ses coequipiers.
   const [teamsOn, setTeamsOn] = useState(false);
+  // Ecran affiche apres l'enregistrement : { gameName, count } -- il permet
+  // d'enchainer sans tout ressaisir. `count` compte les parties de la serie.
+  const [justSaved, setJustSaved] = useState(null);
   useEffect(() => {
     if (open) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
-      setWinnersTouched(false); setScorePadFor(null); setTeamsOn(false);
+      setWinnersTouched(false); setScorePadFor(null); setTeamsOn(false); setJustSaved(null);
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
       setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
@@ -12322,7 +12444,21 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const available = (users || []).filter((u) => !u.banned && !parts.some((p) => p.userId === u.id));
 
   const addMember = (id) => { const u = (users || []).find((x) => x.id === id); if (!u) return; setParts((pr) => [...pr, { key: u.id, userId: u.id, guestName: null, name: u.name, isWinner: false, score: "" }]); };
-  const addGuest = () => { const n = guestName.trim(); if (!n) return; setParts((pr) => [...pr, { key: "g" + Date.now(), userId: null, guestName: n, name: n, isWinner: false, score: "" }]); setGuestName(""); };
+  const addGuestNamed = (n) => {
+    const nm = (n || "").trim();
+    if (!nm) return;
+    if (parts.some((p) => !p.userId && (p.name || "").toLowerCase() === nm.toLowerCase())) return; // deja a table
+    setParts((pr) => [...pr, { key: "g" + Date.now() + Math.random(), userId: null, guestName: nm, name: nm, isWinner: false, score: "" }]);
+  };
+  const addGuest = () => { const n = guestName.trim(); if (!n) return; addGuestNamed(n); setGuestName(""); };
+  // Invités du carnet qui ne sont pas déjà à la table.
+  const guestBookFree = (householdGuests || []).filter(
+    (g) => !parts.some((p) => !p.userId && (p.name || "").toLowerCase() === g.name.toLowerCase())
+  );
+  // Invités saisis à la main que l'on peut proposer de garder dans le carnet.
+  const guestsToKeep = parts.filter(
+    (p) => !p.userId && p.name && !(householdGuests || []).some((g) => g.name.toLowerCase() === (p.name || "").toLowerCase())
+  );
   const toggleWin = (key) => { setWinnersTouched(true); setParts((pr) => pr.map((p) => (p.key === key ? { ...p, isWinner: !p.isWinner } : p))); };
   // Un score saisi se reporte a l'identique sur les coequipiers : une equipe
   // marque des points ensemble, on ne les additionne pas.
@@ -12385,11 +12521,80 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
     if (dirChanged) await reload();
     setBusy(false);
     if (res?.error) return setToast(res.error);
-    setToast("Partie enregistrée !"); onClose();
+    setToast("Partie enregistrée !");
+    // On ne referme plus tout de suite : bien souvent une partie en appelle une
+    // autre, et tout ressaisir (joueurs, équipes, jeu) était fastidieux.
+    setJustSaved({ gameName: selectedGame?.name || "cette partie", count: (justSaved?.count || 0) + 1 });
   };
 
+  // Repartir pour une partie, avec les mêmes joueurs et les mêmes équipes.
+  // Seuls les scores et les vainqueurs sont remis à zéro : c'est ce qui change
+  // d'une partie à l'autre, le reste ne bouge pas.
+  const again = (keepGame) => {
+    setParts((pr) => pr.map((p) => ({ ...p, isWinner: false, score: "" })));
+    setWinnersTouched(false);
+    setScorePadFor(null);
+    setJustSaved(null);
+    if (!keepGame) { setGameId(""); setGameSearch(""); setGameListOpen(true); }
+  };
+
+  if (justSaved) {
+    const winners = parts.filter((p) => p.isWinner);
+    return (
+      <Modal open={open} onClose={onClose} title="Partie enregistrée" width={540}>
+        <div style={{ textAlign: "center", padding: "8px 0 20px" }}>
+          <div style={{ width: 62, height: 62, borderRadius: 20, background: "rgba(30,138,138,.13)", display: "grid", placeItems: "center", margin: "0 auto 14px" }}>
+            <Check size={32} color={C.teal} />
+          </div>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 20 }}>
+            {justSaved.gameName} · c'est enregistré
+          </div>
+          <div style={{ fontSize: 13.5, color: "#8a7c6a", marginTop: 5, lineHeight: 1.55 }}>
+            {winners.length > 0
+              ? <>Bravo à <b style={{ color: C.amber }}>{winners.map((w) => w.name).join(", ")}</b>.</>
+              : "Aucun vainqueur déclaré — partie coopérative ou match nul."}
+            {justSaved.count > 1 && <span style={{ display: "block", marginTop: 3 }}>{justSaved.count} parties enregistrées d'affilée.</span>}
+          </div>
+        </div>
+
+        <div style={{ background: "rgba(30,138,138,.06)", border: `1px solid ${C.teal}33`, borderRadius: 14, padding: "13px 15px", marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: "#6e6256", marginBottom: 11, lineHeight: 1.5 }}>
+            On enchaîne ? Les <b>{parts.length} joueur{parts.length > 1 ? "s" : ""}</b>{teamsOn ? " et les équipes" : ""} sont conservés — vous pourrez toujours les modifier ensuite.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+            <Btn full variant="teal" onClick={() => again(true)}>
+              <RotateCcw size={16} /> Une autre partie de {justSaved.gameName}
+            </Btn>
+            <Btn full variant="soft" onClick={() => again(false)}>
+              <Gamepad2 size={16} /> Mêmes joueurs, autre jeu
+            </Btn>
+          </div>
+        </div>
+
+        {guestsToKeep.length > 0 && (
+          <div style={{ background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}33`, borderRadius: 14, padding: "13px 15px", marginBottom: 14 }}>
+            <div style={{ fontSize: 13, color: "#6e6256", marginBottom: 10, lineHeight: 1.5 }}>
+              <b>Ces invités reviendront ?</b> Gardez-les dans le carnet de votre foyer : ils seront proposés d'un clic la prochaine fois.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {guestsToKeep.map((p) => (
+                <button key={p.key} type="button"
+                  onClick={async () => { const r = await addHouseholdGuest(p.name); setToast(r?.error || `${p.name} ajouté à vos invités.`); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", border: `1.5px solid ${C.purple}55`, color: C.purple, borderRadius: 999, padding: "6px 13px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, fontWeight: 700 }}>
+                  <Plus size={13} /> Garder {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Btn full variant="ghost" onClick={onClose}>Terminé pour aujourd'hui</Btn>
+      </Modal>
+    );
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="Enregistrer une partie" width={540}>
+    <Modal open={open} onClose={onClose} title={justSaved === null && parts.length ? "Enregistrer une partie" : "Enregistrer une partie"} width={540}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 15 }}>
         <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seuls le résultat et les points le sont. Les scores sont facultatifs — laisse les cases vides si tu ne les as pas.</p>
         <label style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
@@ -12491,6 +12696,21 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
                 </span>
               </span>
             </label>
+          )}
+          {guestBookFree.length > 0 && (
+            <div>
+              <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.navy, marginBottom: 5 }}>
+                Mes invités <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· un clic pour les ajouter</span>
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {guestBookFree.map((g) => (
+                  <button key={g.id} type="button" onClick={() => addGuestNamed(g.name)} title={`Ajouter ${g.name} à la partie`}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999, padding: "5px 12px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, fontWeight: 600 }}>
+                    <Plus size={13} color={C.purple} /> {g.name}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <select value="" onChange={(e) => { if (e.target.value) addMember(e.target.value); }} style={fieldStyle}>
             <option value="">+ Ajouter un membre…</option>
