@@ -6,6 +6,8 @@
  *   - action "checkout" : crée une session de paiement Stripe (CB,
  *     Apple Pay, Google Pay, PayPal) et renvoie l'URL de paiement.
  *     Le statut est accordé par le webhook Stripe après paiement.
+ *   - action "paypal"   : déclaration d'un envoi PayPal entre proches au
+ *     trésorier → statut accordé immédiatement, e-mail au membre + au bureau.
  *   - action "cash"     : engagement à régler en espèces → statut
  *     accordé immédiatement (+365 jours), e-mail de remerciement au
  *     membre + e-mail d'information au bureau (Gmail de l'association).
@@ -23,7 +25,14 @@ const MEMBERSHIP_EUR = 20;        // cotisation annuelle
 const MEMBERSHIP_DAYS = 365;      // durée accordée
 
 /* E-mail de remerciement (commun aux deux modes de règlement). */
-export function thankYouEmailHtml(name, untilDateFr, viaCash) {
+/* Coordonnées du règlement PayPal « entre proches » (trésorier). */
+export const PAYPAL_TRESORIER = 'memo12a@yahoo.fr';
+export const PAYPAL_TRESORIER_NOM = 'Fabien Delisle';
+
+/* `via` vaut 'cash', 'paypal' ou null (paiement en ligne). */
+export function thankYouEmailHtml(name, untilDateFr, via) {
+  const viaCash = via === true || via === 'cash';
+  const viaPaypal = via === 'paypal';
   return `<!doctype html><html><body style="margin:0;padding:0;background:#FBF7EF;">
   <div style="max-width:560px;margin:0 auto;padding:24px 14px;font-family:Arial,sans-serif;">
     <div style="text-align:center;color:#1A3A5C;font-weight:bold;font-size:20px;margin-bottom:12px;">ALADJ — À l'assaut des jeux</div>
@@ -36,6 +45,11 @@ export function thankYouEmailHtml(name, untilDateFr, viaCash) {
       </p>
       ${viaCash ? `<p style="font-size:13px;line-height:1.6;margin:0 0 12px;background:rgba(255,255,255,.13);border-radius:10px;padding:10px 13px;">
         💶 Tu t'es engagé à régler <b>${MEMBERSHIP_EUR} € en espèces</b> auprès d'un membre du bureau — pense à le faire dès que possible. Le bureau a été prévenu.
+      </p>` : ''}
+      ${viaPaypal ? `<p style="font-size:13px;line-height:1.6;margin:0 0 12px;background:rgba(255,255,255,.13);border-radius:10px;padding:10px 13px;">
+        🅿️ Tu as déclaré régler <b>${MEMBERSHIP_EUR} €</b> par <b>PayPal entre proches</b> à ${PAYPAL_TRESORIER_NOM}
+        (<b>${PAYPAL_TRESORIER}</b>). Si ce n'est pas encore fait, pense à l'envoyer — et à indiquer
+        <b>« ALADJ ${name} »</b> en motif, sans quoi le trésorier ne pourra pas rattacher ton paiement.
       </p>` : ''}
       <p style="font-size:14px;line-height:1.6;margin:0 0 6px;"><b>Tes avantages :</b></p>
       <ul style="font-size:14px;line-height:1.7;margin:0 0 14px;padding-left:20px;">
@@ -57,7 +71,7 @@ export function thankYouEmailHtml(name, untilDateFr, viaCash) {
       </div>
     </div>
     <div style="text-align:center;font-size:11px;color:#9c8d79;margin-top:14px;line-height:1.5;">
-      ALADJ — aladj.fr · Rappel : la cotisation se règle uniquement en ligne ou en espèces.
+      ALADJ — aladj.fr · Rappel : la cotisation se règle uniquement en ligne, par PayPal entre proches ou en espèces.
     </div>
   </div></body></html>`;
 }
@@ -138,7 +152,7 @@ export default async function handler(req, res) {
           from: `"ALADJ" <${process.env.GMAIL_USER}>`,
           to: user.email,
           subject: `👑 Bienvenue parmi les membres décisionnaires, ${name} !`,
-          html: thankYouEmailHtml(name, frDate(until), true),
+          html: thankYouEmailHtml(name, frDate(until), 'cash'),
         });
       }
       // Information au bureau : engagement de règlement en espèces
@@ -152,6 +166,40 @@ export default async function handler(req, res) {
           Son statut de membre décisionnaire est actif jusqu'au <b>${frDate(until)}</b>.<br><br>
           Pensez à encaisser — en cas de non-règlement, un administrateur peut retirer le statut depuis
           la liste des membres du site.</p>`,
+      });
+      res.status(200).json({ ok: true, until: until.toISOString() });
+      return;
+    }
+
+    if (action === 'paypal') {
+      const { name, until } = await grantMembership(supabase, user.id);
+      const t = mailer();
+      const motif = `ALADJ ${name}`;
+      // Remerciement au membre, avec le rappel du motif à indiquer
+      if (user.email) {
+        await t.sendMail({
+          from: `"ALADJ" <${process.env.GMAIL_USER}>`,
+          to: user.email,
+          subject: `👑 Bienvenue parmi les membres décisionnaires, ${name} !`,
+          html: thankYouEmailHtml(name, frDate(until), 'paypal'),
+        });
+      }
+      // Information au trésorier ET à l'association : c'est Fabien qui reçoit le
+      // virement, il doit être prévenu sur sa propre adresse ; la copie au Gmail
+      // de l'association garde une trace pour le reste du bureau.
+      await t.sendMail({
+        from: `"ALADJ site" <${process.env.GMAIL_USER}>`,
+        to: [PAYPAL_TRESORIER, process.env.GMAIL_USER].filter(Boolean).join(', '),
+        subject: `🅿️ Cotisation PayPal à vérifier — ${name}`,
+        html: `<p style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;">
+          <b>${name}</b>${user.email ? ` (${user.email})` : ''} déclare avoir réglé sa cotisation
+          de <b>${MEMBERSHIP_EUR} €</b> par <b>PayPal entre proches</b> à ${PAYPAL_TRESORIER_NOM}
+          (<b>${PAYPAL_TRESORIER}</b>).<br>
+          Motif annoncé : <b>${motif}</b><br>
+          Son statut de membre décisionnaire est actif jusqu'au <b>${frDate(until)}</b>.<br><br>
+          ${PAYPAL_TRESORIER_NOM.split(' ')[0]}, merci de vérifier la réception du virement sur ton compte PayPal.
+          En cas de non-règlement, un administrateur peut retirer le statut depuis la liste des membres du site.<br>
+          <span style="color:#8a7c6a;font-size:12.5px;">Ce message est envoyé au trésorier et à l'adresse de l'association.</span></p>`,
       });
       res.status(200).json({ ok: true, until: until.toISOString() });
       return;
