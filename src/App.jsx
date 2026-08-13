@@ -466,7 +466,6 @@ function ConfirmDialog({ state, onClose }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state, onClose]);
-  useScrollLock(!!state);
   if (!state) return null;
   const { title = "Confirmer ?", message = "", confirmLabel = "Confirmer", cancelLabel = "Annuler", danger = true } = state;
   return (
@@ -606,7 +605,6 @@ function ScoreDirectionField({ value, onChange }) {
 function ScorePadOverlay({ name, initialScore, onClose, onApply }) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  useScrollLock(true);   // le pave couvre l'ecran : la page derriere doit rester figee
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
     window.addEventListener("keydown", onKey, true);
@@ -792,11 +790,6 @@ function AppProvider({ children }) {
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
-  // Membre pour lequel les tables personnelles (notifications, suggestions
-  // refusées) ont effectivement été chargées. Tant qu'il ne correspond pas au
-  // membre connecté, les compteurs restent muets : mieux vaut pas de pastille
-  // qu'une pastille fausse.
-  const [personalDataFor, setPersonalDataFor] = useState(null);
   const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
   const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial (le mien)
   const [householdByUser, setHouseholdByUser] = useState({}); // user_id -> ids des membres de son foyer
@@ -809,12 +802,7 @@ function AppProvider({ children }) {
 
   // Ref vers l'id du membre connecté, lisible dans loadData sans le mettre en dépendance.
   const currentUserIdRef = useRef(null);
-  // Le profil met un instant a arriver : on ne remet l'identifiant a null que
-  // s'il n'y a plus personne d'authentifie, jamais pendant le chargement.
-  useEffect(() => {
-    if (currentUser?.id) currentUserIdRef.current = currentUser.id;
-    else if (!authUser) currentUserIdRef.current = null;
-  }, [currentUser, authUser]);
+  useEffect(() => { currentUserIdRef.current = currentUser?.id || null; }, [currentUser]);
 
   // ⏱ Chronomètre de partie (multi-device) : état + détection d'un lien de jonction ?chrono=CODE
   const [chrono, setChrono] = useState(null); // null | { gameId } | { eventId } | { joinCode }
@@ -898,8 +886,6 @@ function AppProvider({ children }) {
       }));
       setPlays(playsList);
       setEventPlayDismissed(epdRows || []);
-      // Ces données ne valent que pour l'identité connue au moment de la requête.
-      setPersonalDataFor(currentUserIdRef.current || null);
 
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
@@ -1075,13 +1061,6 @@ function AppProvider({ children }) {
     (async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setAuthUser(session?.user || null);
-      // On renseigne l'identifiant tout de suite, sans attendre que le profil
-      // soit charge : loadData s'en sert pour decider s'il interroge les tables
-      // personnelles. Sans cela, le tout premier chargement les ignore et les
-      // pastilles s'affichent un instant avec de fausses valeurs.
-      // (Un invite anonyme n'a pas de profil : on ne retient pas son identifiant.)
-      const uid = session?.user && !session.user.is_anonymous ? session.user.id : null;
-      currentUserIdRef.current = uid;
       await loadData();
       setReady(true);
       sub = supabase.auth.onAuthStateChange((_e, sess) => { setAuthUser(sess?.user || null); if (_e === 'PASSWORD_RECOVERY') setPasswordRecovery(true); });
@@ -2113,12 +2092,8 @@ function AppProvider({ children }) {
   }, [reloadPlays]);
 
   // Suggestions : jeux des soirées passées où je suis présent et que je n'ai pas encore enregistrés
-  // Vrai quand les données personnelles chargées correspondent bien au membre
-  // connecté. Sert de garde à tout ce qui alimente les pastilles.
-  const personalReady = !currentUser || personalDataFor === currentUser.id;
-
   const eventPlaySuggestions = useMemo(() => {
-    if (!currentUser || !personalReady) return [];
+    if (!currentUser) return [];
     const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id + "|" + (d.occurrence || 1)));
     const mine = new Set();
     (plays || []).forEach((pl) => {
@@ -2142,7 +2117,7 @@ function AppProvider({ children }) {
       });
     });
     return out.sort((a, b) => (new Date(b.date) - new Date(a.date)) || (a.gameName || "").localeCompare(b.gameName || "") || a.occurrence - b.occurrence);
-  }, [events, plays, eventPlayDismissed, currentUser, personalReady]);
+  }, [events, plays, eventPlayDismissed, currentUser]);
 
   // Se declarer (ou se retirer) vainqueur d'une partie deja enregistree.
   const setMyPlayResult = useCallback(async (playId, isWinner) => {
@@ -2155,11 +2130,11 @@ function AppProvider({ children }) {
 
   // Parties manuelles où un autre membre m'a inscrit : en attente de MA confirmation.
   const myPendingPlays = useMemo(() => {
-    if (!currentUser || !personalReady) return [];
+    if (!currentUser) return [];
     return (plays || [])
       .filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed === false))
       .sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
-  }, [plays, currentUser, personalReady]);
+  }, [plays, currentUser]);
 
   const confirmPlayParticipation = useCallback(async (playId, isWinner) => {
     const { error } = await supabase.rpc("confirm_play_participation", { p_play_id: playId, p_is_winner: !!isWinner });
@@ -2329,7 +2304,7 @@ function AppProvider({ children }) {
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds, childIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
-    eventPlaySuggestions, confirmEventPlay, dismissEventPlay, personalReady, setEventPlayCount,
+    eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedIds, dismissReco,
@@ -2854,6 +2829,7 @@ function StatusInfoModal({ onClose, role, isChild }) {
         "Emprunter et prêter des jeux entre membres.",
       ],
       cannot: [
+        "<b>Pas d'onglet Décisionnaire</b> : il n'apparaît même pas dans le menu. Ni boîte à idées, ni votes en ligne — impossible de proposer une idée, de la soutenir, de la commenter, de lancer un vote, d'y voter ou d'en lire les résultats.",
         "Pas de voix délibérative en assemblée générale (présence possible à titre consultatif).",
         "Une caution (au prix neuf du jeu) peut être demandée par le prêteur lors d'une location.",
       ],
@@ -2863,7 +2839,8 @@ function StatusInfoModal({ onClose, role, isChild }) {
       can: [
         "Tout ce que fait un membre, sans exception.",
         "Voix délibérative en assemblée générale : c'est lui qui décide de l'avenir de l'asso.",
-        "Accès à l'onglet <b>Décisionnaire</b> : boîte à idées partagée et votes en ligne.",
+        "Accès à l'onglet <b>Décisionnaire</b>, invisible pour les autres membres : <b>boîte à idées</b> (proposer, soutenir, commenter) et <b>votes en ligne</b> (lancer un scrutin, voter, en discuter dans la zone de commentaires, lire les résultats).",
+        "Prévenu par notification à chaque nouveau vote et à chaque commentaire déposé sous un vote.",
         "Pass Ludovore (Ludum.fr) offert pendant un an — valeur 29,99 €.",
         "Dispensé de caution lors d'une location de jeu.",
         "Une couronne ambre accompagne son nom partout sur le site.",
@@ -2890,6 +2867,8 @@ function StatusInfoModal({ onClose, role, isChild }) {
     <Modal open onClose={onClose} title="Les statuts à l'ALADJ" width={620}>
       <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
         Trois statuts coexistent sur le site. Le vôtre est encadré en couleur.
+        {" "}La différence la plus visible au quotidien tient à un onglet : <b>Décisionnaire</b> (idées et votes) n'apparaît
+        dans le menu que pour les membres décisionnaires.
         {isChild ? " Un compte enfant peut aussi être décisionnaire une fois adulte." : ""}
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
@@ -3179,8 +3158,6 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   const downOnOverlay = useRef(false);
   const overlayRef = useRef(null);
 
-  useScrollLock(open);
-
   useEffect(() => {
     if (!open) return;
     const h = (e) => e.key === "Escape" && onClose();
@@ -3212,8 +3189,7 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000,
-        overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
       }}>
       <div style={{
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
@@ -3229,47 +3205,6 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       </div>
     </div>
   );
-}
-
-/* -----------------------------------------------------------------------------
-   VERROU DE DEFILEMENT
-   Tant qu'une fenetre est ouverte, la page derriere ne doit pas bouger.
-   Compteur global : les fenetres s'empilent (une fiche de jeu ouvre une
-   confirmation, qui ouvre un pave de score...) et le verrou ne doit sauter
-   qu'a la fermeture de la derniere.
-   On fige le <body> en position: fixed en memorisant le defilement, plutot que
-   par overflow: hidden -- seule methode qui tienne sur Safari iOS.
-   --------------------------------------------------------------------------- */
-let __aladjScrollLocks = 0;
-let __aladjScrollY = 0;
-
-function useScrollLock(active) {
-  useEffect(() => {
-    if (!active || typeof document === "undefined") return undefined;
-    const b = document.body;
-    if (__aladjScrollLocks === 0) {
-      __aladjScrollY = window.scrollY || window.pageYOffset || 0;
-      b.style.position = "fixed";
-      b.style.top = `-${__aladjScrollY}px`;
-      b.style.left = "0";
-      b.style.right = "0";
-      b.style.width = "100%";
-      b.style.overflow = "hidden";
-    }
-    __aladjScrollLocks += 1;
-    return () => {
-      __aladjScrollLocks = Math.max(0, __aladjScrollLocks - 1);
-      if (__aladjScrollLocks === 0) {
-        b.style.position = "";
-        b.style.top = "";
-        b.style.left = "";
-        b.style.right = "";
-        b.style.width = "";
-        b.style.overflow = "";
-        window.scrollTo(0, __aladjScrollY);
-      }
-    };
-  }, [active]);
 }
 
 /* ---- Badge ---- */
@@ -3320,14 +3255,14 @@ function isDecideur(u) {
 }
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, reload, personalReady } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, reload } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
-  const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
-  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length : 0;
+  const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
+  const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length;
 
   return (
     <>
@@ -4026,7 +3961,15 @@ function GuidePage() {
         },
         {
           q: "Devenir membre décisionnaire",
-          a: <p style={{ margin: 0 }}>Tout le monde s'inscrit gratuitement comme membre. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an — voix délibérative en AG, pass Ludovore offert un an (valeur 29,99 €), fonctionnalités réservées à venir) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Tout le monde s'inscrit gratuitement comme <b>membre</b>. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>
+            <p style={{ margin: "0 0 8px" }}><b>Concrètement, qu'est-ce que ça change sur le site ?</b> Une seule chose, mais elle compte : l'onglet <b>👑 Décisionnaire</b> apparaît dans le menu. Tout le reste du site — ludothèque, moments jeux, parties, chrono, badges, commentaires — est <b>identique pour les deux statuts</b>.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Membre non décisionnaire</b> : l'onglet n'existe pas. Il ne voit ni les idées, ni les votes, ni les commentaires qui s'y échangent — c'est verrouillé côté serveur, pas seulement masqué à l'écran.</li>
+              <li><b>Membre décisionnaire</b> : il ouvre l'onglet, propose et soutient des idées, lance des votes, y vote, en discute dans la zone de commentaires, et reçoit une notification à chaque nouveau vote comme à chaque nouveau commentaire.</li>
+            </ul>
+            <p style={{ margin: 0 }}>S'y ajoutent les avantages hors site : <b>voix délibérative en assemblée générale</b>, <b>pass Ludovore</b> offert un an (valeur 29,99 €) et <b>dispense de caution</b> lors d'une location. Si le statut expire, l'onglet disparaît simplement : rien n'est perdu, tout revient au renouvellement.</p>
+          </>,
         },
         {
           q: "Administrateurs : modifier le profil d'un membre",
@@ -4492,7 +4435,8 @@ function GuidePage() {
           q: "À quoi sert l'onglet « Décisionnaire » ?",
           a: <>
             <p style={{ margin: "0 0 8px" }}>C'est un onglet <b>réservé aux membres décisionnaires</b> (et aux administrateurs) : les autres membres ne le voient même pas apparaître dans le menu. Tout ce qui s'y écrit n'est visible que d'eux — c'est garanti côté serveur, pas seulement à l'affichage.</p>
-            <p style={{ margin: 0 }}>Il sert à faire vivre l'association entre deux assemblées générales : partager des idées, en discuter, puis trancher par un vote. Deux volets : la <b>💡 boîte à idées</b> et les <b>🗳️ votes</b>. Si votre statut décisionnaire expire, l'onglet disparaît simplement.</p>
+            <p style={{ margin: "0 0 8px" }}>Il sert à faire vivre l'association entre deux assemblées générales : partager des idées, en discuter, puis trancher par un vote. Deux volets : la <b>💡 boîte à idées</b> et les <b>🗳️ votes</b>. Si votre statut décisionnaire expire, l'onglet disparaît simplement.</p>
+            <p style={{ margin: 0 }}><b>C'est la seule différence de fonctionnalité entre les deux statuts sur le site.</b> Un membre non décisionnaire profite de tout le reste à l'identique — ludothèque, moments jeux, parties, chrono, badges, commentaires de jeux. Ce qui lui manque, c'est cet onglet : proposer une idée, la soutenir, la commenter, lancer un vote, y participer ou en lire les résultats.</p>
           </>,
         },
         {
@@ -4501,8 +4445,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Cliquez sur <b>« Proposer une idée »</b>, donnez-lui un titre en une phrase et, si besoin, ajoutez le contexte. L'idée apparaît aussitôt pour tous les décisionnaires.</p>
             <p style={{ margin: "0 0 8px" }}>Chacun peut la <b>soutenir</b> (le pouce à gauche, avec son compteur — pratique pour voir ce qui fait consensus avant même de voter) et la <b>commenter</b> pour en discuter.</p>
             <p style={{ margin: "0 0 8px" }}>L'auteur d'une idée (et les administrateurs) peut la <b>modifier</b> à tout moment — titre et détails — via le bouton <b>Modifier</b> ; la mention <i>(modifiée)</i> apparaît alors sous l'idée. Les <b>commentaires</b> se corrigent de la même façon, avec le crayon à leur droite.</p>
-            <p style={{ margin: "0 0 8px" }}>L'auteur (et les administrateurs) peut aussi marquer une idée <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
-            <p style={{ margin: 0 }}><b>Personne ne rate rien.</b> Tous les décisionnaires reçoivent une notification quand une <b>idée est proposée</b>, quand elle est <b>commentée</b>, quand un <b>vote s'ouvre</b> et quand un <b>vote est clos</b> — jamais pour ses propres actions, bien sûr. Si c'est votre idée qu'on commente, le message vous le dit explicitement. Un clic sur la notification ouvre l'onglet Décisionnaire.</p>
+            <p style={{ margin: 0 }}>L'auteur (et les administrateurs) peut aussi marquer une idée <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
           </>,
         },
         {
@@ -4516,6 +4459,15 @@ function GuidePage() {
             </ul>
             <p style={{ margin: "0 0 8px" }}>Tous les décisionnaires reçoivent une <b>notification</b> à l'ouverture du vote. L'auteur (et les administrateurs) peut <b>modifier</b> le vote, le <b>clore en avance</b> ou le supprimer.</p>
             <p style={{ margin: 0 }}><b>Ce qu'on peut modifier, et jusqu'à quand.</b> Tant que <b>personne n'a voté</b>, tout est ouvert : question, réponses, mode de scrutin, quorum, date limite. Dès qu'un <b>premier bulletin</b> est déposé, la structure du scrutin se <b>gèle</b> — on ne peut plus ajouter ni retirer de réponse, ni passer de réponse unique à multiple, car cela fausserait les votes déjà exprimés. Restent modifiables : les <b>textes</b> (une faute de frappe ne change pas le sens d'un vote), le <b>quorum</b> et la <b>date limite</b>. Un bandeau vous rappelle la règle et le nombre de votants concernés.</p>
+          </>,
+        },
+        {
+          q: "Discuter un vote : la zone de commentaires",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque vote — en cours comme terminé — une <b>zone de commentaires</b> permet d'argumenter : préciser une option mal comprise, soulever une objection, proposer un compromis, ou commenter le résultat une fois le scrutin clos.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Tous les membres décisionnaires reçoivent une notification</b> à chaque nouveau commentaire (l'auteur excepté) : personne ne rate un argument déposé la veille de la clôture. Un clic sur la notification ramène directement à l'onglet Décisionnaire.</p>
+            <p style={{ margin: "0 0 8px" }}>La zone s'<b>ouvre d'office</b> quand des commentaires existent déjà, et reste repliée derrière le bouton « Commenter ce vote » sinon. L'auteur d'un commentaire (et les administrateurs) peut le <b>corriger</b> ou le <b>supprimer</b> ; la mention <i>(modifié)</i> apparaît alors.</p>
+            <p style={{ margin: 0 }}><b>Commenter ne trahit pas votre bulletin.</b> Les deux sont indépendants : on peut discuter sans avoir voté, voter sans rien écrire, ou défendre une option puis changer d'avis dans l'isoloir. Comme le reste de l'onglet, ces échanges sont invisibles des membres non décisionnaires.</p>
           </>,
         },
         {
@@ -5650,21 +5602,24 @@ function PollBoard({ setToast }) {
   const [myVotes, setMyVotes] = useState([]);
   const [status, setStatus] = useState({});     // poll_id -> { voter_count, is_closed }
   const [results, setResults] = useState({});   // poll_id -> [{ option_id, votes }]
+  const [comments, setComments] = useState([]); // commentaires de tous les votes
   const [err, setErr] = useState("");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);   // vote en cours de modification
 
   const load = useCallback(async () => {
-    const [p, o, v, st] = await Promise.all([
+    const [p, o, v, st, cm] = await Promise.all([
       supabase.from("polls").select("*").order("created_at", { ascending: false }),
       supabase.from("poll_options").select("*").order("sort_order", { ascending: true }),
       supabase.from("poll_votes").select("poll_id,option_id").eq("voter_id", currentUser.id),
       supabase.rpc("aladj_poll_status"),
+      supabase.from("poll_comments").select("*").order("created_at", { ascending: true }),
     ]);
     if (p.error) { setErr(p.error.message); setPolls([]); return; }
     setPolls(p.data || []);
     setOptions(o.data || []);
     setMyVotes(v.data || []);
+    setComments(cm.data || []);
     const map = {};
     (st.data || []).forEach((r) => { map[r.poll_id] = { voterCount: r.voter_count, isClosed: r.is_closed }; });
     setStatus(map);
@@ -5720,6 +5675,7 @@ function PollBoard({ setToast }) {
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
                     st={status[p.id]} result={results[p.id]} users={users}
+                    comments={comments.filter((c) => c.poll_id === p.id)}
                     onChanged={load} onRemove={removePoll} onClose={closeNow} onEdit={setEditing} setToast={setToast} />
                 ))}
               </div>
@@ -5733,6 +5689,7 @@ function PollBoard({ setToast }) {
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
                     st={status[p.id]} result={results[p.id]} users={users}
+                    comments={comments.filter((c) => c.poll_id === p.id)}
                     onChanged={load} onRemove={removePoll} onClose={closeNow} onEdit={setEditing} setToast={setToast} />
                 ))}
               </div>
@@ -5756,7 +5713,7 @@ function PollBoard({ setToast }) {
 }
 
 /* ---- Une carte de vote ----------------------------------------------------- */
-function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, onRemove, onClose, onEdit, setToast }) {
+function PollCard({ poll, options, myOptionIds, st, result, users, comments = [], onChanged, onRemove, onClose, onEdit, setToast }) {
   const { currentUser } = useApp();
   const [sel, setSel] = useState(myOptionIds);
   const [busy, setBusy] = useState(false);
@@ -5778,6 +5735,9 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
   const showResults = !!result && closedNow;
   const canPeek = !!result && !closedNow;   // resultats provisoires (administrateurs)
   const [peek, setPeek] = useState(false);
+  // Zone de discussion : depliee d'office quand il y a deja des commentaires,
+  // pour qu'un argument deja ecrit ne passe pas inapercu avant de voter.
+  const [showComments, setShowComments] = useState(comments.length > 0);
   const totalVotes = (result || []).reduce((s, r) => s + (r.votes || 0), 0);
   const maxVotes = Math.max(1, ...(result || []).map((r) => r.votes || 0));
 
@@ -5927,6 +5887,15 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
         </div>
       )}
 
+      {/* Discussion : on argumente avant (et apres) le scrutin. Les commentaires
+          sont visibles de tous les decisionnaires, jamais des autres membres. */}
+      <div style={{ marginTop: 14, borderTop: "1px solid #f0e8d8", paddingTop: 12 }}>
+        <Btn size="sm" variant="soft" onClick={() => setShowComments((v) => !v)}>
+          <MessageCircle size={14} /> {comments.length > 0 ? `${comments.length} commentaire${comments.length > 1 ? "s" : ""}` : "Commenter ce vote"}
+        </Btn>
+        {showComments && <PollComments pollId={poll.id} rows={comments} users={users} onChange={onChanged} closedNow={closedNow} />}
+      </div>
+
       {canManage && (
         <div style={{ display: "flex", gap: 8, marginTop: 14, borderTop: "1px solid #f0e8d8", paddingTop: 12, flexWrap: "wrap" }}>
           {!closedNow && <Btn size="sm" variant="soft" onClick={() => onEdit(poll)}><Edit3 size={14} /> Modifier</Btn>}
@@ -5934,6 +5903,109 @@ function PollCard({ poll, options, myOptionIds, st, result, users, onChanged, on
           <Btn size="sm" variant="danger" onClick={() => onRemove(poll)}><Trash2 size={14} /> Supprimer</Btn>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---- Commentaires d'un vote ------------------------------------------------
+   Meme fonctionnement que les commentaires d'idees : l'auteur (et les
+   administrateurs) peuvent corriger ou retirer. Une difference : l'insertion
+   declenche cote base une notification pour TOUS les decisionnaires, afin que
+   personne ne rate un argument depose la veille de la cloture.
+   --------------------------------------------------------------------------- */
+function PollComments({ pollId, rows, users, onChange, closedNow }) {
+  const { currentUser, askConfirm } = useApp();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("poll_comments").insert({ poll_id: pollId, author_id: currentUser.id, content: t.slice(0, 2000) });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setText("");
+    await onChange();
+  };
+
+  const saveEdit = async () => {
+    const t = editText.trim();
+    if (!t) return;
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("poll_comments")
+      .update({ content: t.slice(0, 2000), updated_at: new Date().toISOString() }).eq("id", editId);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null); setEditText("");
+    await onChange();
+  };
+
+  const remove = async (c) => {
+    if (!(await askConfirm({ title: "Supprimer ce commentaire ?", message: "Il sera retire de la discussion pour tous les decisionnaires.", confirmLabel: "Supprimer" }))) return;
+    await supabase.from("poll_comments").delete().eq("id", c.id);
+    await onChange();
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 12px", borderRadius: 10, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{err}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 10 }}>
+        {rows.length === 0 && (
+          <span style={{ fontSize: 13, color: "#a89a86" }}>
+            {closedNow ? "Aucun commentaire sur ce vote." : "Aucun commentaire pour l'instant — lancez la discussion avant la clôture."}
+          </span>
+        )}
+        {rows.map((c) => (
+          <div key={c.id} style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "9px 12px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: "#9c8d79", marginBottom: 2, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif" }}>{c.author_id === currentUser?.id ? "Vous" : nameOf(c.author_id)}</b>
+                <DeciderCrownFor id={c.author_id} size={11} />
+                <span>· {new Date(c.created_at).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+              </div>
+              {editId === c.id ? (
+                <div>
+                  <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} maxLength={2000} style={{ ...inputStyle, resize: "vertical", marginBottom: 7 }} />
+                  <div style={{ display: "flex", gap: 7 }}>
+                    <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editText.trim()}>Enregistrer</Btn>
+                    <Btn size="sm" variant="soft" onClick={() => { setEditId(null); setEditText(""); }}>Annuler</Btn>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                  {c.content}
+                  {c.updated_at && <span style={{ fontSize: 11.5, color: "#9c8d79", fontStyle: "italic" }}> (modifié)</span>}
+                </div>
+              )}
+            </div>
+            {(c.author_id === currentUser?.id || currentUser?.admin) && editId !== c.id && (
+              <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
+                <button onClick={() => { setEditId(c.id); setEditText(c.content); }} title="Modifier" style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={14} /></button>
+                <button onClick={() => remove(c)} title="Supprimer" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={14} /></button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} maxLength={2000}
+          placeholder={closedNow ? "Un mot sur le résultat…" : "Votre argument, une précision, une objection…"}
+          style={{ ...inputStyle, resize: "vertical", flex: 1 }} />
+        <Btn size="sm" variant="teal" onClick={send} disabled={busy || !text.trim()}>
+          {busy ? <Loader2 size={14} className="aladj-spin" /> : "Envoyer"}
+        </Btn>
+      </div>
+      <p style={{ margin: "7px 0 0", fontSize: 11.5, color: "#a89a86" }}>
+        Tous les membres décisionnaires reçoivent une notification. Votre bulletin, lui, reste secret.
+      </p>
     </div>
   );
 }
@@ -6739,11 +6811,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
     await updateComment(editingId, editText); setEditingId(null); setEditText("");
   };
 
-  useScrollLock(true);   // cette fenetre n'est montee que lorsqu'elle est visible
-
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px",
-      overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
       background: overlayBg, transition: "background .4s", backdropFilter: "blur(3px)" }}>
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
@@ -10937,6 +11006,7 @@ const BACKUP_TABLES = [
   ["polls", [["created_at", "id"]]],
   ["poll_options", [["id"]]],
   ["poll_votes", [["id"]]],
+  ["poll_comments", [["created_at", "id"]]],
   // Divers
   ["notifications", [["id"], ["created_at"]]],
   ["push_subscriptions", [["id"], ["created_at"]]],
@@ -12268,7 +12338,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm, personalReady } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
@@ -12529,9 +12599,9 @@ function MyLudoPage({ setToast, setPage }) {
 
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
-        const unreadCount = personalReady ? notifications.filter((n) => !n.read).length : 0;
+        const unreadCount = notifications.filter((n) => !n.read).length;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : t === "poll_open" ? Crown : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -12548,7 +12618,7 @@ function MyLudoPage({ setToast, setPage }) {
                   <div key={n.id} role="button" tabIndex={0} onClick={() => {
                     markNotificationRead(n.id);
                     if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
-                    else if (n.linkKind === "poll" || n.linkKind === "idea") setPage("decideur");
+                    else if (n.linkKind === "poll") setPage("decideur");
                     else if (n.linkKind === "event") setPage("soirees");
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
@@ -13137,10 +13207,6 @@ export default function App() {
           .aladj-modal-body { padding: 16px !important; }
         }
         button { font-family: inherit; }
-        /* Le geste de defilement ne doit jamais « deborder » d'une fenetre vers la
-           page qui se trouve derriere. Applique aussi aux zones defilantes
-           internes (listes de jeux, grilles d'extensions...). */
-        .aladj-modal-body, .aladj-modal-body * { overscroll-behavior: contain; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
