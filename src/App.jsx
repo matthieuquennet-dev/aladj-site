@@ -4041,7 +4041,7 @@ function AuthModal({ mode, onClose, setToast }) {
 
       {tab === "register" && (
         <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "0 0 14px", lineHeight: 1.5 }}>
-          Tout le monde s'inscrit comme <b>membre</b> (gratuit). Le statut de <b>membre décisionnaire</b> (cotisation 20 €/an, voix délibérative en AG) s'obtient ensuite depuis Mon espace.
+          Tout le monde s'inscrit comme <b>membre</b> (gratuit). Le statut de <b>membre décisionnaire</b> (cotisation 20 €/an, voix délibérative en AG) s'obtient ensuite depuis Mon espace, en espèces ou par PayPal entre proches.
           <br />Une dernière étape vous rappellera nos conversations <b>Signal</b>, où se passe l'essentiel de la vie de l'association.
         </p>
       )}
@@ -4161,7 +4161,7 @@ function GuidePage() {
         {
           q: "Devenir membre décisionnaire",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Tout le monde s'inscrit gratuitement comme <b>membre</b>. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an) s'obtient depuis le bandeau en haut de <b>Mon espace</b> : engagement à régler <b>en espèces</b> auprès du bureau (le paiement en ligne arrive prochainement) — chèques et virements refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>
+            <p style={{ margin: "0 0 8px" }}>Tout le monde s'inscrit gratuitement comme <b>membre</b>. Le statut de <b>membre décisionnaire</b> ({COTISATION_EUR} €/an) s'obtient depuis le bandeau en haut de <b>Mon espace</b>, au choix <b>en espèces</b> auprès du bureau ou par <b>PayPal entre proches</b> au trésorier {PAYPAL_TRESORIER_NOM} ({PAYPAL_TRESORIER}) — dans ce cas, indiquez en motif <b>ALADJ</b> suivi de votre nom sur le site, sans quoi le trésorier ne peut pas rattacher le paiement à votre compte. Le paiement par carte arrive prochainement ; chèques et virements bancaires sont refusés. Le statut dure <b>365 jours</b> ; un renouvellement <b>ajoute</b> 365 jours au restant (le bandeau vous prévient 15 jours avant l'échéance).</p>
             <p style={{ margin: "0 0 8px" }}><b>Concrètement, qu'est-ce que ça change sur le site ?</b> Une seule chose, mais elle compte : l'onglet <b>👑 Décisionnaire</b> apparaît dans le menu. Tout le reste du site — ludothèque, moments jeux, parties, chrono, badges, commentaires — est <b>identique pour les deux statuts</b>.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li><b>Membre non décisionnaire</b> : l'onglet n'existe pas. Il ne voit ni les idées, ni les votes, ni les commentaires qui s'y échangent — c'est verrouillé côté serveur, pas seulement masqué à l'écran.</li>
@@ -11730,6 +11730,11 @@ function AdminMechanicsSection({ setToast }) {
 const COTISATION_EUR = 20;
 // Paiement en ligne : mettre à true quand le compte Stripe de l'association sera actif.
 const ONLINE_PAYMENT_ENABLED = false;
+// Règlement PayPal « entre amis » au trésorier. Le motif doit être normalisé :
+// c'est la seule façon pour lui de rapprocher un virement d'un compte du site.
+const PAYPAL_TRESORIER = "memo12a@yahoo.fr";
+const PAYPAL_TRESORIER_NOM = "Fabien Delisle";
+const paypalMotif = (u) => `ALADJ ${(u?.name || "").trim()}`;
 
 // Anniversaire d'un membre en clair : « 14 mars » ou « 14 mars 1987 ».
 // L'annee reste facultative : beaucoup ne renseignent que le jour et le mois.
@@ -11765,8 +11770,10 @@ function membershipDaysLeft(user) {
 
 function MembershipModal({ onClose, setToast }) {
   const { currentUser, reload } = useApp();
-  const [mode, setMode] = useState(null); // null | "cash"
+  const [mode, setMode] = useState(null); // null | "cash" | "paypal"
   const [cashOk, setCashOk] = useState(false);
+  const [ppOk, setPpOk] = useState(false);
+  const [copied, setCopied] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const daysLeft = membershipDaysLeft(currentUser);
@@ -11806,6 +11813,23 @@ function MembershipModal({ onClose, setToast }) {
     }
   };
 
+  const commitPaypal = async () => {
+    const out = await callApi("paypal");
+    setBusy(false);
+    if (out?.ok) {
+      setToast("Merci ! Votre statut est actif — pensez à envoyer le paiement PayPal au trésorier.");
+      onClose();
+      await reload();
+    }
+  };
+
+  // Copie discrète : l'adresse et le motif doivent être repris à l'identique
+  // dans PayPal, une faute de frappe rendrait le rapprochement impossible.
+  const copy = async (txt, quoi) => {
+    try { await navigator.clipboard.writeText(txt); setCopied(quoi); setTimeout(() => setCopied(""), 2000); }
+    catch (e) { setErr("Copie impossible — sélectionnez le texte à la main."); }
+  };
+
   return (
     <Modal open onClose={onClose} title="👑 Cotisation — membre décisionnaire" width={540}>
       <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: "0 0 6px" }}>
@@ -11818,8 +11842,8 @@ function MembershipModal({ onClose, setToast }) {
       )}
       <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "0 0 16px" }}>
         {ONLINE_PAYMENT_ENABLED
-          ? <>Seuls deux moyens de paiement sont acceptés : <b>en ligne</b> ou <b>en espèces</b> auprès d'un membre du bureau. Chèques et virements sont refusés.</>
-          : <>Pour le moment, la cotisation se règle <b>en espèces</b> auprès d'un membre du bureau (le paiement en ligne arrive prochainement). Chèques et virements sont refusés.</>}
+          ? <>Trois moyens de paiement sont acceptés : <b>en ligne</b>, <b>PayPal entre amis</b> au trésorier, ou <b>en espèces</b> auprès d'un membre du bureau. Chèques et virements bancaires sont refusés.</>
+          : <>La cotisation se règle <b>en espèces</b> auprès d'un membre du bureau ou par <b>PayPal entre amis</b> au trésorier (le paiement par carte arrive prochainement). Chèques et virements bancaires sont refusés.</>}
       </p>
 
       {!mode && (
@@ -11833,6 +11857,14 @@ function MembershipModal({ onClose, setToast }) {
             </span>
             {busy && <Loader2 size={17} className="aladj-spin" color={C.teal} />}
           </button>}
+          <button onClick={() => setMode("paypal")} disabled={busy}
+            style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: `2px solid ${C.navy}33`, background: "#fff" }}>
+            <span style={{ fontSize: 24 }}>🅿️</span>
+            <span>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>PayPal entre amis</span>
+              <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>J'envoie {COTISATION_EUR} € à notre trésorier {PAYPAL_TRESORIER_NOM}.</span>
+            </span>
+          </button>
           <button onClick={() => setMode("cash")} disabled={busy}
             style={{ textAlign: "left", padding: "15px 17px", borderRadius: 14, cursor: "pointer", display: "flex", gap: 13, alignItems: "center", border: "2px solid #e6dcc9", background: "#fff" }}>
             <span style={{ fontSize: 24 }}>💶</span>
@@ -11841,6 +11873,42 @@ function MembershipModal({ onClose, setToast }) {
               <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>Je m'engage à remettre {COTISATION_EUR} € en espèces à un membre du bureau.</span>
             </span>
           </button>
+        </div>
+      )}
+
+      {mode === "paypal" && (
+        <div style={{ background: "rgba(26,58,92,.05)", border: `1.5px solid ${C.navy}22`, borderRadius: 14, padding: "15px 17px" }}>
+          <p style={{ margin: "0 0 13px", fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
+            Envoyez <b>{COTISATION_EUR} €</b> depuis votre compte PayPal, en choisissant l'option
+            <b> « Entre proches »</b> (et non « Biens et services ») : c'est ce qui évite les frais à l'association.
+          </p>
+
+          {[
+            { l: "Adresse PayPal du trésorier", v: PAYPAL_TRESORIER, k: "mail", sub: PAYPAL_TRESORIER_NOM },
+            { l: "Motif du paiement", v: paypalMotif(currentUser), k: "motif", sub: "À recopier exactement — c'est ce qui permet de vous identifier." },
+          ].map((f) => (
+            <div key={f.k} style={{ marginBottom: 11 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: C.navy, marginBottom: 4 }}>{f.l}</span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <code style={{ flex: 1, minWidth: 140, background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 10, padding: "9px 12px", fontFamily: "monospace", fontSize: 14.5, color: C.navy, overflowWrap: "anywhere" }}>{f.v}</code>
+                <Btn size="sm" variant={copied === f.k ? "teal" : "soft"} onClick={() => copy(f.v, f.k)}>
+                  {copied === f.k ? <><Check size={14} /> Copié</> : "Copier"}
+                </Btn>
+              </div>
+              <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", marginTop: 3 }}>{f.sub}</span>
+            </div>
+          ))}
+
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 13.5, color: "#5e5346", lineHeight: 1.55, marginTop: 4 }}>
+            <input type="checkbox" checked={ppOk} onChange={(e) => setPpOk(e.target.checked)} style={{ marginTop: 3 }} />
+            <span>J'ai envoyé (ou j'envoie dans la foulée) <b>{COTISATION_EUR} €</b> par <b>PayPal entre proches</b> à {PAYPAL_TRESORIER_NOM}, avec le motif indiqué ci-dessus. Je comprends que mon statut est activé dès maintenant sur cette déclaration, et que le trésorier en est informé.</span>
+          </label>
+          <div style={{ display: "flex", gap: 8, marginTop: 13, flexWrap: "wrap" }}>
+            <Btn variant="amber" disabled={!ppOk || busy} onClick={commitPaypal}>
+              {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> C'est envoyé — activer mon statut</>}
+            </Btn>
+            <Btn variant="soft" disabled={busy} onClick={() => { setMode(null); setPpOk(false); }}>Retour</Btn>
+          </div>
         </div>
       )}
 
