@@ -466,6 +466,7 @@ function ConfirmDialog({ state, onClose }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state, onClose]);
+  useScrollLock(!!state);
   if (!state) return null;
   const { title = "Confirmer ?", message = "", confirmLabel = "Confirmer", cancelLabel = "Annuler", danger = true } = state;
   return (
@@ -605,6 +606,7 @@ function ScoreDirectionField({ value, onChange }) {
 function ScorePadOverlay({ name, initialScore, onClose, onApply }) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  useScrollLock(true);   // le pave couvre l'ecran : la page derriere doit rester figee
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeRef.current(); } };
     window.addEventListener("keydown", onKey, true);
@@ -790,6 +792,11 @@ function AppProvider({ children }) {
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
+  // Membre pour lequel les tables personnelles (notifications, suggestions
+  // refusées) ont effectivement été chargées. Tant qu'il ne correspond pas au
+  // membre connecté, les compteurs restent muets : mieux vaut pas de pastille
+  // qu'une pastille fausse.
+  const [personalDataFor, setPersonalDataFor] = useState(null);
   // Rejets de suggestions du membre : { gameId, reason, snoozeUntil, createdAt }.
   // On garde le motif et la date de retour éventuelle : le moteur s'en sert pour
   // affiner, et « Mon espace » pour proposer de réafficher.
@@ -805,7 +812,12 @@ function AppProvider({ children }) {
 
   // Ref vers l'id du membre connecté, lisible dans loadData sans le mettre en dépendance.
   const currentUserIdRef = useRef(null);
-  useEffect(() => { currentUserIdRef.current = currentUser?.id || null; }, [currentUser]);
+  // Le profil met un instant a arriver : on ne remet l'identifiant a null que
+  // s'il n'y a plus personne d'authentifie, jamais pendant le chargement.
+  useEffect(() => {
+    if (currentUser?.id) currentUserIdRef.current = currentUser.id;
+    else if (!authUser) currentUserIdRef.current = null;
+  }, [currentUser, authUser]);
 
   // ⏱ Chronomètre de partie (multi-device) : état + détection d'un lien de jonction ?chrono=CODE
   const [chrono, setChrono] = useState(null); // null | { gameId } | { eventId } | { joinCode }
@@ -889,6 +901,8 @@ function AppProvider({ children }) {
       }));
       setPlays(playsList);
       setEventPlayDismissed(epdRows || []);
+      // Ces données ne valent que pour l'identité connue au moment de la requête.
+      setPersonalDataFor(currentUserIdRef.current || null);
 
       const ratingsByGame = {};
       (ratings || []).forEach((r) => { (ratingsByGame[r.game_id] ||= []).push(r); });
@@ -1067,6 +1081,13 @@ function AppProvider({ children }) {
     (async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setAuthUser(session?.user || null);
+      // On renseigne l'identifiant tout de suite, sans attendre que le profil
+      // soit charge : loadData s'en sert pour decider s'il interroge les tables
+      // personnelles. Sans cela, le tout premier chargement les ignore et les
+      // pastilles s'affichent un instant avec de fausses valeurs.
+      // (Un invite anonyme n'a pas de profil : on ne retient pas son identifiant.)
+      const uid = session?.user && !session.user.is_anonymous ? session.user.id : null;
+      currentUserIdRef.current = uid;
       await loadData();
       setReady(true);
       sub = supabase.auth.onAuthStateChange((_e, sess) => { setAuthUser(sess?.user || null); if (_e === 'PASSWORD_RECOVERY') setPasswordRecovery(true); });
@@ -2118,8 +2139,12 @@ function AppProvider({ children }) {
   }, [reloadPlays]);
 
   // Suggestions : jeux des soirées passées où je suis présent et que je n'ai pas encore enregistrés
+  // Vrai quand les données personnelles chargées correspondent bien au membre
+  // connecté. Sert de garde à tout ce qui alimente les pastilles.
+  const personalReady = !currentUser || personalDataFor === currentUser.id;
+
   const eventPlaySuggestions = useMemo(() => {
-    if (!currentUser) return [];
+    if (!currentUser || !personalReady) return [];
     const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id + "|" + (d.occurrence || 1)));
     const mine = new Set();
     (plays || []).forEach((pl) => {
@@ -2143,7 +2168,7 @@ function AppProvider({ children }) {
       });
     });
     return out.sort((a, b) => (new Date(b.date) - new Date(a.date)) || (a.gameName || "").localeCompare(b.gameName || "") || a.occurrence - b.occurrence);
-  }, [events, plays, eventPlayDismissed, currentUser]);
+  }, [events, plays, eventPlayDismissed, currentUser, personalReady]);
 
   // Se declarer (ou se retirer) vainqueur d'une partie deja enregistree.
   const setMyPlayResult = useCallback(async (playId, isWinner) => {
@@ -2156,11 +2181,11 @@ function AppProvider({ children }) {
 
   // Parties manuelles où un autre membre m'a inscrit : en attente de MA confirmation.
   const myPendingPlays = useMemo(() => {
-    if (!currentUser) return [];
+    if (!currentUser || !personalReady) return [];
     return (plays || [])
       .filter((pl) => pl.participants.some((pt) => pt.userId === currentUser.id && pt.confirmed === false))
       .sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
-  }, [plays, currentUser]);
+  }, [plays, currentUser, personalReady]);
 
   const confirmPlayParticipation = useCallback(async (playId, isWinner) => {
     const { error } = await supabase.rpc("confirm_play_participation", { p_play_id: playId, p_is_winner: !!isWinner });
@@ -2330,7 +2355,7 @@ function AppProvider({ children }) {
     notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
     momentsUnseen, markMomentsSeen, deciderIds, childIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
-    eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
+    eventPlaySuggestions, confirmEventPlay, dismissEventPlay, personalReady, setEventPlayCount,
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedRecos, dismissReco, restoreReco,
@@ -3252,6 +3277,8 @@ function Modal({ open, onClose, children, title, width = 560 }) {
   const downOnOverlay = useRef(false);
   const overlayRef = useRef(null);
 
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const h = (e) => e.key === "Escape" && onClose();
@@ -3283,7 +3310,8 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "fixed", inset: 0, background: "rgba(18,41,63,.55)", backdropFilter: "blur(4px)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000, overflowY: "auto",
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", zIndex: 1000,
+        overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
       }}>
       <div style={{
         background: C.paper, borderRadius: 22, width: "100%", maxWidth: width, boxShadow: "0 30px 80px rgba(18,41,63,.35)",
@@ -3299,6 +3327,47 @@ function Modal({ open, onClose, children, title, width = 560 }) {
       </div>
     </div>
   );
+}
+
+/* -----------------------------------------------------------------------------
+   VERROU DE DEFILEMENT
+   Tant qu'une fenetre est ouverte, la page derriere ne doit pas bouger.
+   Compteur global : les fenetres s'empilent (une fiche de jeu ouvre une
+   confirmation, qui ouvre un pave de score...) et le verrou ne doit sauter
+   qu'a la fermeture de la derniere.
+   On fige le <body> en position: fixed en memorisant le defilement, plutot que
+   par overflow: hidden -- seule methode qui tienne sur Safari iOS.
+   --------------------------------------------------------------------------- */
+let __aladjScrollLocks = 0;
+let __aladjScrollY = 0;
+
+function useScrollLock(active) {
+  useEffect(() => {
+    if (!active || typeof document === "undefined") return undefined;
+    const b = document.body;
+    if (__aladjScrollLocks === 0) {
+      __aladjScrollY = window.scrollY || window.pageYOffset || 0;
+      b.style.position = "fixed";
+      b.style.top = `-${__aladjScrollY}px`;
+      b.style.left = "0";
+      b.style.right = "0";
+      b.style.width = "100%";
+      b.style.overflow = "hidden";
+    }
+    __aladjScrollLocks += 1;
+    return () => {
+      __aladjScrollLocks = Math.max(0, __aladjScrollLocks - 1);
+      if (__aladjScrollLocks === 0) {
+        b.style.position = "";
+        b.style.top = "";
+        b.style.left = "";
+        b.style.right = "";
+        b.style.width = "";
+        b.style.overflow = "";
+        window.scrollTo(0, __aladjScrollY);
+      }
+    };
+  }, [active]);
 }
 
 /* ---- Badge ---- */
@@ -3355,8 +3424,8 @@ function Navbar({ page, setPage, onAuth }) {
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
-  const unreadNotifs = (notifications || []).filter((n) => !n.read).length;
-  const ludoBadge = unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length;
+  const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
+  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length : 0;
 
   return (
     <>
@@ -4553,7 +4622,8 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Cliquez sur <b>« Proposer une idée »</b>, donnez-lui un titre en une phrase et, si besoin, ajoutez le contexte. L'idée apparaît aussitôt pour tous les décisionnaires.</p>
             <p style={{ margin: "0 0 8px" }}>Chacun peut la <b>soutenir</b> (le pouce à gauche, avec son compteur — pratique pour voir ce qui fait consensus avant même de voter) et la <b>commenter</b> pour en discuter.</p>
             <p style={{ margin: "0 0 8px" }}>L'auteur d'une idée (et les administrateurs) peut la <b>modifier</b> à tout moment — titre et détails — via le bouton <b>Modifier</b> ; la mention <i>(modifiée)</i> apparaît alors sous l'idée. Les <b>commentaires</b> se corrigent de la même façon, avec le crayon à leur droite.</p>
-            <p style={{ margin: 0 }}>L'auteur (et les administrateurs) peut aussi marquer une idée <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
+            <p style={{ margin: "0 0 8px" }}>L'auteur (et les administrateurs) peut aussi marquer une idée <b>« tranchée »</b> une fois la décision prise, l'<b>archiver</b> pour désencombrer la liste sans rien perdre, ou la supprimer. Les idées archivées restent consultables via le lien en bas de page.</p>
+            <p style={{ margin: 0 }}><b>Personne ne rate rien.</b> Tous les décisionnaires reçoivent une notification quand une <b>idée est proposée</b>, quand elle est <b>commentée</b>, quand un <b>vote s'ouvre</b> et quand un <b>vote est clos</b> — jamais pour ses propres actions, bien sûr. Un clic sur la notification ouvre l'onglet Décisionnaire.</p>
           </>,
         },
         {
@@ -6919,8 +6989,11 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
     await updateComment(editingId, editText); setEditingId(null); setEditText("");
   };
 
+  useScrollLock(true);   // cette fenetre n'est montee que lorsqu'elle est visible
+
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px",
+      overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch",
       background: overlayBg, transition: "background .4s", backdropFilter: "blur(3px)" }}>
       <div onClick={(ev) => ev.stopPropagation()} style={{ background: C.paper, borderRadius: 24, width: "100%", maxWidth: 560, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)", animation: "popIn .25s ease" }}>
         <div style={{ padding: "22px 26px", color: "#fff", background: headerGrad, position: "relative" }}>
@@ -12504,7 +12577,7 @@ function HiddenRecosModal({ rows, games, onClose, onRestore }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm, personalReady } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
@@ -12769,9 +12842,9 @@ function MyLudoPage({ setToast, setPage }) {
 
       {/* Notifications récentes (commentaires, envies de découverte sur mes jeux/moments) */}
       {notifications.length > 0 && (() => {
-        const unreadCount = notifications.filter((n) => !n.read).length;
+        const unreadCount = personalReady ? notifications.filter((n) => !n.read).length : 0;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : t === "poll_open" ? Crown : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -12788,7 +12861,7 @@ function MyLudoPage({ setToast, setPage }) {
                   <div key={n.id} role="button" tabIndex={0} onClick={() => {
                     markNotificationRead(n.id);
                     if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
-                    else if (n.linkKind === "poll") setPage("decideur");
+                    else if (n.linkKind === "poll" || n.linkKind === "idea") setPage("decideur");
                     else if (n.linkKind === "event") setPage("soirees");
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
@@ -13430,6 +13503,10 @@ export default function App() {
           .aladj-modal-body { padding: 16px !important; }
         }
         button { font-family: inherit; }
+        /* Le geste de defilement ne doit jamais « deborder » d'une fenetre vers la
+           page qui se trouve derriere. Applique aussi aux zones defilantes
+           internes (listes de jeux, grilles d'extensions...). */
+        .aladj-modal-body, .aladj-modal-body * { overscroll-behavior: contain; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
