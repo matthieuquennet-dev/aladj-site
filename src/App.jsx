@@ -790,7 +790,10 @@ function AppProvider({ children }) {
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
-  const [dismissedIds, setDismissedIds] = useState([]);   // jeux que le membre a rejetés des suggestions
+  // Rejets de suggestions du membre : { gameId, reason, snoozeUntil, createdAt }.
+  // On garde le motif et la date de retour éventuelle : le moteur s'en sert pour
+  // affiner, et « Mon espace » pour proposer de réafficher.
+  const [dismissedRecos, setDismissedRecos] = useState([]);
   const [household, setHousehold] = useState({ memberIds: [], invitesReceived: [], invitesSent: [] }); // regroupement familial (le mien)
   const [householdByUser, setHouseholdByUser] = useState({}); // user_id -> ids des membres de son foyer
   const [fatalError, setFatalError] = useState(null);
@@ -847,7 +850,7 @@ function AppProvider({ children }) {
         fetchAllRows("upcoming_comments", "*", ["created_at", "id"]),
         fetchAllRows("game_discoveries", "*", ["game_id", "user_id"]),
         currentUserIdRef.current ? supabase.from("notifications").select("*").eq("recipient_id", currentUserIdRef.current).order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
-        currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("reco_dismissed").select("game_id,reason,snooze_until,created_at").eq("user_id", currentUserIdRef.current) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("household_members").select("*") : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("household_invites").select("*").eq("status", "pending") : Promise.resolve({ data: [] }),
         fetchAllRows("game_plays", "*", ["played_at", "id"]),
@@ -992,7 +995,10 @@ function AppProvider({ children }) {
         message: n.message, linkKind: n.link_kind, linkId: n.link_id, read: n.read === true,
         createdAt: n.created_at,
       })));
-      setDismissedIds((dismissedRows || []).map((d) => d.game_id));
+      setDismissedRecos((dismissedRows || []).map((d) => ({
+        gameId: d.game_id, reason: d.reason || null,
+        snoozeUntil: d.snooze_until || null, createdAt: d.created_at || null,
+      })));
       // Foyers (regroupement familial) : la composition de tous les foyers est
       // lisible ; on en tire mon foyer + une carte user -> membres de son foyer.
       {
@@ -1891,11 +1897,31 @@ function AppProvider({ children }) {
     await supabase.from("notifications").update({ read: true }).eq("recipient_id", currentUser.id).eq("read", false);
   }, [currentUser]);
 
-  // ---- Suggestions : rejeter un jeu ("ça ne m'intéresse pas") ----
-  const dismissReco = useCallback(async (gameId) => {
+  // ---- Suggestions : écarter un jeu, en disant pourquoi ----
+  // Le motif n'est pas un simple commentaire : c'est lui qui décide si le rejet
+  // pénalise les mécaniques, le format, ou absolument rien. « Pas maintenant »
+  // pose une date de retour à 90 jours au lieu d'un masquage définitif.
+  const dismissReco = useCallback(async (gameId, reason = null) => {
     if (!currentUser) return;
-    setDismissedIds((prev) => prev.includes(gameId) ? prev : [...prev, gameId]); // maj locale immédiate
-    await supabase.from("reco_dismissed").insert({ user_id: currentUser.id, game_id: gameId });
+    const snoozeUntil = reason === "later"
+      ? new Date(Date.now() + 90 * 86400000).toISOString()
+      : null;
+    // maj locale immédiate : la vignette disparaît sans attendre le réseau
+    setDismissedRecos((prev) => [
+      ...prev.filter((d) => d.gameId !== gameId),
+      { gameId, reason, snoozeUntil, createdAt: new Date().toISOString() },
+    ]);
+    await supabase.from("reco_dismissed").upsert(
+      { user_id: currentUser.id, game_id: gameId, reason, snooze_until: snoozeUntil },
+      { onConflict: "user_id,game_id" },
+    );
+  }, [currentUser]);
+
+  // Remettre un jeu masqué dans le circuit des suggestions.
+  const restoreReco = useCallback(async (gameId) => {
+    if (!currentUser) return;
+    setDismissedRecos((prev) => prev.filter((d) => d.gameId !== gameId));
+    await supabase.from("reco_dismissed").delete().eq("user_id", currentUser.id).eq("game_id", gameId);
   }, [currentUser]);
 
   // ---- Regroupement familial (foyers) ----
@@ -2307,7 +2333,7 @@ function AppProvider({ children }) {
     eventPlaySuggestions, confirmEventPlay, dismissEventPlay, setEventPlayCount,
     myPendingPlays, confirmPlayParticipation, declinePlayParticipation,
     pushSupported, pushEnabled, enablePush, disablePush,
-    dismissedIds, dismissReco,
+    dismissedRecos, dismissReco, restoreReco,
     setRetroEmails,
     household, householdByUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
@@ -2422,9 +2448,33 @@ function formatDateTimeFr(d) {
   return `${formatDateFr(d.toISOString().slice(0, 10))} à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/* Motifs proposés quand on écarte une suggestion. `weight` dit ce que le moteur
+   en fait : "mech" pénalise les mécaniques du jeu, "format" sa fourchette de
+   joueurs et sa durée, "none" n'apprend rien (le jeu est simplement masqué).
+   Un rejet pesant moitié moins qu'une vraie note : avec un effectif modeste,
+   ces signaux sont statistiquement fragiles et ne doivent pas dominer. */
+const RECO_REASONS = [
+  { key: "mechanics",       label: "Les mécaniques ne me tentent pas", hint: "On évitera ces mécaniques dans vos prochaines suggestions.", weight: "mech" },
+  { key: "format",          label: "Le format ne me convient pas",     hint: "Nombre de joueurs ou durée : on s'en éloignera.",             weight: "format" },
+  { key: "played_disliked", label: "J'y ai déjà joué, je n'ai pas aimé", hint: "Mettez-lui plutôt une note : c'est le signal le plus fort.", weight: "mech" },
+  { key: "theme",           label: "Le thème ne m'attire pas",         hint: "Ce jeu seul est écarté, sans conséquence sur les autres.",   weight: "none" },
+  { key: "known",           label: "Je le connais déjà",               hint: "Simple masquage : vos goûts ne changent pas.",              weight: "none" },
+  { key: "later",           label: "Pas maintenant",                   hint: "Il reviendra dans 90 jours.",                                weight: "none" },
+  { key: "none",            label: "Sans raison",                      hint: "Masqué, sans rien apprendre.",                               weight: "none" },
+];
+const RECO_REASON_LABEL = (k) => (RECO_REASONS.find((r) => r.key === k) || {}).label || "Sans motif";
+
+// Un rejet est-il encore actif ? (« Pas maintenant » expire au bout de 90 jours)
+function isRecoDismissalActive(d, now = Date.now()) {
+  if (!d) return false;
+  if (!d.snoozeUntil) return true;
+  return new Date(d.snoozeUntil).getTime() > now;
+}
+
 // Moteur de recommandations : propose des jeux non notés par l'utilisateur,
-// en combinant (a) les goûts des membres aux profils proches, (b) les mécaniques qu'il aime.
-function recommendGames(games, currentUserId, dismissedIds = []) {
+// en combinant (a) les goûts des membres aux profils proches, (b) les mécaniques
+// qu'il aime, (c) ce qu'il a explicitement écarté et pourquoi.
+function recommendGames(games, currentUserId, dismissals = [], limit = 12) {
   if (!currentUserId) return [];
   const myRatings = {}; // gameId -> ma note
   games.forEach((g) => { const v = g.ratings?.[currentUserId]; if (v) myRatings[g.id] = v; });
@@ -2456,6 +2506,25 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
     if (r >= 4) (g.mechanics || []).forEach((m) => { likedMech[m] = (likedMech[m] || 0) + 1; });
     else if (r > 0 && r <= 2) (g.mechanics || []).forEach((m) => { dislikedMech[m] = (dislikedMech[m] || 0) + 1; });
   });
+  // Les rejets motivés « mécaniques » ou « déjà joué, pas aimé » nourrissent la
+  // liste des mécaniques à fuir, avec un poids de 0,5 (une vraie note pese 1).
+  const byId = {};
+  games.forEach((g) => { byId[g.id] = g; });
+  const dismissRows = (dismissals || []).map((d) => (typeof d === "string" ? { gameId: d, reason: null, snoozeUntil: null } : d));
+  const rejPlayers = [], rejTimes = [];
+  dismissRows.forEach((d) => {
+    const spec = RECO_REASONS.find((r) => r.key === d.reason);
+    const g = byId[d.gameId];
+    if (!spec || !g) return;
+    if (spec.weight === "mech") {
+      (g.mechanics || []).forEach((m) => { dislikedMech[m] = (dislikedMech[m] || 0) + 0.5; });
+    } else if (spec.weight === "format") {
+      const mid = g.min && g.max ? (Number(g.min) + Number(g.max)) / 2 : (Number(g.min) || Number(g.max) || 0);
+      if (mid > 0) rejPlayers.push(mid);
+      if (Number(g.time) > 0) rejTimes.push(Number(g.time));
+    }
+  });
+
   const maxMech = Math.max(1, ...Object.values(likedMech));
 
   // --- (c) Format préféré : nombre de joueurs et durée de mes jeux bien notés (≥ 4)
@@ -2487,7 +2556,8 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
   // Candidats : jeux que je n'ai pas notés, que je ne possède pas déjà,
   // pour lesquels je n'ai pas déjà exprimé une envie de découvrir,
   // et que je n'ai pas rejetés ("ça ne m'intéresse pas").
-  const dismissed = new Set(dismissedIds);
+  const nowMs = Date.now();
+  const dismissed = new Set(dismissRows.filter((d) => isRecoDismissalActive(d, nowMs)).map((d) => d.gameId));
   const candidates = games.filter((g) =>
     !ratedIds.has(g.id)
     && !g.unowned                                  // inutile de conseiller un jeu que personne n'a
@@ -2526,10 +2596,22 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
       formatBonus += 0.075 * Math.max(0, 1 - diff / 90); // 90 min d'écart = bonus nul
     }
 
+    // malus "format déjà refusé" : on s'éloigne des fourchettes explicitement écartées
+    let formatMalus = 0;
+    if (rejPlayers.length > 0 && (g.min || g.max)) {
+      const mid = g.min && g.max ? (Number(g.min) + Number(g.max)) / 2 : (Number(g.min) || Number(g.max));
+      const close = Math.max(...rejPlayers.map((v) => Math.max(0, 1 - Math.abs(mid - v) / 2)));
+      formatMalus += 0.08 * close;
+    }
+    if (rejTimes.length > 0 && Number(g.time) > 0) {
+      const close = Math.max(...rejTimes.map((v) => Math.max(0, 1 - Math.abs(Number(g.time) - v) / 45)));
+      formatMalus += 0.08 * close;
+    }
+
     // bonus social "envie de découvrir des pairs"
     const discoverBonus = 0.1 * discoverPeerScore(g);
 
-    const score = base + formatBonus + discoverBonus;
+    const score = base + formatBonus + discoverBonus - formatMalus;
 
     // raison principale affichée à l'utilisateur (explication de la reco)
     let reason = "";
@@ -2551,7 +2633,7 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
   const DIVERSITY = 0.15;
   const selected = [];
   const remaining = [...pool];
-  while (selected.length < 10 && remaining.length > 0) {
+  while (selected.length < limit && remaining.length > 0) {
     let bestIdx = 0, bestVal = -Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const cand = remaining[i];
@@ -2567,6 +2649,18 @@ function recommendGames(games, currentUserId, dismissedIds = []) {
       if (adjusted > bestVal) { bestVal = adjusted; bestIdx = i; }
     }
     selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  // Filet de sécurité : dans une ludothèque finie, le vivier « avec signal »
+  // peut ne pas remplir les 12 cases. On complète avec les jeux les mieux notés
+  // de l'association, étiquetés comme tels pour rester honnête sur l'origine.
+  if (selected.length < limit) {
+    const already = new Set(selected.map((x) => x.game.id));
+    scored
+      .filter((x) => !already.has(x.game.id) && gameStats(x.game).count > 0)
+      .sort((a, b) => gameStats(b.game).avg - gameStats(a.game).avg)
+      .slice(0, limit - selected.length)
+      .forEach((x) => selected.push({ ...x, reason: "Bien noté par l'association" }));
   }
 
   // on renvoie les jeux enrichis de leur "raison" (pour l'affichage)
@@ -4037,6 +4131,20 @@ function GuidePage() {
               <li><b>Statut</b> — ouvre le rappel des trois statuts (membre, membre décisionnaire, compte enfant) : ce que chacun permet et ce qu'il ne permet pas. Le vôtre est encadré en couleur.</li>
             </ul>
             <p style={{ margin: 0 }}>Vos <b>notifications</b> sont désormais placées <b>juste au-dessus</b> du bouton « 🎲 Enregistrer une partie jouée » : elles se voient tout de suite, sans avoir à faire défiler la page.</p>
+          </>,
+        },
+        {
+          q: "Les suggestions de jeux : le cœur, la croix, et ce que le site en apprend",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, la section <b>Suggestions</b> propose désormais <b>12 jeux</b> (deux rangées de six sur grand écran). Ils sont choisis d'après vos notes, les goûts des membres qui notent comme vous, vos mécaniques et formats favoris, et les envies de découverte de la bande. Une étiquette turquoise dit toujours <i>pourquoi</i> le jeu vous est proposé.</p>
+            <p style={{ margin: "0 0 8px" }}>Deux boutons sur chaque vignette :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>Le <b>cœur</b> enregistre une <b>envie de découvrir</b>. C'est le signal le plus utile : il prévient les propriétaires du jeu, il compte pour le composeur de tablée, et il oriente aussi les suggestions des membres proches de vous.</li>
+              <li>La <b>croix</b> écarte le jeu — mais elle vous demande d'abord <b>pourquoi</b>, en un seul tap.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}><b>Le motif compte vraiment.</b> « Les mécaniques ne me tentent pas » éloigne les jeux du même genre ; « le format ne me convient pas » éloigne cette fourchette de joueurs et cette durée. À l'inverse, « je le connais déjà » et « le thème ne m'attire pas » <b>n'apprennent rien</b> au moteur : le jeu disparaît, vos goûts restent intacts. C'est voulu — traiter « je connais » comme un rejet reviendrait à fuir des jeux qui vous plaisaient.</p>
+            <p style={{ margin: "0 0 8px" }}><b>« Pas maintenant »</b> ne masque que <b>90 jours</b> : le jeu revient tout seul après. Et si vous choisissez <b>« j'y ai déjà joué, je n'ai pas aimé »</b>, la fiche du jeu s'ouvre aussitôt : une <b>note</b> vaut bien mieux qu'un rejet, c'est le signal le plus fort dont dispose le site.</p>
+            <p style={{ margin: 0 }}><b>Rien n'est irréversible.</b> Sous la grille, le lien « <i>N suggestions masquées — revoir</i> » liste tout ce que vous avez écarté, avec le motif et la date, et permet de <b>réafficher</b> un jeu d'un clic. Utile : dans une ludothèque qui n'est pas infinie, à force d'écarter on finit par ne plus rien recevoir. Vos motifs sont <b>strictement privés</b> — aucun autre membre, administrateur compris, ne les voit.</p>
           </>,
         },
       ],
@@ -12337,12 +12445,72 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   );
 }
 
+/* Fenetre « Pourquoi l'ecarter ? » -- un seul ecran, un seul tap.
+   Deux ecrans successifs par croix, c'est de la friction : les membres
+   fermeraient sans repondre, et l'on n'apprendrait rien. */
+function RecoFeedbackModal({ game, onClose, onPick }) {
+  return (
+    <Modal open onClose={onClose} title="Pourquoi l'écarter ?" width={520}>
+      <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        <b style={{ color: C.navy }}>{game.name}</b> va disparaître de vos suggestions.
+        Votre réponse décide de ce que le site en retient — et reste privée.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+        {RECO_REASONS.map((r) => (
+          <button key={r.key} type="button" onClick={() => onPick(r)}
+            style={{ textAlign: "left", padding: "11px 14px", borderRadius: 12, cursor: "pointer",
+              border: "1.5px solid #e6dcc9", background: "#fff", font: "inherit", minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{r.label}</span>
+            <span style={{ display: "block", fontSize: 12, color: "#9c8d79", marginTop: 2, lineHeight: 1.4 }}>{r.hint}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+/* Fenetre « Suggestions masquees » -- indispensable : dans une ludotheque
+   finie, un membre assidu vide son vivier en quelques mois et n'a plus aucune
+   suggestion, sans comprendre pourquoi. Il faut pouvoir revenir en arriere. */
+function HiddenRecosModal({ rows, games, onClose, onRestore }) {
+  const nameOf = (id) => (games || []).find((g) => g.id === id)?.name || "Jeu retiré";
+  const sorted = [...rows].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  return (
+    <Modal open onClose={onClose} title="Suggestions masquées" width={560}>
+      <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        Ces jeux ne vous sont plus proposés. Les réafficher les remet dans le circuit
+        et efface ce que le moteur en avait retenu.
+      </p>
+      {sorted.length === 0 ? (
+        <EmptyHint icon={Sparkles} text="Aucune suggestion masquée." />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+          {sorted.map((d) => (
+            <div key={d.gameId} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(26,58,92,.04)", borderRadius: 11, padding: "9px 13px" }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflowWrap: "anywhere" }}>{nameOf(d.gameId)}</span>
+                <span style={{ display: "block", fontSize: 12, color: "#9c8d79", marginTop: 1 }}>
+                  {RECO_REASON_LABEL(d.reason)}
+                  {d.snoozeUntil ? ` · revient le ${new Date(d.snoozeUntil).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}` : ""}
+                </span>
+              </span>
+              <Btn size="sm" variant="soft" onClick={() => onRestore(d.gameId)}>Réafficher</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedIds, dismissReco, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
   const [statPanel, setStatPanel] = useState(null); // "ext" | "rated" | "status" — fenetre ouverte depuis les tuiles
+  const [recoFeedback, setRecoFeedback] = useState(null); // jeu dont on demande le motif de rejet
+  const [showHiddenRecos, setShowHiddenRecos] = useState(false);
   const ludoAnchorRef = useRef(null);               // ancre « Ma ludotheque » (bas de page)
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
@@ -12486,7 +12654,9 @@ function MyLudoPage({ setToast, setPage }) {
     const el = ludoAnchorRef.current;
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const recommendations = useMemo(() => recommendGames(games, currentUser?.id, dismissedIds), [games, currentUser, dismissedIds]);
+  const recommendations = useMemo(() => recommendGames(games, currentUser?.id, dismissedRecos, 12), [games, currentUser, dismissedRecos]);
+  // Seuls les rejets encore actifs sont proposables à la restauration.
+  const hiddenRecos = useMemo(() => (dismissedRecos || []).filter((d) => isRecoDismissalActive(d)), [dismissedRecos]);
 
   const exportExcel = async () => {
     // Chargement à la demande de la lib XLSX (≈ 200 ko) : on ne paie pas son coût au démarrage,
@@ -12751,10 +12921,10 @@ function MyLudoPage({ setToast, setPage }) {
       </label>
 
       {/* Recommandations : jeux qui pourraient plaire */}
-      {recommendations.length > 0 && (
+      {(recommendations.length > 0 || hiddenRecos.length > 0) && (
         <div style={{ marginBottom: 32 }}>
           <SectionTitle kicker="Suggestions" title="Des jeux qui pourraient vous plaire" noMargin />
-          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "8px 0 16px" }}>D'après vos notes, les goûts des membres proches de vous, les mécaniques et formats que vous appréciez, et les envies de découverte.</p>
+          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "8px 0 16px" }}>D'après vos notes, les goûts des membres proches de vous, les mécaniques et formats que vous appréciez, et les envies de découverte. Le cœur enregistre une envie de découvrir, la croix écarte le jeu en vous demandant pourquoi.</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
             {recommendations.map((g) => {
               const st = gameStats(g);
@@ -12772,16 +12942,69 @@ function MyLudoPage({ setToast, setPage }) {
                       )}
                     </div>
                   </button>
-                  {/* Bouton "ça ne m'intéresse pas" : retire définitivement ce jeu des suggestions */}
-                  <button onClick={() => { dismissReco(g.id); setToast("Suggestion masquée — on ne vous la proposera plus."); }}
-                    title="Ça ne m'intéresse pas" style={{ position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: "50%", border: "none", background: "rgba(18,41,63,.55)", color: "#fff", cursor: "pointer", display: "grid", placeItems: "center", backdropFilter: "blur(2px)" }}>
-                    <X size={15} />
-                  </button>
+                  <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
+                    {/* Coeur : le seul signal POSITIF du moteur. Il enregistre une envie
+                        de découvrir, qui compte aussi pour les membres proches de vous. */}
+                    <button onClick={() => { toggleDiscover(g.id); setToast(`« ${g.name} » ajouté à vos envies de découverte.`); }}
+                      title="J'ai envie de le découvrir"
+                      style={{ width: 28, height: 28, borderRadius: "50%", border: "none", background: "rgba(18,41,63,.55)", color: "#fff", cursor: "pointer", display: "grid", placeItems: "center", backdropFilter: "blur(2px)" }}>
+                      <Heart size={14} />
+                    </button>
+                    {/* Croix : on demande le motif avant d'écarter — « je le connais déjà »
+                        ne doit surtout pas pénaliser les jeux du même genre. */}
+                    <button onClick={() => setRecoFeedback(g)}
+                      title="Écarter cette suggestion"
+                      style={{ width: 28, height: 28, borderRadius: "50%", border: "none", background: "rgba(18,41,63,.55)", color: "#fff", cursor: "pointer", display: "grid", placeItems: "center", backdropFilter: "blur(2px)" }}>
+                      <X size={15} />
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
+          {recommendations.length === 0 && (
+            <p style={{ fontSize: 13.5, color: "#a89a86", margin: "4px 0 0" }}>
+              Plus aucune suggestion pour l'instant — notez quelques jeux, ou réaffichez ceux que vous avez écartés.
+            </p>
+          )}
+          {hiddenRecos.length > 0 && (
+            <button type="button" onClick={() => setShowHiddenRecos(true)}
+              style={{ marginTop: 14, background: "none", border: "none", color: C.teal, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", fontFamily: "'Nunito',sans-serif", padding: 0 }}>
+              {hiddenRecos.length} suggestion{hiddenRecos.length > 1 ? "s" : ""} masquée{hiddenRecos.length > 1 ? "s" : ""} — revoir
+            </button>
+          )}
         </div>
+      )}
+
+      {recoFeedback && (
+        <RecoFeedbackModal
+          game={recoFeedback}
+          onClose={() => setRecoFeedback(null)}
+          onPick={async (r) => {
+            const g = recoFeedback;
+            setRecoFeedback(null);
+            await dismissReco(g.id, r.key);
+            if (r.key === "played_disliked") {
+              setToast("Masqué. Une note vaut mieux qu'un rejet : la fiche s'ouvre.");
+              setSelected(g.id);
+            } else if (r.key === "later") {
+              setToast("Mis de côté — il reviendra dans 90 jours.");
+            } else {
+              setToast("Suggestion masquée. Merci, ça affine les prochaines.");
+            }
+          }}
+        />
+      )}
+      {showHiddenRecos && (
+        <HiddenRecosModal
+          rows={hiddenRecos}
+          games={games}
+          onClose={() => setShowHiddenRecos(false)}
+          onRestore={async (gameId) => {
+            await restoreReco(gameId);
+            setToast("Jeu remis dans vos suggestions.");
+          }}
+        />
       )}
 
       <MyTop10Section setToast={setToast} onOpenGame={(id) => setSelected(id)} />
