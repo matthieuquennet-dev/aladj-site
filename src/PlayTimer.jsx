@@ -733,6 +733,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Session reellement suivie : sert a ignorer les evenements temps reel d'une
   // session qu'on vient de quitter (cf. changement de jeu).
   const activeSidRef = useRef(null);
+  // Miroir de la session : sert a ignorer une reponse arrivee apres coup.
+  const sessionRef = useRef(null);
 
   // (1) Chronos deja lances sur ce moment jeux : on propose de les rejoindre
   // plutot que d'en creer un deuxieme par megarde.
@@ -747,6 +749,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // (4) Enchainer un autre jeu sans quitter le chrono.
   const [qrOpen, setQrOpen] = useState(false);   // grand QR de jonction (vue tablette)
   const [nextPicker, setNextPicker] = useState(false);
+  // Changement de jeu a chaud : meme session, meme tablee, meme chrono.
+  const [swapPicker, setSwapPicker] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [nextQuery, setNextQuery] = useState('');
   const [nextHits, setNextHits] = useState([]);
@@ -917,7 +921,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // Recherche du jeu suivant.
   useEffect(() => {
-    if (!nextPicker) return undefined;
+    if (!nextPicker && !swapPicker) return undefined;
     let go = true;
     const q = nextQuery.trim();
     const tid = setTimeout(async () => {
@@ -928,7 +932,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       if (go) setNextHits(data || []);
     }, q ? 250 : 0);
     return () => { go = false; clearTimeout(tid); };
-  }, [nextPicker, nextQuery, supabase]);
+  }, [nextPicker, swapPicker, nextQuery, supabase]);
+
+  useEffect(() => { sessionRef.current = session; }, [session]);
 
   // ---- horloge live (uniquement en partie) ---------------------------
   useEffect(() => {
@@ -1126,18 +1132,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     } catch (err) { setError(err.message || String(err)); }
   };
 
-  // Un joueur qui rejoint via un code n'a pas charge la fiche du jeu :
-  // on la recupere pour connaitre le sens du score.
+  // La fiche du jeu suit toujours celle de la session en cours.
+  // On compare les IDENTIFIANTS et non « game est-il vide » : sans cela, un
+  // changement de jeu laissait l'ancienne fiche a l'ecran (voir plus haut).
   useEffect(() => {
-    if (game || !session?.game_id) return;
+    const gid = session?.game_id;
+    if (!gid || (game && game.id === gid)) return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from('games')
-        .select('id,name,play_time,image_url,score_direction').eq('id', session.game_id).single();
-      if (!cancelled && data) setGame(data);
+        .select('id,name,play_time,image_url,score_direction').eq('id', gid).single();
+      // La session a pu changer encore pendant la requete : on verifie.
+      if (!cancelled && data && data.id === (sessionRef.current?.game_id || gid)) setGame(data);
     })();
     return () => { cancelled = true; };
-  }, [game, session?.game_id]); // eslint-disable-line
+  }, [game?.id, session?.game_id]); // eslint-disable-line
 
   // Le sens du score suit la fiche du jeu (par defaut : le plus grand gagne).
   useEffect(() => {
@@ -1280,6 +1289,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       await syncEventGame(nid);         // le nouveau jeu aussi
     } catch (err) {
       setError(err.message || String(err));
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  // (2) Remplacer le jeu de la session en cours. Le serveur refuse des qu'une
+  // manche a ete archivee : les temps deja mesures appartiennent au jeu
+  // precedent, il faut alors « terminer et enchainer » pour que chacun garde
+  // sa propre partie.
+  const swapGame = async (g) => {
+    if (switching) return;
+    setSwitching(true); setError(null);
+    try {
+      const { error: e } = await supabase.rpc('aladj_set_session_game', { p_session_id: sid, p_game_id: g.id });
+      if (e) throw e;
+      setGame(g);                      // affichage immediat, sans attendre l'aller-retour
+      await refetchSession(sid);
+      await syncEventGame(sid);        // le moment jeux suit, s'il y en a un
+      setSwapPicker(false); setNextQuery(''); setNextHits([]);
+    } catch (err) {
+      const m = err.message || String(err);
+      setError(/ALADJ_ROUNDS_RECORDED/.test(m)
+        ? "Une manche est deja enregistree pour ce jeu : terminez la partie puis utilisez « enchainer un autre jeu »."
+        : /ALADJ_SESSION_DONE/.test(m) ? "Cette partie est terminee." : m);
     } finally {
       setSwitching(false);
     }
@@ -1480,15 +1513,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
         {children}
       </div>
-      {nextPicker && (
+      {(nextPicker || swapPicker) && (
         <NextGameSheet
           eventGames={eventGames}
           hits={nextHits}
           query={nextQuery}
           onQuery={setNextQuery}
           busy={switching}
-          onPick={continueWithGame}
-          onClose={() => { if (!switching) { setNextPicker(false); setNextQuery(''); } }}
+          swap={swapPicker}
+          onPick={swapPicker ? swapGame : continueWithGame}
+          onClose={() => { if (!switching) { setNextPicker(false); setSwapPicker(false); setNextQuery(''); } }}
         />
       )}
       {colorFor && (
@@ -2001,6 +2035,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
+            {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
             {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
             {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
             {isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
@@ -2186,6 +2221,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>{teamsOn ? 'Equipes' : 'Mode equipe'}</button>
+            {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
             {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
@@ -2286,7 +2322,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
 // ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
 /* Choisir le jeu suivant, sans quitter le chrono ni ressaisir les joueurs. */
-function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose }) {
+function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose, swap = false }) {
   const seen = new Set();
   const list = [];
   (eventGames || []).forEach((g) => { if (!seen.has(g.id)) { seen.add(g.id); list.push({ ...g, _fromEvent: true }); } });
@@ -2296,13 +2332,19 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
     <div onClick={busy ? undefined : onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 700, maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>🎲 On enchaîne sur quoi ?</div>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>
+            {swap ? '🔄 Finalement, on joue à quoi ?' : '🎲 On enchaîne sur quoi ?'}
+          </div>
           <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
         </div>
         <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '4px 0 14px', lineHeight: 1.55 }}>
-          Le résultat de la partie qui vient de s'achever est enregistré, puis un nouveau
-          chrono démarre avec <b>les mêmes joueurs</b>, les mêmes équipes et les mêmes couleurs.
-          Les téléphones déjà connectés basculent tout seuls.
+          {swap
+            ? <>Le jeu de la partie en cours est remplacé. <b>Rien d'autre ne bouge</b> : mêmes joueurs,
+              mêmes équipes, mêmes couleurs, et les chronos continuent de tourner — le temps de mise en
+              place déjà passé reste compté. Possible tant qu'aucune manche n'a été enregistrée.</>
+            : <>Le résultat de la partie qui vient de s'achever est enregistré, puis un nouveau
+              chrono démarre avec <b>les mêmes joueurs</b>, les mêmes équipes et les mêmes couleurs.
+              Les téléphones déjà connectés basculent tout seuls.</>}
         </p>
 
         <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Chercher un jeu…"
