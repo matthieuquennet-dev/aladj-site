@@ -860,7 +860,7 @@ function AppProvider({ children }) {
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
         fetchAllRows("game_weights", "*", ["game_id", "owner_id"]),
         fetchAllRows("event_games", "*", ["id"]),
-        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url").order("name"),
+        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url,release_date,released,vo_released").order("name"),
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
         fetchAllRows("upcoming_comments", "*", ["created_at", "id"]),
@@ -979,6 +979,12 @@ function AppProvider({ children }) {
       const ratingsCountByGame = {};
       (ratings || []).forEach((r) => { ratingsCountByGame[r.game_id] = (ratingsCountByGame[r.game_id] || 0) + 1; });
 
+      // Qui partage sa ludotheque ? Sert a n'annoncer que des jeux reellement
+      // empruntables : un proprietaire qui garde sa ludotheque privee ne doit
+      // pas apparaitre comme possesseur aux yeux des autres.
+      const shareById = {};
+      (profiles || []).forEach((p) => { shareById[p.id] = p.share_library !== false; });
+
       const allUpc = (upcRows || []).map((u) => {
         const hypes = {};
         (hypeByUpc[u.id] || []).forEach((h) => { hypes[h.user_id] = h.value; });
@@ -992,12 +998,21 @@ function AppProvider({ children }) {
           ludoGame = (gamesRows || []).find((g) => normGameName(g.name) === nu);
         }
         const ludoVotes = ludoGame ? (ratingsCountByGame[ludoGame.id] || 0) : 0;
+        // Qui possède déjà ce jeu ? On interroge la ludothèque plutôt qu'une
+        // déclaration : seuls les propriétaires confirmés comptent, et on ignore
+        // ceux qui ne partagent pas leur ludothèque.
+        const ludoOwners = ludoGame
+          ? (ownersByGame[ludoGame.id] || [])
+              .filter((o) => o.confirmed !== false && shareById[o.owner_id] !== false)
+              .map((o) => ({ id: o.owner_id, name: nameById[o.owner_id] || "Membre" }))
+          : [];
         return {
           id: u.id, name: u.name, year: u.year || "", min: u.min_players || "", max: u.max_players || "",
           time: u.play_time || "", mechanics: u.mechanics || [], desc: u.description || "", img: u.image_url || "", ludumUrl: u.ludum_url || "",
           newPrice: u.new_price != null ? Number(u.new_price) : null,
           source: u.source || "manuel", createdBy: u.created_by, createdByName: nameById[u.created_by] || "Membre",
-          ludoGameId: ludoGame ? ludoGame.id : null, ludoVotes,
+          releaseDate: u.release_date || null, released: u.released === true, voReleased: u.vo_released === true,
+          ludoGameId: ludoGame ? ludoGame.id : null, ludoVotes, ludoOwners,
           hypes, intents,
           comments: (upcCommentsByUpc[u.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
           addedAt: u.created_at ? new Date(u.created_at).getTime() : 0,
@@ -1664,6 +1679,7 @@ function AppProvider({ children }) {
       new_price: d.newPrice != null && d.newPrice !== "" ? Number(d.newPrice) : null,
       source: d.source || "manuel", created_by: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
+      release_date: d.releaseDate || null, released: !!d.released, vo_released: !!d.voReleased,
     }).select().single();
     if (error) return { error: error.message };
     await loadData();
@@ -1683,6 +1699,9 @@ function AppProvider({ children }) {
     if (patch.img !== undefined) fields.image_url = await uploadImageToStorage(patch.img || "", "upcoming");
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice != null && patch.newPrice !== "" ? Number(patch.newPrice) : null;
     if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
+    if (patch.releaseDate !== undefined) fields.release_date = patch.releaseDate || null;
+    if (patch.released !== undefined) fields.released = !!patch.released;
+    if (patch.voReleased !== undefined) fields.vo_released = !!patch.voReleased;
     // .select() pour confirmer l'écriture : un update bloqué par RLS ne renvoie pas d'erreur
     // mais ne touche aucune ligne — on le détecte ici pour éviter un faux « succès ».
     const { data, error } = await supabase.from("upcoming_games").update(fields).eq("id", id).select("id");
@@ -4536,6 +4555,27 @@ function GuidePage() {
           </>,
         },
         {
+          q: "« À venir » : sorties, hype et intentions d'achat",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Chaque fiche peut porter une <b>date de sortie en France</b>. Selon le cas, une pastille apparaît sur la vignette comme sur la fiche :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b style={{ color: C.amber }}>📅 Compte à rebours</b> quand la sortie approche (« dans 12 jours »), puis la date complète si elle est lointaine.</li>
+              <li><b style={{ color: C.teal }}>✓ Jeu disponible</b> dès que la date est passée, ou si la case <b>« déjà sorti »</b> est cochée — pratique quand on ne connaît pas la date exacte.</li>
+              <li><b style={{ color: C.purple }}>🌐 Sorti en VO</b> pour un jeu disponible à l'étranger mais pas encore traduit, tant qu'aucune date française n'est annoncée.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>Le <b>classement par défaut</b> suit cette logique : d'abord les sorties à venir (la plus proche en tête), puis les jeux déjà disponibles, puis les VO. La <b>hype</b> reste accessible dans le menu de tri, aux côtés d'un classement par <b>intention d'achat</b> : chaque réponse vaut des points — précommandé 8, à la sortie 6, certainement 4, en promotion 3, pour compléter une commande 2, peu probable 1, jamais 0 — et <b>chaque membre qui possède déjà le jeu vaut 10 points</b>. Les fiches les plus convoitées remontent ainsi d'elles-mêmes.</p>
+            <p style={{ margin: 0 }}>Enfin, deux encarts se repèrent d'un coup d'œil : <b style={{ color: C.teal }}>📦 déjà dans leur ludothèque</b> (lu directement dans la ludothèque de l'association : rien à déclarer, le bouton « Je l'ai ! » suffit — et vous savez à qui l'emprunter) et <b style={{ color: "#8a6a1f" }}>🎯 intéressés par l'achat</b> (tous sauf « peu probable » et « jamais »), de quoi grouper une commande. Les compteurs figurent aussi sur les vignettes.</p>
+          </>,
+        },
+        {
+          q: "Réagir à un commentaire",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque commentaire du site — fiches de jeux, moments jeux, idées et votes de l'espace décisionnaire — quatre réactions sont proposées : <b>❤️ j'adore</b>, <b>👍 d'accord</b>, <b>👎 pas d'accord</b> et <b>💔 ça me fend le cœur</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Une seule réaction par personne et par commentaire : en choisir une autre remplace la précédente, et recliquer sur la même la retire. Le compteur à côté de chaque symbole indique combien de membres l'ont choisi.</p>
+            <p style={{ margin: 0 }}>Le lien <b>« qui ? »</b> déplie la liste des personnes ayant réagi, classées par symbole. Rien n'est anonyme ici, contrairement aux votes de l'espace décisionnaire : c'est une conversation, pas un scrutin.</p>
+          </>,
+        },
+        {
           q: "Retirer une partie de mon historique",
           a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, ouvrez un jeu puis la corbeille à côté d'une partie : elle quitte votre historique et vos statistiques (les autres joueurs ne sont pas affectés). Le site <b>retient votre décision</b> : la partie ne reviendra plus vous demander « as-tu joué à ce jeu ? » dans « Parties à confirmer ». Auparavant, une partie retirée à la main réapparaîssait aussitôt en suggestion — ce n'est plus le cas.</p>,
         },
@@ -4570,7 +4610,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>C'est la façon de faire quand une tablette reste posée au milieu de la table toute la soirée. À la fin d'une partie, l'hôte dispose de trois sorties : <b>Fermer sans enregistrer</b>, <b>Enregistrer et quitter</b>, ou <b>🎲 Enregistrer et enchaîner un autre jeu</b>.</p>
             <p style={{ margin: "0 0 8px" }}>La troisième enregistre le résultat, puis ouvre la liste des jeux — ceux du moment jeux d'abord, puis toute la ludothèque par recherche. Un clic, et un nouveau chrono démarre avec <b>les mêmes joueurs, les mêmes équipes et les mêmes couleurs</b>. Plus rien à ressaisir.</p>
-            <p style={{ margin: 0 }}>Et surtout : <b>tous les téléphones déjà connectés basculent tout seuls</b> sur le nouveau jeu. Personne n'a à rescanner un code ni à relancer quoi que ce soit — l'écran de chacun suit l'hôte.</p>
+            <p style={{ margin: "0 0 8px" }}>Et surtout : <b>tous les téléphones déjà connectés basculent tout seuls</b> sur le nouveau jeu. Personne n'a à rescanner un code ni à relancer quoi que ce soit — l'écran de chacun suit l'hôte. Vous repassez par l'écran de préparation, avec la tablée précédente déjà en place : c'est là qu'on retire celui qui rentre et qu'on ajoute celui qui arrive.</p>
+            <p style={{ margin: 0 }}><b>🔄 Changer de jeu en cours de route.</b> La boîte est ouverte, les règles expliquées, et finalement la tablée part sur autre chose ? Le bouton <b>« Changer de jeu »</b> remplace le jeu de la partie en cours sans rien perturber : mêmes joueurs, mêmes équipes, mêmes couleurs, et les chronos continuent de tourner — le temps de mise en place déjà passé reste compté. C'est possible tant qu'<b>aucune manche n'a été enregistrée</b> ; au-delà, utilisez plutôt « terminer et enchaîner », pour que chaque jeu garde sa propre partie et ses propres temps.</p>
           </>,
         },
         {
@@ -5748,6 +5789,7 @@ function IdeaBox({ setToast }) {
 /* ---- Commentaires d'une idee ---------------------------------------------- */
 function IdeaComments({ ideaId, rows, onChange, nameOf }) {
   const { currentUser, askConfirm } = useApp();
+  const reacts = useReactions("idea", (rows || []).map((c) => c.id));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -5802,6 +5844,7 @@ function IdeaComments({ ideaId, rows, onChange, nameOf }) {
                 <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
                   {c.content}
                   {c.updated_at && <span style={{ fontSize: 11.5, color: "#9c8d79", fontStyle: "italic" }}> (modifié)</span>}
+                  <CommentReactions commentId={c.id} rows={reacts.rows} onReact={reacts.react} compact />
                 </div>
               )}
             </div>
@@ -6143,6 +6186,7 @@ function PollCard({ poll, options, myOptionIds, st, result, users, comments = []
    --------------------------------------------------------------------------- */
 function PollComments({ pollId, rows, users, onChange, closedNow }) {
   const { currentUser, askConfirm } = useApp();
+  const reacts = useReactions("poll", (rows || []).map((c) => c.id));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -6210,6 +6254,7 @@ function PollComments({ pollId, rows, users, onChange, closedNow }) {
                 <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
                   {c.content}
                   {c.updated_at && <span style={{ fontSize: 11.5, color: "#9c8d79", fontStyle: "italic" }}> (modifié)</span>}
+                  <CommentReactions commentId={c.id} rows={reacts.rows} onReact={reacts.react} compact />
                 </div>
               )}
             </div>
@@ -7013,6 +7058,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
   const canManage = currentUser && (currentUser.id === e.hostId || currentUser.admin);
   // Jeux joues : tous les participants du moment, et les administrateurs.
   const canEditPlayed = !!currentUser && (!!isParticipant || currentUser.admin === true);
+  const eventReacts = useReactions("event", (e.comments || []).map((c) => c.id));
   // Inscriptions closes (limite fixee par l'organisateur, ou 48 h apres le debut).
   const signupClosed = isSignupClosed(e);
   const signupCloseDate = signupCloseAt(e);
@@ -7269,7 +7315,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
                         </div>
                       </div>
                     ) : (
-                      <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+                      <>                      <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+                      <CommentReactions commentId={c.id} rows={eventReacts.rows} onReact={eventReacts.react} />
+                      </>
                     )}
                   </div>
                 );
@@ -8862,8 +8910,118 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
 }
 
 /* ---- Section commentaires d'une fiche de jeu (signés, modifiables) ---- */
+/* -----------------------------------------------------------------------------
+   REACTIONS AUX COMMENTAIRES
+   Quatre reactions, une seule par personne et par commentaire. Recliquer sur la
+   meme la retire. Tout le monde voit qui a mis quoi : c'est assume, ce n'est
+   pas un vote a bulletin secret.
+
+   Le composant est le meme partout (fiches de jeux, moments jeux, idees, votes) :
+   `kind` designe simplement le type de commentaire vise. Les reactions sont
+   chargees une fois par liste de commentaires, jamais commentaire par
+   commentaire -- sinon une discussion de vingt messages ferait vingt requetes.
+   ----------------------------------------------------------------------------- */
+const REACTIONS = [
+  { key: "heart",  emoji: "❤️", label: "J'adore" },
+  { key: "up",     emoji: "👍", label: "D'accord" },
+  { key: "down",   emoji: "👎", label: "Pas d'accord" },
+  { key: "broken", emoji: "💔", label: "Ça me fend le cœur" },
+];
+
+/* Charge les reactions d'un lot de commentaires et expose de quoi les modifier. */
+function useReactions(kind, commentIds) {
+  const { currentUser } = useApp();
+  const [rows, setRows] = useState([]);
+  const idsKey = (commentIds || []).slice().sort().join(",");
+
+  const load = useCallback(async () => {
+    const ids = idsKey ? idsKey.split(",") : [];
+    if (!ids.length) { setRows([]); return; }
+    const { data } = await supabase.from("comment_reactions")
+      .select("comment_id,user_id,reaction").eq("kind", kind).in("comment_id", ids);
+    setRows(data || []);
+  }, [kind, idsKey]);
+  useEffect(() => { load(); }, [load]);
+
+  const react = useCallback(async (commentId, reaction) => {
+    if (!currentUser) return;
+    // Mise a jour optimiste : le retour visuel doit etre immediat.
+    setRows((rs) => {
+      const mine = rs.find((r) => r.comment_id === commentId && r.user_id === currentUser.id);
+      const others = rs.filter((r) => !(r.comment_id === commentId && r.user_id === currentUser.id));
+      if (mine && mine.reaction === reaction) return others;
+      return [...others, { comment_id: commentId, user_id: currentUser.id, reaction }];
+    });
+    await supabase.rpc("aladj_react", { p_kind: kind, p_comment_id: commentId, p_reaction: reaction });
+    await load();
+  }, [kind, currentUser, load]);
+
+  return { rows, react };
+}
+
+/* Barre de reactions sous un commentaire. */
+function CommentReactions({ commentId, rows, onReact, compact }) {
+  const { currentUser, users } = useApp();
+  const [open, setOpen] = useState(false);
+  const mine = rows.find((r) => r.comment_id === commentId && r.user_id === currentUser?.id);
+  const here = rows.filter((r) => r.comment_id === commentId);
+  const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
+  const total = here.length;
+
+  return (
+    <div style={{ marginTop: compact ? 4 : 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+        {REACTIONS.map((r) => {
+          const n = here.filter((x) => x.reaction === r.key).length;
+          const on = mine?.reaction === r.key;
+          if (!currentUser && n === 0) return null;
+          return (
+            <button key={r.key} type="button" disabled={!currentUser}
+              onClick={() => onReact(commentId, r.key)}
+              title={currentUser ? (on ? `Retirer « ${r.label} »` : r.label) : r.label}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 3,
+                background: on ? "rgba(232,163,23,.16)" : "transparent",
+                border: `1px solid ${on ? C.amber : "#e6dcc9"}`, borderRadius: 999,
+                padding: n > 0 ? "2px 8px" : "2px 7px", cursor: currentUser ? "pointer" : "default",
+                fontSize: 13, lineHeight: 1.4, opacity: !currentUser || n > 0 || on ? 1 : .55,
+              }}>
+              <span style={{ fontSize: 13 }}>{r.emoji}</span>
+              {n > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, color: on ? "#8a6a1f" : "#8a7c6a" }}>{n}</span>}
+            </button>
+          );
+        })}
+        {total > 0 && (
+          <button type="button" onClick={() => setOpen((v) => !v)}
+            title="Voir qui a réagi"
+            style={{ background: "none", border: "none", padding: "0 2px", cursor: "pointer", fontSize: 11.5, color: C.teal, textDecoration: "underline", textUnderlineOffset: 2, fontFamily: "'Nunito',sans-serif" }}>
+            {open ? "masquer" : `qui ?`}
+          </button>
+        )}
+      </div>
+      {open && total > 0 && (
+        <div style={{ marginTop: 6, background: "rgba(26,58,92,.04)", borderRadius: 10, padding: "7px 10px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 3 }}>
+          {REACTIONS.map((r) => {
+            const who = here.filter((x) => x.reaction === r.key);
+            if (!who.length) return null;
+            return (
+              <div key={r.key} style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 12.5, color: "#5e5346" }}>
+                <span style={{ flexShrink: 0 }}>{r.emoji}</span>
+                <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                  {who.map((x) => (x.user_id === currentUser?.id ? "vous" : nameOf(x.user_id))).join(", ")}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameComments({ g, onAuth, onClose }) {
   const { currentUser, addGameComment, updateGameComment, removeGameComment, askConfirm } = useApp();
+  const gameReacts = useReactions("game", (g.comments || []).map((c) => c.id));
   const [text, setText] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
@@ -8907,7 +9065,9 @@ function GameComments({ g, onAuth, onClose }) {
                   </div>
                 </div>
               ) : (
-                <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+                <>                <div style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5, whiteSpace: "pre-line" }}>{c.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}</div>
+                <CommentReactions commentId={c.id} rows={gameReacts.rows} onReact={gameReacts.react} />
+                </>
               )}
             </div>
           );
@@ -8964,15 +9124,92 @@ const HYPE_LABELS = {
 };
 
 // Labels pour les 7 intentions d'achat (du plus engagé au moins engagé)
+// Le score sert au classement « intention d'achat » : plus l'association est
+// proche de l'achat, plus la fiche remonte. Les valeurs sont volontairement
+// espacees en haut (10 / 8 / 6) pour qu'un seul acheteur pese davantage que
+// plusieurs « peut-etre ».
 const INTENT_OPTIONS = [
-  { key: "preorder",   label: "Précommandé",               color: "#b5283a" },
-  { key: "release",    label: "À la sortie",               color: "#e87317" },
-  { key: "certain",    label: "Certainement",              color: "#e8a317" },
-  { key: "promo",      label: "En promotion",              color: "#c5a823" },
-  { key: "completion", label: "Pour compléter une commande", color: "#7ab8a8" },
-  { key: "unlikely",   label: "Peu probable",              color: "#8e8275" },
-  { key: "never",      label: "Jamais",                    color: "#6e6256" },
+  { key: "preorder",   label: "Précommandé",               color: "#b5283a", score: 8 },
+  { key: "release",    label: "À la sortie",               color: "#e87317", score: 6 },
+  { key: "certain",    label: "Certainement",              color: "#e8a317", score: 4 },
+  { key: "promo",      label: "En promotion",              color: "#c5a823", score: 3 },
+  { key: "completion", label: "Pour compléter une commande", color: "#7ab8a8", score: 2 },
+  { key: "unlikely",   label: "Peu probable",              color: "#8e8275", score: 1 },
+  { key: "never",      label: "Jamais",                    color: "#6e6256", score: 0 },
 ];
+// Sont « intéressés » tous ceux qui ne se sont pas désistés.
+const INTENT_INTERESTED = ["preorder", "release", "certain", "promo", "completion"];
+const intentScoreOf = (k) => (INTENT_OPTIONS.find((o) => o.key === k) || {}).score || 0;
+// Un jeu déjà possédé vaut le maximum. On ne le déclare pas : on le lit dans
+// la ludothèque, où le bouton « Je l'ai ! » l'a déjà inscrit.
+const OWNED_SCORE = 10;
+
+/* Somme des intentions d'achat d'une fiche, possesseurs réels compris. */
+function intentScore(u) {
+  const declared = Object.values(u.intents || {}).reduce((a, k) => a + intentScoreOf(k), 0);
+  return declared + OWNED_SCORE * (u.ludoOwners || []).length;
+}
+
+/* Etat de sortie d'une fiche, deduit des trois champs (jamais stocke).
+   Renvoie { kind, label, color, days } :
+     'soon'      une date de sortie est annoncée et pas encore atteinte
+     'available' la date est passée, ou « déjà sorti » est coché
+     'vo'        pas de sortie VF connue, mais disponible en VO
+     'unknown'   on ne sait rien */
+function releaseState(u) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = u.releaseDate ? new Date(u.releaseDate + "T00:00:00") : null;
+  const valid = d && !isNaN(d.getTime());
+
+  if (u.released || (valid && d <= today)) {
+    return { kind: "available", label: "Jeu disponible", color: C.teal, days: null, date: valid ? d : null };
+  }
+  if (valid) {
+    const days = Math.ceil((d - today) / 86400000);
+    return {
+      kind: "soon", color: C.amber, days, date: d,
+      label: days === 0 ? "Sortie aujourd'hui" : days === 1 ? "Sortie demain" : days <= 30 ? `Dans ${days} jours` : formatReleaseDate(d),
+    };
+  }
+  if (u.voReleased) {
+    return { kind: "vo", label: "Sorti en VO", color: C.purple, days: null, date: null };
+  }
+  return { kind: "unknown", label: "", color: "#9c8d79", days: null, date: null };
+}
+
+/* « 14 mars 2026 », ou « mars 2026 » quand la date est lointaine. */
+function formatReleaseDate(d) {
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+}
+
+/* Ordre d'affichage par defaut : ce qui arrive d'abord (du plus proche au plus
+   lointain), puis ce qui est disponible, puis les VO, puis le reste. */
+const RELEASE_RANK = { soon: 0, available: 1, vo: 2, unknown: 3 };
+function compareByRelease(a, b) {
+  const ra = releaseState(a), rb = releaseState(b);
+  const dr = RELEASE_RANK[ra.kind] - RELEASE_RANK[rb.kind];
+  if (dr !== 0) return dr;
+  if (ra.kind === "soon") return ra.days - rb.days;                       // le plus proche d'abord
+  if (ra.kind === "available" && ra.date && rb.date) return rb.date - ra.date; // le plus recemment sorti
+  return a.name.localeCompare(b.name, "fr");
+}
+
+/* Pastille d'etat, utilisee sur la vignette comme sur la fiche. */
+function ReleaseBadge({ u, big }) {
+  const st = releaseState(u);
+  if (st.kind === "unknown") return null;
+  return (
+    <span title={st.date ? formatReleaseDate(st.date) : st.label}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4, background: st.color, color: "#fff",
+        borderRadius: 999, padding: big ? "5px 13px" : "3px 10px",
+        fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: big ? 13.5 : 11.5,
+        boxShadow: "0 2px 6px rgba(0,0,0,.18)", whiteSpace: "nowrap",
+      }}>
+      {st.kind === "available" ? "✓" : st.kind === "vo" ? "🌐" : "📅"} {st.label}
+    </span>
+  );
+}
 
 /* ---- Thermomètre cliquable (1 à 5) ---- */
 function Thermometer({ value = 0, onRate, readOnly = false, size = 22 }) {
@@ -9026,16 +9263,33 @@ function UpcomingCard({ u, onOpen, currentUserId }) {
             🌡️ {avg.toFixed(1).replace(".", ",")}
           </div>
         )}
+        <div style={{ position: "absolute", bottom: 10, left: 10 }}><ReleaseBadge u={u} /></div>
       </div>
       <div style={{ padding: 14 }}>
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 4px", lineHeight: 1.2 }}>{u.name}</h3>
-        {u.year && <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sortie : {u.year}</p>}
+        {(() => {
+          const st = releaseState(u);
+          if (st.kind === "soon" && st.date) return <p style={{ fontSize: 12, color: C.amber, fontWeight: 700, margin: "0 0 8px" }}>Sortie le {formatReleaseDate(st.date)}</p>;
+          if (st.kind === "available" && st.date) return <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sorti le {formatReleaseDate(st.date)}</p>;
+          return u.year ? <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sortie : {u.year}</p> : null;
+        })()}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 12, color: "#5e5346" }}>
           {u.min && <span>{u.min}{u.max && u.max !== u.min ? `-${u.max}` : ""} j.</span>}
           {u.time && <span>· {u.time} min</span>}
           {u.newPrice != null && <span>· {u.newPrice.toFixed(2).replace(".", ",")} €</span>}
         </div>
-        {count > 0 && <span style={{ display: "block", marginTop: 8, fontSize: 11.5, color: "#8a7c6a", fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>{count} vote{count > 1 ? "s" : ""} de hype</span>}
+        {(() => {
+          const owners = (u.ludoOwners || []).length;
+          const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length;
+          if (!owners && !wanted && !count) return null;
+          return (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8, fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
+              {owners > 0 && <span title={`${owners} membre${owners > 1 ? "s l'ont" : " l'a"} déjà`} style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
+              {wanted > 0 && <span title={`${wanted} membre${wanted > 1 ? "s intéressés" : " intéressé"} par l'achat`} style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 9px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
+              {count > 0 && <span style={{ color: "#8a7c6a" }}>{count} vote{count > 1 ? "s" : ""} de hype</span>}
+            </div>
+          );
+        })()}
       </div>
     </button>
   );
@@ -9046,7 +9300,9 @@ function UpcomingPage({ onAuth, setToast }) {
   const { upcoming, users, currentUser } = useApp();
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
-  const [sort, setSort] = useState("hype");
+  // Par defaut on classe par date de sortie : c'est l'information qu'on vient
+  // chercher sur cette page. La hype devient un tri parmi d'autres.
+  const [sort, setSort] = useState("release");
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
 
@@ -9065,7 +9321,9 @@ function UpcomingPage({ onAuth, setToast }) {
       const st = upcomingStats(u);
       return { ...u, _avg: st.avg, _count: st.count };
     });
-    if (sort === "hype") list.sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"));
+    if (sort === "release") list.sort(compareByRelease);
+    else if (sort === "intent") list.sort((a, b) => intentScore(b) - intentScore(a) || compareByRelease(a, b));
+    else if (sort === "hype") list.sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"));
     else if (sort === "alpha") list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "year") list.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
     else if (sort === "recent") list.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
@@ -9087,7 +9345,7 @@ function UpcomingPage({ onAuth, setToast }) {
         <div>
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 32, margin: 0 }}>À venir</h1>
           <p style={{ color: "#6e6256", fontSize: 14.5, margin: "6px 0 0", maxWidth: 560 }}>
-            Les jeux qui viennent de sortir ou qui arrivent bientôt. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi.
+            Les jeux qui viennent de sortir ou qui arrivent bientôt, classés par <b>date de sortie</b>. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi, et qui l'a déjà.
           </p>
         </div>
         {currentUser
@@ -9107,6 +9365,8 @@ function UpcomingPage({ onAuth, setToast }) {
               {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              <option value="release">Date de sortie</option>
+              <option value="intent">Intention d'achat</option>
               <option value="hype">Hype</option>
               <option value="alpha">A → Z</option>
               <option value="year">Année (récent)</option>
@@ -9198,7 +9458,7 @@ function AddUpcomingFlow({ onClose, setToast }) {
 /* ---- Formulaire manuel pour une fiche À venir ---- */
 function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
   const { upcoming, games, currentUser } = useApp();
-  const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "", ludumUrl: "" });
+  const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "", ludumUrl: "", releaseDate: "", released: false, voReleased: false });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
@@ -9212,7 +9472,8 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
     if (busy) return;
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
     setBusy(true);
-    await onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice });
+    await onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice,
+      releaseDate: f.releaseDate || null, released: !!f.released, voReleased: !!f.voReleased });
   };
 
   return (
@@ -9249,6 +9510,25 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Année de sortie"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} placeholder="2026" /></Field>
         <Field label="Prix neuf (€)"><TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} placeholder="50" /></Field>
+      </div>
+      {/* Sortie : date précise si on la connaît, sinon les deux cases suffisent */}
+      <div style={{ background: "rgba(232,163,23,.07)", border: `1px solid ${C.amber}33`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.navy, marginBottom: 8 }}>Disponibilité</span>
+        <Field label="Date de sortie en France" hint="Laissez vide si elle n'est pas encore annoncée.">
+          <TextInput type="date" value={f.releaseDate} onChange={(e) => setF({ ...f, releaseDate: e.target.value })} />
+        </Field>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginBottom: 7 }}>
+          <input type="checkbox" checked={f.released} onChange={(e) => setF({ ...f, released: e.target.checked })} style={{ marginTop: 3, accentColor: C.teal }} />
+          <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+            <b>Déjà sorti</b> — le jeu est disponible en boutique. À cocher quand la date exacte vous échappe : la mention « Jeu disponible » apparaîtra quand même.
+          </span>
+        </label>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer" }}>
+          <input type="checkbox" checked={f.voReleased} onChange={(e) => setF({ ...f, voReleased: e.target.checked })} style={{ marginTop: 3, accentColor: C.purple }} />
+          <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+            <b>Sorti en VO</b> — disponible à l'étranger, pas encore traduit. Sans date française, la fiche affichera « Sorti en VO ».
+          </span>
+        </label>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} placeholder="2" /></Field>
@@ -9324,6 +9604,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
             {u.min && <Badge color={C.teal}><Users size={12} /> {u.min}{u.max && u.max !== u.min ? `–${u.max}` : ""} joueurs</Badge>}
             {u.time && <Badge color={C.amber}><Clock size={12} /> {u.time} min</Badge>}
             {u.newPrice != null && <Badge color={C.purple}><Euro size={12} /> {u.newPrice.toFixed(2).replace(".", ",")} €</Badge>}
+            <ReleaseBadge u={u} big />
             {u.source && u.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {u.source}</Badge>}
           </div>
           {u.mechanics && u.mechanics.length > 0 && (
@@ -9397,6 +9678,35 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
         ) : (
           <Btn size="sm" variant="purple" onClick={() => onAuth("login")} style={{ marginBottom: 14 }}><LogIn size={14} /> Se connecter</Btn>
         )}
+        {/* Coup d'oeil : qui le veut, qui l'a deja */}
+        {(() => {
+          const nom = (uid) => users.find((m) => m.id === uid)?.name || "Membre";
+          const ownerIds = (u.ludoOwners || []).map((o) => o.id);
+          const owners = (u.ludoOwners || []).map((o) => o.name);
+          // Un propriétaire n'est plus un acheteur potentiel : on l'écarte des
+          // intéressés, même s'il avait voté avant de l'acquérir.
+          const wanted = Object.entries(u.intents || {})
+            .filter(([uid, v]) => INTENT_INTERESTED.includes(v) && !ownerIds.includes(uid))
+            .map(([uid]) => nom(uid));
+          if (!owners.length && !wanted.length) return null;
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, marginBottom: 14 }}>
+              {owners.length > 0 && (
+                <div style={{ background: "rgba(30,138,138,.1)", border: `1px solid ${C.teal}44`, borderRadius: 11, padding: "9px 12px", fontSize: 13, color: "#5e5346", lineHeight: 1.5 }}>
+                  <b style={{ color: C.teal }}>📦 Déjà dans leur ludothèque ({owners.length})</b><br />{owners.join(", ")}
+                  <span style={{ display: "block", fontSize: 12, color: "#9c8d79", marginTop: 3 }}>D'après la ludothèque de l'association — rien à déclarer, le bouton « Je l'ai ! » suffit.</span>
+                </div>
+              )}
+              {wanted.length > 0 && (
+                <div style={{ background: "rgba(232,163,23,.12)", border: `1px solid ${C.amber}55`, borderRadius: 11, padding: "9px 12px", fontSize: 13, color: "#5e5346", lineHeight: 1.5 }}>
+                  <b style={{ color: "#8a6a1f" }}>🎯 Intéressés par l'achat ({wanted.length})</b><br />{wanted.join(", ")}
+                  <span style={{ display: "block", fontSize: 12, color: "#9c8d79", marginTop: 3 }}>De quoi grouper une commande, ou savoir à qui l'emprunter.</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ borderTop: "1px solid rgba(107,58,122,.15)", paddingTop: 12 }}>
           <div style={{ fontSize: 13, color: "#5e5346", marginBottom: 8, fontWeight: 600 }}>Intentions des membres</div>
           {intentsByOption.every((o) => o.members.length === 0) && <span style={{ fontSize: 13, color: "#a89a86" }}>Personne ne s'est encore prononcé.</span>}
@@ -9476,6 +9786,7 @@ function EditUpcomingModal({ u, onClose, setToast }) {
     name: u.name || "", year: u.year || "", min: u.min || "", max: u.max || "", time: u.time || "",
     mechanics: u.mechanics || [], desc: u.desc || "", img: u.img || "", ludumUrl: u.ludumUrl || "",
     newPrice: u.newPrice != null ? String(u.newPrice) : "",
+    releaseDate: u.releaseDate || "", released: !!u.released, voReleased: !!u.voReleased,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -9488,6 +9799,7 @@ function EditUpcomingModal({ u, onClose, setToast }) {
       name: f.name, year: Number(f.year) || null, min: Number(f.min) || null, max: Number(f.max) || null,
       time: Number(f.time) || null, mechanics: f.mechanics, desc: f.desc, img: f.img, ludumUrl: f.ludumUrl,
       newPrice: f.newPrice === "" ? null : Number(f.newPrice),
+      releaseDate: f.releaseDate || null, released: !!f.released, voReleased: !!f.voReleased,
     });
     setBusy(false);
     if (res?.error) { setErr(res.error); return; }
@@ -9502,6 +9814,25 @@ function EditUpcomingModal({ u, onClose, setToast }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Année de sortie"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
         <Field label="Prix neuf (€)"><TextInput type="number" step="0.01" value={f.newPrice} onChange={(e) => setF({ ...f, newPrice: e.target.value })} /></Field>
+      </div>
+      {/* Sortie : date précise si on la connaît, sinon les deux cases suffisent */}
+      <div style={{ background: "rgba(232,163,23,.07)", border: `1px solid ${C.amber}33`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.navy, marginBottom: 8 }}>Disponibilité</span>
+        <Field label="Date de sortie en France" hint="Laissez vide si elle n'est pas encore annoncée.">
+          <TextInput type="date" value={f.releaseDate} onChange={(e) => setF({ ...f, releaseDate: e.target.value })} />
+        </Field>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginBottom: 7 }}>
+          <input type="checkbox" checked={f.released} onChange={(e) => setF({ ...f, released: e.target.checked })} style={{ marginTop: 3, accentColor: C.teal }} />
+          <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+            <b>Déjà sorti</b> — le jeu est disponible en boutique. À cocher quand la date exacte vous échappe : la mention « Jeu disponible » apparaîtra quand même.
+          </span>
+        </label>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer" }}>
+          <input type="checkbox" checked={f.voReleased} onChange={(e) => setF({ ...f, voReleased: e.target.checked })} style={{ marginTop: 3, accentColor: C.purple }} />
+          <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+            <b>Sorti en VO</b> — disponible à l'étranger, pas encore traduit. Sans date française, la fiche affichera « Sorti en VO ».
+          </span>
+        </label>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
@@ -11899,6 +12230,9 @@ function MembershipModal({ onClose, setToast }) {
             </div>
           ))}
 
+          <a href={`https://www.paypal.com/paypalme/`} target="_blank" rel="noopener noreferrer"
+            style={{ display: "none" }}>PayPal</a>
+
           <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 13.5, color: "#5e5346", lineHeight: 1.55, marginTop: 4 }}>
             <input type="checkbox" checked={ppOk} onChange={(e) => setPpOk(e.target.checked)} style={{ marginTop: 3 }} />
             <span>J'ai envoyé (ou j'envoie dans la foulée) <b>{COTISATION_EUR} €</b> par <b>PayPal entre proches</b> à {PAYPAL_TRESORIER_NOM}, avec le motif indiqué ci-dessus. Je comprends que mon statut est activé dès maintenant sur cette déclaration, et que le trésorier en est informé.</span>
@@ -12493,14 +12827,20 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   // Ecran affiche apres l'enregistrement : { gameName, count } -- il permet
   // d'enchainer sans tout ressaisir. `count` compte les parties de la serie.
   const [justSaved, setJustSaved] = useState(null);
+  // Réinitialisation à l'OUVERTURE de la fenêtre, et à ce moment-là seulement.
+  // Auparavant l'effet dépendait de l'objet `currentUser`, recréé à chaque
+  // rechargement des données : enregistrer une partie le relançait, ce qui
+  // effaçait l'écran « on enchaîne ? » et remettait la liste des joueurs à zéro.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
       setWinnersTouched(false); setScorePadFor(null); setTeamsOn(false); setJustSaved(null);
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
       setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
-  }, [open, defaultGameId, currentUser]);
+    wasOpenRef.current = open;
+  }, [open, defaultGameId, currentUser?.id]); // eslint-disable-line
 
   const fieldStyle = { width: "100%", padding: "9px 11px", borderRadius: 10, border: "1.5px solid #e6dcc9", fontFamily: "'Nunito',sans-serif", fontSize: 14, background: "#fff", color: C.navy, boxSizing: "border-box" };
   const sortedGames = useMemo(() => [...(games || [])].sort((a, b) => a.name.localeCompare(b.name)), [games]);
@@ -12662,7 +13002,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={justSaved === null && parts.length ? "Enregistrer une partie" : "Enregistrer une partie"} width={540}>
+    <Modal open={open} onClose={onClose} title="Enregistrer une partie" width={540}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 15 }}>
         <p style={{ margin: 0, fontSize: 13, color: "#6e6256" }}>Pour une partie non chronométrée : aucune durée n'est enregistrée, seuls le résultat et les points le sont. Les scores sont facultatifs — laisse les cases vides si tu ne les as pas.</p>
         <label style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
