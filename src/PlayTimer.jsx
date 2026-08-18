@@ -1329,13 +1329,19 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const { error: e } = await supabase.rpc('aladj_remove_session_player', { p_session_id: sid, p_player_id: p.id });
     if (e) {
       const m = e.message || String(e);
-      setError(/ALADJ_LAST_PLAYER/.test(m) ? "Impossible : il ne resterait plus personne autour de la table."
-        : /ALADJ_SESSION_DONE/.test(m) ? "Cette partie est terminee." : m);
-      return;
+      const msg = /ALADJ_LAST_PLAYER/.test(m) ? "Impossible : il ne resterait plus personne autour de la table."
+        : /ALADJ_SESSION_DONE/.test(m) ? "Cette partie est terminee."
+        : /aladj_remove_session_player/.test(m) || /Could not find the function/i.test(m)
+          ? "La fonction de retrait n'est pas installée sur le serveur (migration à rejouer)."
+          : m;
+      // Renvoye ET affiche : le panneau ouvert masque la banniere du chrono.
+      setError(msg);
+      return { error: msg };
     }
     await refetchPlayers(sid);
     await refetchTotals(sid);
     await refetchSession(sid);
+    return {};
   };
 
   // (2) Corriger les compteurs de phase.
@@ -2600,6 +2606,17 @@ function ColorSheet({ player, currentKey, takenKeys, onPick, onClose }) {
 
 /* Composition des equipes. Un joueur sans equipe joue pour lui-meme. */
 function TeamsSheet({ players, hexFor, onSet, onClose, isHost, onRemove, onAddGuest, onAddMember, guestBook, supabase, currentUser }) {
+  // Le panneau recouvre la banniere d'erreur du chrono : il doit donc dire
+  // lui-meme ce qui s'est mal passe, sinon l'action parait sans effet.
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const doRemove = async (p) => {
+    if (busy || !onRemove) return;
+    setBusy(true); setErr(null);
+    const r = await onRemove(p);
+    setBusy(false);
+    if (r && r.error) setErr(r.error);
+  };
   const used = [...new Set(players.map((p) => p.team).filter((x) => x != null))].sort((a, b) => a - b);
   const nextFree = (() => { for (let i = 0; i < TEAM_LETTERS.length; i++) if (!used.includes(i)) return i; return null; })();
   const choices = nextFree == null ? used : [...used, nextFree];
@@ -2616,13 +2633,19 @@ function TeamsSheet({ players, hexFor, onSet, onClose, isHost, onRemove, onAddGu
           la même couleur. Laissez sur <b>Seul</b> ceux qui jouent pour eux-mêmes.
           {isHost && <> Vous pouvez aussi <b>ajouter</b> quelqu'un qui s'installe, ou <b>retirer</b> celui qui s'en va.</>}
         </div>
+        {err && (
+          <div style={{ background: '#fdecee', color: C.red, border: `1px solid ${C.red}33`,
+            borderRadius: 12, padding: '10px 12px', marginBottom: 12, fontWeight: 600, fontSize: 13.5 }}>
+            {err}
+          </div>
+        )}
         <div style={{ display: 'grid', gap: 9 }}>
           {players.map((p) => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 11, background: '#fff', border: '1px solid #e6dcc9', borderRadius: 13, padding: '9px 11px', flexWrap: 'wrap' }}>
               <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={32} />
               <span style={{ flex: 1, minWidth: 90, fontWeight: 700 }}>{p.name}</span>
               {isHost && players.length > 1 && onRemove && (
-                <button onClick={() => onRemove(p)} title={`Retirer ${p.name} de la partie`}
+                <button onClick={() => doRemove(p)} disabled={busy} title={`Retirer ${p.name} de la partie`}
                   style={{ border: 'none', background: 'transparent', color: C.red, cursor: 'pointer',
                     fontSize: 17, lineHeight: 1, padding: '0 4px', flex: '0 0 auto' }}>✕</button>
               )}
