@@ -1561,7 +1561,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           setup={session?.setup_seconds || 0}
           play={session?.play_seconds || 0}
           teardown={session?.teardown_seconds || 0}
-          running={activePhase}
+          running={session?.active_phase || null}
           onSave={setPhaseSeconds}
           onClose={() => setClockEdit(false)}
         />
@@ -1581,6 +1581,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           hexFor={hexFor}
           onSet={setPlayerTeam}
           onClose={() => setTeamsOpen(false)}
+          isHost={isHost}
+          onRemove={removePlayer}
+          onAddGuest={(n) => addPlayerLive(null, n)}
+          onAddMember={(m) => addPlayerLive(m.id, null)}
+          guestBook={guestBook}
+          supabase={supabase}
+          currentUser={currentUser}
         />
       )}
       {qrOpen && joinLink && (
@@ -2080,10 +2087,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
           {/* Accessoires et commandes, en gros carres */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,168px), 1fr))', gap: 'clamp(8px,.9vw,12px)' }}>
-            {tile('👥', teamsOn ? 'Équipes' : 'Mode équipe', teamsOn, () => setTeamsOpen(true))}
             {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
+            {tile('👥', teamsOn ? 'La tablée · équipes' : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
             {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
@@ -2275,7 +2282,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>{teamsOn ? 'Equipes' : 'Mode equipe'}</button>
+            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>La tablee</button>
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setClockEdit(true)}>Corriger les temps</button>}
             {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
@@ -2592,7 +2599,7 @@ function ColorSheet({ player, currentKey, takenKeys, onPick, onClose }) {
 }
 
 /* Composition des equipes. Un joueur sans equipe joue pour lui-meme. */
-function TeamsSheet({ players, hexFor, onSet, onClose }) {
+function TeamsSheet({ players, hexFor, onSet, onClose, isHost, onRemove, onAddGuest, onAddMember, guestBook, supabase, currentUser }) {
   const used = [...new Set(players.map((p) => p.team).filter((x) => x != null))].sort((a, b) => a - b);
   const nextFree = (() => { for (let i = 0; i < TEAM_LETTERS.length; i++) if (!used.includes(i)) return i; return null; })();
   const choices = nextFree == null ? used : [...used, nextFree];
@@ -2600,19 +2607,25 @@ function TeamsSheet({ players, hexFor, onSet, onClose }) {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '86vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 Mode equipe</div>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>👥 La tablée</div>
           <button onClick={onClose} style={btnGhost}>Fermer</button>
         </div>
         <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 14, lineHeight: 1.5 }}>
-          Attribuez une equipe a chaque joueur. Le score saisi pour l'un est aussitot
-          reporté sur ses coequipiers, et toute l'equipe partage la même couleur.
-          Laissez sur <b>Seul</b> les joueurs qui jouent pour eux-mêmes.
+          Qui joue, et avec qui. Attribuez une équipe à chaque joueur : le score saisi
+          pour l'un est aussitôt reporté sur ses coéquipiers, et toute l'équipe partage
+          la même couleur. Laissez sur <b>Seul</b> ceux qui jouent pour eux-mêmes.
+          {isHost && <> Vous pouvez aussi <b>ajouter</b> quelqu'un qui s'installe, ou <b>retirer</b> celui qui s'en va.</>}
         </div>
         <div style={{ display: 'grid', gap: 9 }}>
           {players.map((p) => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 11, background: '#fff', border: '1px solid #e6dcc9', borderRadius: 13, padding: '9px 11px', flexWrap: 'wrap' }}>
               <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={32} />
               <span style={{ flex: 1, minWidth: 90, fontWeight: 700 }}>{p.name}</span>
+              {isHost && players.length > 1 && onRemove && (
+                <button onClick={() => onRemove(p)} title={`Retirer ${p.name} de la partie`}
+                  style={{ border: 'none', background: 'transparent', color: C.red, cursor: 'pointer',
+                    fontSize: 17, lineHeight: 1, padding: '0 4px', flex: '0 0 auto' }}>✕</button>
+              )}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button onClick={() => onSet(p.id, null)}
                   style={{ padding: '6px 12px', borderRadius: 9, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 13,
@@ -2630,6 +2643,34 @@ function TeamsSheet({ players, hexFor, onSet, onClose }) {
             </div>
           ))}
         </div>
+
+        {/* Arrivees en cours de partie */}
+        {isHost && onAddGuest && (
+          <div style={{ marginTop: 16, borderTop: '1px solid #e6dcc9', paddingTop: 14 }}>
+            <Label>Quelqu'un s'installe ?</Label>
+            {(() => {
+              const libres = (guestBook || []).filter((g) => !players.some((p) => !p.profile_id && (p.name || '').toLowerCase() === g.name.toLowerCase()));
+              if (!libres.length) return null;
+              return (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                  {libres.map((g) => (
+                    <button key={g.id} onClick={() => onAddGuest(g.name)} title={`Ajouter ${g.name}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: C.white,
+                        border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999,
+                        padding: '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
+                      <span style={{ color: C.purple, fontWeight: 800 }}>+</span> {g.name}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+            <LiveAdd onAddGuest={onAddGuest} onAddMember={onAddMember} supabase={supabase} currentUser={currentUser} />
+            <p style={{ fontSize: 12.5, color: `${C.navy}88`, marginTop: 8, lineHeight: 1.5 }}>
+              Le joueur ajouté démarre à zéro point et sans temps de jeu : il rejoint la
+              partie telle qu'elle est, sans fausser les compteurs des autres.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
