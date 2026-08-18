@@ -751,6 +751,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [nextPicker, setNextPicker] = useState(false);
   // Changement de jeu a chaud : meme session, meme tablee, meme chrono.
   const [swapPicker, setSwapPicker] = useState(false);
+  // Correction manuelle des compteurs de phase (oubli d'arreter la mise en place...)
+  const [clockEdit, setClockEdit] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [nextQuery, setNextQuery] = useState('');
   const [nextHits, setNextHits] = useState([]);
@@ -1318,6 +1320,35 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     }
   };
 
+  // (1) Retirer un joueur d'une partie en cours. Ses tours et son score partent
+  // avec lui : il n'a pas joue, il ne doit rien laisser dans les statistiques.
+  const removePlayer = async (p) => {
+    if (typeof window !== 'undefined'
+        && !window.confirm(`Retirer ${p.name} de la partie ?\n\nSon temps de jeu et son score seront effaces.`)) return;
+    setError(null);
+    const { error: e } = await supabase.rpc('aladj_remove_session_player', { p_session_id: sid, p_player_id: p.id });
+    if (e) {
+      const m = e.message || String(e);
+      setError(/ALADJ_LAST_PLAYER/.test(m) ? "Impossible : il ne resterait plus personne autour de la table."
+        : /ALADJ_SESSION_DONE/.test(m) ? "Cette partie est terminee." : m);
+      return;
+    }
+    await refetchPlayers(sid);
+    await refetchTotals(sid);
+    await refetchSession(sid);
+  };
+
+  // (2) Corriger les compteurs de phase.
+  const setPhaseSeconds = async (setup, play, teardown) => {
+    setError(null);
+    const { error: e } = await supabase.rpc('aladj_set_phase_seconds', {
+      p_session_id: sid, p_setup: setup, p_play: play, p_teardown: teardown,
+    });
+    if (e) { setError(e.message || String(e)); return false; }
+    await refetchSession(sid);
+    return true;
+  };
+
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
   const togglePhase = (ph) => rpc('toggle_phase', { p_session_id: sid, p_phase: ph });
   const simulEnter = () => rpc('simul_enter', { p_session_id: sid });
@@ -1523,6 +1554,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           swap={swapPicker}
           onPick={swapPicker ? swapGame : continueWithGame}
           onClose={() => { if (!switching) { setNextPicker(false); setSwapPicker(false); setNextQuery(''); } }}
+        />
+      )}
+      {clockEdit && (
+        <ClockEditSheet
+          setup={session?.setup_seconds || 0}
+          play={session?.play_seconds || 0}
+          teardown={session?.teardown_seconds || 0}
+          running={activePhase}
+          onSave={setPhaseSeconds}
+          onClose={() => setClockEdit(false)}
         />
       )}
       {colorFor && (
@@ -1781,8 +1822,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         <Card>
           <Label>Joueurs connectés ({players.length})</Label>
           {players.map((p, i) => (
-            <PlayerRow key={p.id} color={ACCENTS[i % ACCENTS.length]} name={p.name} avatar={p.avatar_url}
-              tag={p.auth_user_id ? null : 'sans tel'} />
+            <PlayerRow key={p.id} color={hexFor(p)} name={p.name} avatar={p.avatar_url}
+              tag={p.auth_user_id ? null : 'sans tel'}
+              onRemove={isHost && players.length > 1 ? () => removePlayer(p) : undefined} />
           ))}
           <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />
         </Card>
@@ -2024,6 +2066,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     style={{ position: 'absolute', top: 10, right: 12, width: 22, height: 22, borderRadius: 7,
                       cursor: 'pointer', background: hex, border: `2px solid ${active ? ink : '#fff'}`,
                       boxShadow: '0 0 0 1px rgba(0,0,0,.12)' }} />
+                  {isHost && players.length > 1 && (
+                    <button onClick={(e) => { e.stopPropagation(); removePlayer(p); }} title={`Retirer ${p.name} de la partie`}
+                      style={{ position: 'absolute', top: 10, right: 42, width: 22, height: 22, borderRadius: 7,
+                        cursor: 'pointer', background: active ? 'rgba(255,255,255,.25)' : '#fff',
+                        border: `2px solid ${active ? ink : `${C.red}66`}`, color: active ? ink : C.red,
+                        display: 'grid', placeItems: 'center', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+                  )}
                 </div>
               );
             })}
@@ -2035,6 +2084,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
+            {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
             {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
             {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
@@ -2208,6 +2258,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, false); }} disabled={i === players.length - 1}
                       style={{ ...orderBtn, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
                   </div>
+                  {isHost && players.length > 1 && (
+                    <button onClick={(e) => { e.stopPropagation(); removePlayer(p); }} title={`Retirer ${p.name}`}
+                      style={{ border: 'none', background: 'transparent', color: C.red, cursor: 'pointer',
+                        fontSize: 17, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                  )}
                 </div>
                 <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? hexFor(p) : C.navy }}>
                   {fmt(shown(p.id))}
@@ -2222,6 +2277,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>{teamsOn ? 'Equipes' : 'Mode equipe'}</button>
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
+            {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setClockEdit(true)}>Corriger les temps</button>}
             {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
@@ -2368,6 +2424,130 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
               </span>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   Corriger les compteurs de phase.
+   Cas typique : on lance la partie sans arreter le chrono de mise en place.
+   On retire alors 5 minutes a la mise en place et on les ajoute a la partie.
+   Le report d'une phase a l'autre est propose en un geste, parce que c'est
+   toujours ainsi que la correction se fait : ce qui manque ici est en trop la.
+   --------------------------------------------------------------------- */
+function ClockEditSheet({ setup, play, teardown, running, onSave, onClose }) {
+  const toMin = (s) => Math.floor(s / 60);
+  const toSec = (s) => s % 60;
+  const [v, setV] = useState({
+    setupM: toMin(setup), setupS: toSec(setup),
+    playM: toMin(play), playS: toSec(play),
+    downM: toMin(teardown), downS: toSec(teardown),
+  });
+  const [busy, setBusy] = useState(false);
+  const [shift, setShift] = useState(5);      // minutes a reporter
+
+  const tot = (m, s) => Math.max(0, (parseInt(m, 10) || 0) * 60 + (parseInt(s, 10) || 0));
+  const cur = { setup: tot(v.setupM, v.setupS), play: tot(v.playM, v.playS), teardown: tot(v.downM, v.downS) };
+
+  const put = (key, secs) => {
+    const s = Math.max(0, secs);
+    if (key === 'setup') setV((x) => ({ ...x, setupM: toMin(s), setupS: toSec(s) }));
+    if (key === 'play') setV((x) => ({ ...x, playM: toMin(s), playS: toSec(s) }));
+    if (key === 'teardown') setV((x) => ({ ...x, downM: toMin(s), downS: toSec(s) }));
+  };
+
+  // Deplacer N minutes d'une phase vers une autre, sans jamais passer sous zero.
+  const move = (from, to) => {
+    const n = Math.max(1, parseInt(shift, 10) || 1) * 60;
+    const take = Math.min(n, cur[from]);
+    if (!take) return;
+    put(from, cur[from] - take);
+    put(to, cur[to] + take);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    const ok = await onSave(cur.setup, cur.play, cur.teardown);
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  const LIGNES = [
+    { key: 'setup', label: 'Mise en place', m: 'setupM', s: 'setupS', color: C.teal },
+    { key: 'play', label: 'Partie', m: 'playM', s: 'playS', color: C.amber },
+    { key: 'teardown', label: 'Rangement', m: 'downM', s: 'downS', color: C.purple },
+  ];
+
+  return (
+    <div onClick={busy ? undefined : onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620,
+          maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>⏱️ Corriger les temps</div>
+          <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
+        </div>
+        <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '4px 0 16px', lineHeight: 1.55 }}>
+          Un oubli d'arreter le chrono ? Reportez le temps d'une phase vers une autre,
+          ou saisissez directement les valeurs.
+          {running && <> La phase en cours continue de tourner : la correction s'applique
+            au temps deja compte, et les secondes qui defilent s'y ajoutent.</>}
+        </p>
+
+        <div style={{ display: 'grid', gap: 9, marginBottom: 16 }}>
+          {LIGNES.map((L) => (
+            <div key={L.key} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff',
+              border: `1.5px solid ${running === L.key ? L.color : '#e6dcc9'}`, borderRadius: 13, padding: '10px 12px', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: 110, fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: L.color }}>
+                {L.label}{running === L.key && <span style={{ fontSize: 12, color: `${C.navy}88`, fontWeight: 400 }}> · en cours</span>}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <input type="number" min="0" inputMode="numeric" value={v[L.m]}
+                  onChange={(e) => setV({ ...v, [L.m]: e.target.value })}
+                  style={{ ...input, width: 74, textAlign: 'right', padding: '8px 9px' }} />
+                <span style={{ fontSize: 13, color: `${C.navy}88` }}>min</span>
+                <input type="number" min="0" max="59" inputMode="numeric" value={v[L.s]}
+                  onChange={(e) => setV({ ...v, [L.s]: e.target.value })}
+                  style={{ ...input, width: 66, textAlign: 'right', padding: '8px 9px' }} />
+                <span style={{ fontSize: 13, color: `${C.navy}88` }}>s</span>
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: 'rgba(30,138,138,.07)', border: `1px solid ${C.teal}33`, borderRadius: 13, padding: '12px 14px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 14.5 }}>Reporter</span>
+            <input type="number" min="1" inputMode="numeric" value={shift}
+              onChange={(e) => setShift(e.target.value)}
+              style={{ ...input, width: 70, textAlign: 'right', padding: '7px 9px' }} />
+            <span style={{ fontSize: 14 }}>minutes :</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {[
+              ['setup', 'play', 'Mise en place → Partie'],
+              ['play', 'setup', 'Partie → Mise en place'],
+              ['play', 'teardown', 'Partie → Rangement'],
+              ['teardown', 'play', 'Rangement → Partie'],
+            ].map(([a, b, lab]) => (
+              <button key={lab} onClick={() => move(a, b)} disabled={!cur[a]}
+                style={{ border: '1.5px solid #d9cdb6', background: cur[a] ? '#fff' : '#f3ede1',
+                  color: cur[a] ? C.navy : `${C.navy}55`, borderRadius: 999, padding: '7px 13px',
+                  fontFamily: BODY, fontSize: 13.5, fontWeight: 600, cursor: cur[a] ? 'pointer' : 'default' }}>
+                {lab}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 9 }}>
+          <button style={{ ...btnPrimary, flex: 1, opacity: busy ? 0.6 : 1 }} onClick={save} disabled={busy}>
+            {busy ? 'Enregistrement...' : 'Enregistrer les temps'}
+          </button>
+          <button style={btnGhost} onClick={onClose} disabled={busy}>Annuler</button>
         </div>
       </div>
     </div>
