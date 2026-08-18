@@ -4651,6 +4651,14 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Retirer un joueur, corriger les temps",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}><b>Retirer un joueur.</b> Quelqu'un s'était ajouté par erreur, ou quitte la table en cours de route ? Une <b>croix rouge</b> sur sa carte le retire de la partie — dans la préparation, dans le salon d'attente et pendant la partie elle-même. Son temps de jeu et son score partent avec lui : il n'a pas joué, il ne doit rien laisser dans les statistiques. Le dernier joueur ne peut pas être retiré, et si c'était son tour, la partie se met simplement en pause.</p>
+            <p style={{ margin: "0 0 8px" }}><b>⏱️ Corriger les temps.</b> L'oubli classique : on lance la partie sans arrêter le chrono de mise en place. Le bouton <b>« Corriger les temps »</b> ouvre les trois compteurs et permet de <b>reporter</b> du temps d'une phase vers une autre en un geste — « Mise en place → Partie », par exemple, avec le nombre de minutes de votre choix. Vous pouvez aussi saisir directement les valeurs.</p>
+            <p style={{ margin: 0 }}>La correction fonctionne même pendant qu'une phase tourne : elle s'applique au temps déjà compté, et les secondes qui défilent viennent s'y ajouter normalement.</p>
+          </>,
+        },
+        {
           q: "Garder l'écran allumé pendant la partie",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Pendant une partie, un bouton <b style={{ color: "#8a6a1f" }}>☀️ Écran allumé</b> apparaît en haut du chrono. Tant qu'il est actif, le téléphone <b>ne se met plus en veille tout seul</b> : le chrono reste sous les yeux de toute la tablée. Un second appui rend la main à la veille automatique (🌙).</p>
@@ -12230,9 +12238,6 @@ function MembershipModal({ onClose, setToast }) {
             </div>
           ))}
 
-          <a href={`https://www.paypal.com/paypalme/`} target="_blank" rel="noopener noreferrer"
-            style={{ display: "none" }}>PayPal</a>
-
           <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 13.5, color: "#5e5346", lineHeight: 1.55, marginTop: 4 }}>
             <input type="checkbox" checked={ppOk} onChange={(e) => setPpOk(e.target.checked)} style={{ marginTop: 3 }} />
             <span>J'ai envoyé (ou j'envoie dans la foulée) <b>{COTISATION_EUR} €</b> par <b>PayPal entre proches</b> à {PAYPAL_TRESORIER_NOM}, avec le motif indiqué ci-dessus. Je comprends que mon statut est activé dès maintenant sur cette déclaration, et que le trésorier en est informé.</span>
@@ -14131,10 +14136,15 @@ export default function App() {
           .aladj-modal-body { padding: 16px !important; }
         }
         button { font-family: inherit; }
-        /* Le geste de defilement ne doit jamais « deborder » d'une fenetre vers la
-           page qui se trouve derriere. Applique aussi aux zones defilantes
-           internes (listes de jeux, grilles d'extensions...). */
-        .aladj-modal-body, .aladj-modal-body * { overscroll-behavior: contain; }
+        /* Le geste de defilement ne doit pas « deborder » d'une zone defilante
+           vers la page qui se trouve derriere.
+           ATTENTION : ne jamais poser cette propriete sur TOUS les descendants.
+           Sur un element qui ne defile pas, elle empeche le geste de remonter
+           vers l'ancetre qui defile, et la fenetre devient impossible a faire
+           defiler au doigt. On la reserve donc aux conteneurs qui defilent
+           vraiment ; le gel du <body> (useScrollLock) suffit pour le reste. */
+        [style*="overflow-y: auto"], [style*="overflow-y:auto"],
+        [style*="overflow: auto"], [style*="overflow:auto"] { overscroll-behavior: contain; }
         select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231A3A5C' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px !important; }
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
