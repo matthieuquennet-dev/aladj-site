@@ -4667,6 +4667,25 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Le minuteur : jouer au sablier",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Beaucoup de jeux se jouent <b>au sablier</b> ou à la minute : une énigme à trouver avant la fin du temps, un tour à ne pas faire traîner. Puisque le chrono est déjà posé sur la table, il embarque son propre <b>compte à rebours avec alarme</b> — plus besoin d'un deuxième appareil.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Il ne s'affiche qu'à la demande.</b> C'est une fonction rare : elle reste rangée tant qu'on ne la réclame pas. En bas de l'écran du chrono, un bouton <b>⏳ Minuteur</b> — une tuile du même nom en vue tablette — fait apparaître une petite zone juste sous les chronos de phase. Le lien <b>Masquer ✕</b> la range aussitôt.</p>
+            <Illu caption="Le bouton discret en bas de page, et la zone qui vient se placer parmi les chronos.">
+              <MockBtn color={C.navy} soft>⏳ Minuteur</MockBtn>
+              <MockBtn color={C.navy}>▶ Lancer le minuteur</MockBtn>
+            </Illu>
+            <p style={{ margin: "8px 0 8px" }}>Dans cette zone, on règle deux choses :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>La <b>durée</b>, avec les boutons <b>−</b> et <b>+</b>, ou d'un seul appui sur un raccourci : 30 s, 1, 2, 3, 5, 10 ou 15 minutes.</li>
+              <li>L'<b>alarme</b> : un <b>bip</b>, un <b>canard</b>, un <b>carillon doux</b>, une <b>percussion de bois</b>, ou <b>aucun son</b>. Toucher un son le fait entendre tout de suite — de quoi choisir celui qui passe au-dessus du brouhaha de la tablée, ou au contraire le plus discret.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}><b>▶ Lancer le minuteur</b> ouvre alors une <b>grande fenêtre</b> au milieu de l'écran : un anneau qui se vide et le temps restant en très gros chiffres, lisibles de l'autre bout de la table. Les dix dernières secondes passent en orange. Trois boutons en bas : <b>Pause</b>, <b>Relancer</b> (le décompte repart de la durée complète) et <b>Quitter</b>.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Quitter ne coupe pas le compte à rebours</b>, il ne referme que la grande fenêtre : le décompte continue dans la petite zone — pratique pour noter un score au passage — et la grande fenêtre <b>se rouvre d'elle-même</b>, alarme comprise, quand le temps est écoulé. Le bouton <b>🔕 Couper</b> arrête la sonnerie, <b>✕ Arrêter</b> remet tout à zéro.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : le minuteur est un <b>accessoire local</b>. Il n'est pas partagé entre les téléphones (chacun peut avoir le sien), il n'a aucun effet sur les chronos de la partie et n'entre dans aucune statistique. Vos réglages de durée et de son sont retenus sur votre appareil pour la prochaine fois. Pour que l'alarme sonne à coup sûr, gardez l'écran allumé (☀️) et le son du téléphone actif — à défaut, l'appareil vibre.</p>
+          </>,
+        },
+        {
           q: "Jouer à plusieurs téléphones",
           a: <p style={{ margin: 0 }}>Chaque partie a un <b>code</b> affiché à l'écran : les autres joueurs le saisissent dans le champ « code » de la page d'accueil (ou via le lien partagé) pour rejoindre depuis leur propre téléphone et suivre leur temps eux-mêmes. Tout le monde voit les mêmes chronos, en direct.</p>,
         },
