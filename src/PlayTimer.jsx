@@ -650,6 +650,401 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
   );
 }
 
+/* =============================================================================
+   MINUTEUR (sablier) — compte a rebours local, avec alarme sonore.
+
+   Certains jeux se jouent au sablier : plutot que de chercher un minuteur
+   ailleurs, on le garde dans le chrono deja pose sur la table. La fonction est
+   volontairement DISCRETE (repliee par defaut, activee a la demande) et
+   entierement LOCALE : rien n'est enregistre en base, rien n'est partage entre
+   les telephones. C'est un accessoire de table, pas une donnee de partie.
+
+   Les quatre alarmes sont synthetisees a la volee avec l'API Web Audio :
+   aucun fichier son a heberger, aucun telechargement, et ca marche hors ligne.
+   ============================================================================= */
+
+const ALARM_SOUNDS = [
+  { key: 'none', label: 'Aucun', icon: '\ud83d\udd07' },
+  { key: 'bip', label: 'Bip', icon: '\ud83d\udd14' },
+  { key: 'duck', label: 'Canard', icon: '\ud83e\udd86' },
+  { key: 'chime', label: 'Carillon', icon: '\ud83c\udf90' },
+  { key: 'wood', label: 'Bois', icon: '\ud83e\udd41' },
+];
+
+const TIMER_PRESETS = [30, 60, 120, 180, 300, 600, 900];
+
+const durLabel = (s) => (s < 60 ? `${s} s` : (s % 60 === 0 ? `${s / 60} min` : fmt(s)));
+
+// Preferences locales (duree, son, zone affichee) : elles survivent a la
+// fermeture du chrono, mais restent sur l'appareil.
+const lsGet = (k, d) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return d;
+    const v = window.localStorage.getItem(k);
+    return v == null ? d : v;
+  } catch (e) { return d; }
+};
+const lsSet = (k, v) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(k, String(v));
+  } catch (e) { /* mode prive : on s'en passe */ }
+};
+
+// Contexte audio unique, cree au premier geste de l'utilisateur (iOS l'exige)
+// et reveille a chaque usage : Safari le suspend des que l'onglet passe en
+// arriere-plan.
+let AUDIO_CTX = null;
+function audioCtx() {
+  if (typeof window === 'undefined') return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try {
+    if (!AUDIO_CTX) AUDIO_CTX = new AC();
+    if (AUDIO_CTX.state === 'suspended') AUDIO_CTX.resume();
+  } catch (e) { return null; }
+  return AUDIO_CTX;
+}
+
+let NOISE_BUF = null;
+function noiseBuffer(ctx) {
+  if (NOISE_BUF && NOISE_BUF.sampleRate === ctx.sampleRate) return NOISE_BUF;
+  const n = Math.floor(ctx.sampleRate * 0.2);
+  const b = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < n; i += 1) d[i] = Math.random() * 2 - 1;
+  NOISE_BUF = b;
+  return b;
+}
+
+// --- les quatre voix ; chacune renvoie la duree de son motif -----------------
+
+// Bip : trois impulsions carrees, la derniere plus haute. Sec et sans ambiguite.
+function voiceBip(ctx, out, t0) {
+  [0, 0.3, 0.6].forEach((off, i) => {
+    const t = t0 + off;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(i === 2 ? 1174.7 : 880, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.32, t + 0.012);
+    g.gain.setValueAtTime(0.32, t + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+    o.connect(g); g.connect(out);
+    o.start(t); o.stop(t + 0.2);
+  });
+  return 0.95;
+}
+
+// Canard : dent de scie qui chute, filtree en bande passante glissante — c'est
+// ce glissando descendant qui fait le « coin coin ».
+function voiceDuck(ctx, out, t0) {
+  [0, 0.34].forEach((off, i) => {
+    const t = t0 + off;
+    const o = ctx.createOscillator();
+    const bp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(i ? 400 : 460, t);
+    o.frequency.exponentialRampToValueAtTime(i ? 170 : 195, t + 0.17);
+    bp.type = 'bandpass';
+    bp.Q.value = 3.2;
+    bp.frequency.setValueAtTime(1150, t);
+    bp.frequency.exponentialRampToValueAtTime(600, t + 0.17);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    o.connect(bp); bp.connect(g); g.connect(out);
+    o.start(t); o.stop(t + 0.26);
+  });
+  return 0.85;
+}
+
+// Carillon doux : trois notes arpegees, chacune faite de partiels inharmoniques
+// (le propre d'une cloche) avec une longue decroissance.
+function voiceChime(ctx, out, t0) {
+  const notes = [1046.5, 1318.5, 1567.98];
+  const partials = [[1, 0.24], [2, 0.085], [2.76, 0.05], [5.4, 0.02]];
+  notes.forEach((f, i) => {
+    const t = t0 + i * 0.42;
+    partials.forEach((p) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f * p[0], t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(p[1], t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + 2.5);
+    });
+  });
+  return 2.3;
+}
+
+// Bois : un bloc de temple. Triangle grave a decroissance tres courte (le
+// corps chaud) + un eclat de bruit filtre (l'attaque seche du maillet).
+function voiceWood(ctx, out, t0) {
+  [0, 0.24, 0.48].forEach((off, i) => {
+    const t = t0 + off;
+    const f0 = i === 2 ? 500 : 410;
+    const o = ctx.createOscillator();
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f0 * 1.6, t);
+    o.frequency.exponentialRampToValueAtTime(f0, t + 0.03);
+    lp.type = 'lowpass';
+    lp.frequency.value = 2400;
+    lp.Q.value = 0.7;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(lp); lp.connect(g); g.connect(out);
+    o.start(t); o.stop(t + 0.24);
+
+    const src = ctx.createBufferSource();
+    const bpf = ctx.createBiquadFilter();
+    const ng = ctx.createGain();
+    src.buffer = noiseBuffer(ctx);
+    bpf.type = 'bandpass';
+    bpf.frequency.value = 1750;
+    bpf.Q.value = 6;
+    ng.gain.setValueAtTime(0.22, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    src.connect(bpf); bpf.connect(ng); ng.connect(out);
+    src.start(t); src.stop(t + 0.08);
+  });
+  return 0.9;
+}
+
+const ALARM_VOICES = { bip: voiceBip, duck: voiceDuck, chime: voiceChime, wood: voiceWood };
+
+/* Joue une alarme et renvoie { stop } — ou null si le son est coupe / indispo. */
+function playAlarm(key, repeat = 1) {
+  const voice = ALARM_VOICES[key];
+  if (!voice) return null;
+  const ctx = audioCtx();
+  if (!ctx) return null;
+  try {
+    const master = ctx.createGain();
+    master.gain.value = 0.9;
+    master.connect(ctx.destination);
+    let t = ctx.currentTime + 0.04;
+    for (let i = 0; i < repeat; i += 1) t += voice(ctx, master, t) + (repeat > 1 ? 0.3 : 0);
+    const stop = () => {
+      try {
+        const n = ctx.currentTime;
+        master.gain.cancelScheduledValues(n);
+        master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), n);
+        master.gain.exponentialRampToValueAtTime(0.0001, n + 0.06);
+        setTimeout(() => { try { master.disconnect(); } catch (e) { /* deja detache */ } }, 150);
+      } catch (e) { /* rien a arreter */ }
+    };
+    return { stop };
+  } catch (e) { return null; }
+}
+
+/* -----------------------------------------------------------------------------
+   Zone de reglage, posee juste sous les chronos de phase.
+   ----------------------------------------------------------------------------- */
+function TimerBar({ t, big = false }) {
+  const idle = !t.running && !t.paused && !t.ringing;
+  const secsLeft = Math.ceil(t.leftMs / 1000);
+  const accent = t.ringing ? C.red : C.navy;
+
+  const round = {
+    width: big ? 52 : 44, height: big ? 52 : 44, flex: '0 0 auto', borderRadius: 14,
+    border: `2px solid ${C.navy}22`, background: '#fff', color: C.navy,
+    fontFamily: TITLE, fontWeight: 600, fontSize: big ? 26 : 22, lineHeight: 1,
+    cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
+  };
+  const pill = (on, tint) => ({
+    border: `1.5px solid ${on ? tint : '#E1D6C0'}`,
+    background: on ? `${tint}14` : '#fff',
+    color: on ? tint : `${C.navy}aa`,
+    borderRadius: 999, padding: big ? '8px 14px' : '6px 12px',
+    fontFamily: TITLE, fontWeight: 600, fontSize: big ? 15 : 13.5,
+    cursor: 'pointer', whiteSpace: 'nowrap',
+  });
+
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 18,
+      border: `2px ${idle ? 'dashed' : 'solid'} ${idle ? '#E1D6C0' : accent}`,
+      padding: big ? 'clamp(11px,1.2vw,17px)' : '12px 14px',
+      marginBottom: big ? 'clamp(8px,1vw,14px)' : 16,
+      boxShadow: '0 2px 8px rgba(90,70,40,.06)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontFamily: TITLE, fontWeight: 600, color: accent, fontSize: big ? 'clamp(15px,1.4vw,21px)' : 15 }}>
+          &#9203; Minuteur
+        </span>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={t.hide} title="Masquer le minuteur"
+          style={{ border: 'none', background: 'transparent', color: `${C.navy}77`, fontFamily: BODY,
+            fontWeight: 700, fontSize: 13, cursor: 'pointer', padding: '4px 2px' }}>
+          Masquer &#10005;
+        </button>
+      </div>
+
+      {idle ? (
+        // Sur tablette on deplie tout sur une seule ligne : la place manque en
+        // hauteur, pas en largeur.
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: big ? 16 : 10,
+          flexDirection: big ? 'row' : 'column', alignItems: big ? 'center' : 'stretch' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: '0 0 auto' }}>
+            <button type="button" onClick={() => t.bump(-1)} style={round} aria-label="Moins">&#8722;</button>
+            <div style={{ flex: big ? '0 0 auto' : 1, minWidth: big ? 122 : 0, textAlign: 'center',
+              fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(30px,2.8vw,44px)' : 34,
+              lineHeight: 1.1, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
+              {fmt(t.secs)}
+            </div>
+            <button type="button" onClick={() => t.bump(1)} style={round} aria-label="Plus">+</button>
+          </div>
+
+          <div style={{ flex: '1 1 250px', minWidth: 0, display: 'grid', gap: 7 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {TIMER_PRESETS.map((s) => (
+                <button key={s} type="button" onClick={() => t.setSecs(s)} style={pill(t.secs === s, C.teal)}>
+                  {durLabel(s)}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: `${C.navy}88`, marginRight: 2 }}>Alarme :</span>
+              {ALARM_SOUNDS.map((s) => (
+                <button key={s.key} type="button" onClick={() => t.chooseSound(s.key)} style={pill(t.sound === s.key, C.amber)}
+                  title={s.key === 'none' ? 'Aucun son a la fin' : 'Ecouter ce son'}>
+                  {s.icon} {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button type="button" onClick={t.start} style={{
+            flex: big ? '0 0 auto' : '1 1 auto', width: big ? 'auto' : '100%', minWidth: big ? 216 : 0,
+            border: 'none', borderRadius: 14, background: C.navy, color: C.white,
+            padding: big ? '16px 22px' : '13px', fontFamily: TITLE, fontWeight: 600,
+            fontSize: big ? 'clamp(16px,1.5vw,22px)' : 17, cursor: 'pointer', boxShadow: '0 4px 0 rgba(0,0,0,.12)',
+          }}>
+            &#9654; Lancer le minuteur
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" onClick={t.open} title="Afficher en grand" style={{
+            flex: '1 1 150px', minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+            padding: 0, textAlign: 'left', color: accent,
+          }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(30px,3vw,46px)' : 34,
+              lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>
+              {t.ringing ? 'Termine !' : fmt(secsLeft)}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: `${C.navy}88`, letterSpacing: .2 }}>
+              {t.ringing ? 'toucher pour rouvrir' : (t.paused ? 'en pause \u00b7 toucher pour agrandir' : 'restant \u00b7 toucher pour agrandir')}
+            </div>
+          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {!t.ringing && (
+              <button type="button" onClick={t.paused ? t.resume : t.pause} style={pill(true, C.teal)}>
+                {t.paused ? '\u25b6 Reprendre' : '\u23f8 Pause'}
+              </button>
+            )}
+            <button type="button" onClick={t.restart} style={pill(false, C.navy)}>&#128260; Relancer</button>
+            <button type="button" onClick={t.stop} style={pill(false, C.red)}>&#10005; Arreter</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -----------------------------------------------------------------------------
+   La sur-fenetre : le minuteur en grand, lisible de l'autre bout de la table.
+   ----------------------------------------------------------------------------- */
+function TimerWindow({ t }) {
+  const total = Math.max(1000, t.secs * 1000);
+  const left = t.leftMs;
+  const pct = Math.max(0, Math.min(1, left / total));
+  const urgent = !t.ringing && left <= 10000;
+  const accent = t.ringing ? C.red : (urgent ? C.amber : C.teal);
+  const R = 46;
+  const CIRC = 2 * Math.PI * R;
+  const soundLabel = (ALARM_SOUNDS.find((s) => s.key === t.sound) || {});
+
+  const bigBtn = (bg, ink, label, onClick) => (
+    <button type="button" onClick={onClick || undefined} disabled={!onClick} style={{
+      flex: '1 1 120px', minWidth: 0, border: bg === '#fff' ? `2px solid ${ink}44` : 'none',
+      borderRadius: 16, background: bg, color: ink, padding: 'clamp(12px,1.8vh,18px) 10px',
+      fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(15px,2.2vh,21px)',
+      cursor: onClick ? 'pointer' : 'default', opacity: onClick ? 1 : 0.45,
+      boxShadow: onClick ? '0 4px 0 rgba(0,0,0,.10)' : 'none',
+      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    }}>{label}</button>
+  );
+
+  // Premier bouton : couper l'alarme si elle sonne, sinon pause / reprise.
+  let first;
+  if (t.ringing) first = bigBtn('#fff', C.amber, '\ud83d\udd15 Couper', t.silence);
+  else if (t.running) first = bigBtn(C.amber, C.white, '\u23f8 Pause', t.pause);
+  else if (t.paused) first = bigBtn(C.amber, C.white, '\u25b6 Reprendre', t.resume);
+  else first = bigBtn('#fff', C.navy, '\u23f8 Pause', null);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1500, background: 'rgba(60,45,25,.62)',
+      display: 'grid', placeItems: 'center', padding: 12 }}>
+      <style>{'@keyframes aladjTimerFlash{0%,100%{box-shadow:0 22px 60px rgba(60,45,25,.35)}50%{box-shadow:0 0 0 18px rgba(181,40,58,.20),0 22px 60px rgba(60,45,25,.35)}}'}</style>
+      <div style={{
+        width: 'min(94vw, 760px)', height: 'min(78vh, 660px)', background: C.cream,
+        border: `3px solid ${accent}`, borderRadius: 28, padding: 'clamp(14px,2.4vh,26px)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
+        boxShadow: '0 22px 60px rgba(60,45,25,.35)',
+        animation: t.ringing ? 'aladjTimerFlash 1.1s ease-in-out infinite' : 'none',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(16px,2.4vh,24px)', color: accent }}>
+            &#9203; {t.ringing ? 'Temps ecoule !' : 'Minuteur'}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 'clamp(11px,1.6vh,15px)', fontWeight: 700, color: `${C.navy}88` }}>
+            {soundLabel.icon} {soundLabel.label} &middot; {fmt(t.secs)}
+          </span>
+        </div>
+
+        <div style={{ position: 'relative', width: 'min(52vh, 74vw, 390px)', aspectRatio: '1 / 1',
+          display: 'grid', placeItems: 'center', flex: '0 1 auto' }}>
+          <svg viewBox="0 0 120 120" aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+            <circle cx="60" cy="60" r={R} fill="none" stroke="#E7DCC7" strokeWidth="8" />
+            <circle cx="60" cy="60" r={R} fill="none" stroke={accent} strokeWidth="8" strokeLinecap="round"
+              strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pct)}
+              style={{ transition: 'stroke-dashoffset .2s linear, stroke .3s' }} />
+          </svg>
+          <div style={{ textAlign: 'center', zIndex: 1 }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, lineHeight: 1,
+              fontSize: 'min(15vh, 19vw, 118px)', color: t.ringing ? C.red : C.navy, fontVariantNumeric: 'tabular-nums' }}>
+              {fmt(Math.ceil(left / 1000))}
+            </div>
+            {t.paused && !t.ringing && (
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(14px,2.2vh,20px)', color: C.amber, marginTop: 6 }}>
+                &#9208; en pause
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, width: '100%', flexWrap: 'wrap' }}>
+          {first}
+          {bigBtn(C.teal, C.white, '\ud83d\udd04 Relancer', t.restart)}
+          {bigBtn('#fff', C.navy, '\u2715 Quitter', t.close)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Avatar({ name, url, color, size = 44 }) {
   const st = {
     width: size, height: size, borderRadius: '50%', flex: '0 0 auto',
@@ -757,6 +1152,125 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [nextQuery, setNextQuery] = useState('');
   const [nextHits, setNextHits] = useState([]);
   const [resultSaved, setResultSaved] = useState(false);
+
+  // ---- minuteur de table (sablier) -----------------------------------
+  // Accessoire purement local : aucune ecriture en base, aucun partage entre
+  // les telephones. Il ne touche a rien du chrono de partie.
+  const [timerOn, setTimerOn] = useState(() => lsGet('aladj.minuteur.on', '0') === '1');
+  const [timerSecs, setTimerSecs] = useState(() => {
+    const v = parseInt(lsGet('aladj.minuteur.secs', '60'), 10);
+    return Number.isFinite(v) && v >= 5 && v <= 3600 ? v : 60;
+  });
+  const [timerSound, setTimerSound] = useState(() => {
+    const v = lsGet('aladj.minuteur.son', 'bip');
+    return ALARM_SOUNDS.some((s) => s.key === v) ? v : 'bip';
+  });
+  const [timerEndsAt, setTimerEndsAt] = useState(null); // ms epoch, non nul = en marche
+  const [timerRest, setTimerRest] = useState(null);     // ms restants quand il est en pause
+  const [timerNow, setTimerNow] = useState(Date.now());
+  const [timerBig, setTimerBig] = useState(false);      // sur-fenetre ouverte
+  const [timerRinging, setTimerRinging] = useState(false);
+  const alarmRef = useRef(null);
+
+  useEffect(() => { lsSet('aladj.minuteur.on', timerOn ? '1' : '0'); }, [timerOn]);
+  useEffect(() => { lsSet('aladj.minuteur.secs', timerSecs); }, [timerSecs]);
+  useEffect(() => { lsSet('aladj.minuteur.son', timerSound); }, [timerSound]);
+
+  const timerLeftMs = timerEndsAt
+    ? Math.max(0, timerEndsAt - timerNow)
+    : (timerRest != null ? timerRest : timerSecs * 1000);
+
+  const timerSilence = useCallback(() => {
+    try { if (alarmRef.current) alarmRef.current.stop(); } catch (e) { /* rien a couper */ }
+    alarmRef.current = null;
+    setTimerRinging(false);
+  }, []);
+
+  // Horloge dediee : celle de la partie se fige pendant la saisie d'un score,
+  // le minuteur ne doit pas s'arreter pour autant.
+  useEffect(() => {
+    if (!timerEndsAt) return undefined;
+    const tick = () => {
+      if (Date.now() >= timerEndsAt) {
+        setTimerNow(Date.now());
+        setTimerEndsAt(null);
+        setTimerRest(0);
+        setTimerRinging(true);
+        setTimerBig(true); // meme si la sur-fenetre avait ete refermee
+        try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]); } catch (e) { /* non supporte */ }
+        try { if (alarmRef.current) alarmRef.current.stop(); } catch (e) { /* rien a couper */ }
+        alarmRef.current = playAlarm(timerSound, timerSound === 'chime' ? 2 : 3);
+      } else {
+        setTimerNow(Date.now());
+      }
+    };
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [timerEndsAt, timerSound]);
+
+  // Filet de securite : on ne laisse jamais une alarme tourner apres coup.
+  useEffect(() => () => {
+    try { if (alarmRef.current) alarmRef.current.stop(); } catch (e) { /* rien a couper */ }
+  }, []);
+
+  const timerStart = () => {
+    audioCtx(); // deblocage audio : nous sommes dans un geste utilisateur
+    timerSilence();
+    setTimerRest(null);
+    setTimerNow(Date.now());
+    setTimerEndsAt(Date.now() + Math.max(5, timerSecs) * 1000);
+    setTimerBig(true);
+  };
+  const timerPause = () => {
+    if (!timerEndsAt) return;
+    setTimerRest(Math.max(0, timerEndsAt - Date.now()));
+    setTimerEndsAt(null);
+  };
+  const timerResume = () => {
+    if (timerRest == null || timerRest <= 0) return;
+    audioCtx();
+    setTimerNow(Date.now());
+    setTimerEndsAt(Date.now() + timerRest);
+    setTimerRest(null);
+  };
+  const timerStop = () => {
+    timerSilence();
+    setTimerEndsAt(null);
+    setTimerRest(null);
+  };
+  const timerCloseBig = () => {
+    // « Quitter » ne ferme que la sur-fenetre : si le compte a rebours tourne
+    // encore, il continue dans la petite zone et rouvrira tout seul en sonnant.
+    if (timerRinging) timerStop();
+    setTimerBig(false);
+  };
+  const timerHide = () => {
+    timerStop();
+    setTimerBig(false);
+    setTimerOn(false);
+  };
+  const timerChooseSound = (key) => {
+    setTimerSound(key);
+    timerSilence();
+    audioCtx();
+    alarmRef.current = playAlarm(key, 1); // apercu immediat
+  };
+  const timerBump = (dir) => {
+    const step = (s) => (s < 60 ? 10 : (s < 300 ? 30 : 60));
+    const next = dir > 0 ? timerSecs + step(timerSecs) : timerSecs - step(timerSecs - 1);
+    setTimerSecs(Math.max(10, Math.min(3600, next)));
+  };
+
+  const timerApi = {
+    secs: timerSecs, setSecs: setTimerSecs, sound: timerSound, chooseSound: timerChooseSound,
+    running: !!timerEndsAt,
+    paused: timerRest != null && timerRest > 0 && !timerRinging,
+    ringing: timerRinging,
+    leftMs: timerLeftMs, bump: timerBump,
+    start: timerStart, restart: timerStart, pause: timerPause, resume: timerResume,
+    stop: timerStop, silence: timerSilence,
+    open: () => setTimerBig(true), close: timerCloseBig, hide: timerHide,
+  };
 
   const sid = session?.id;
   const isHost = !!(session && myUid && session.host_profile_id === myUid);
@@ -1627,6 +2141,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           </div>
         </div>
       )}
+      {timerBig && <TimerWindow t={timerApi} />}
       {rulesOpen && (game?.id || session?.game_id) && (
         <RulesSheet
           supabase={supabase}
@@ -1904,7 +2419,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       // de laisser du vide sous les cartes.
       const rows = n <= 4 ? n : Math.ceil(n / 2);
       const cols = n <= 4 ? 1 : 2;
-      const rowH = `clamp(104px, calc((100vh - 420px) / ${rows}), 230px)`;
+      // Le minuteur, quand il est affiche, occupe une bande en haut :
+      // on la retire de la hauteur disponible pour les cartes joueurs.
+      const timerBand = timerOn ? ((timerEndsAt || timerRest != null || timerRinging) ? 108 : 152) : 0;
+      const rowH = `clamp(104px, calc((100vh - ${420 + timerBand}px) / ${rows}), 230px)`;
 
       // Repere discret : moyenne observee sur ce jeu, et duree annoncee sur sa
       // fiche pour la phase de partie.
@@ -1988,6 +2506,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {bigPhase('play', 'Partie', playTotal, (session?.play_seconds || 0) > 0, C.amber, hasWrapped)}
             {bigPhase('teardown', 'Rangement', teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
           </div>
+
+          {timerOn && <TimerBar t={timerApi} big />}
 
           {/* Bandeau du jeu */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: '#fff',
@@ -2095,6 +2615,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,168px), 1fr))', gap: 'clamp(8px,.9vw,12px)' }}>
             {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
+            {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
             {tile('👥', teamsOn ? 'La tablée · équipes' : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
@@ -2200,6 +2721,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           {phaseBtn('teardown', { idle: 'Rangement', running: 'Rangement en cours', paused: 'Reprendre le rangement' }, teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
         </div>
 
+        {timerOn && <TimerBar t={timerApi} />}
+
         {/* En-tête de manche (pendant le jeu) */}
         {gamePhase === 'play' && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -2285,6 +2808,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           })}
         </div>
 
+        {/* Minuteur de table : replié par défaut, on ne l'affiche qu'à la demande. */}
+        {!timerOn && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
+            <button type="button" onClick={() => setTimerOn(true)}
+              title="Compte à rebours avec alarme, pour les jeux qui se jouent au sablier"
+              style={{ border: `1.5px solid ${C.navy}33`, background: '#fff', color: `${C.navy}aa`,
+                borderRadius: 999, padding: '9px 18px', fontFamily: TITLE, fontWeight: 600,
+                fontSize: 14.5, cursor: 'pointer' }}>
+              ⏳ Minuteur
+            </button>
+          </div>
+        )}
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
