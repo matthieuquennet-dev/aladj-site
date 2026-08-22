@@ -4778,6 +4778,37 @@ function GuidePage() {
       ],
     },
     {
+      icon: "🔒", title: "Sécurité & vie privée",
+      items: [
+        {
+          q: "Le site est-il sécurisé ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Oui, et voici concrètement ce qui est en place. Toutes les pages sont servies en <b>HTTPS</b> : ce que vous tapez (mot de passe compris) circule chiffré entre votre téléphone et le site. Votre <b>mot de passe n'est jamais visible</b>, ni par le bureau ni par les administrateurs : il est confié au service technique qui gère les connexions, sous forme illisible.</p>
+            <p style={{ margin: "0 0 8px" }}>Les accès sont <b>vérifiés côté serveur</b>, pas seulement masqués à l'écran. C'est ce qui fait, par exemple, qu'un membre non décisionnaire ne peut pas lire les idées et les votes de l'espace décisionnaire, même en bidouillant son navigateur.</p>
+            <p style={{ margin: "0 0 8px" }}>Le site envoie aussi à votre navigateur des <b>consignes de sécurité</b> qui l'empêchent notamment d'afficher aladj.fr à l'intérieur d'un autre site piégé — une technique classique pour vous faire cliquer sur un bouton sans que vous le sachiez.</p>
+            <p style={{ margin: 0 }}>Enfin, les administrateurs réalisent des <b>sauvegardes complètes</b> de la base, notamment avant toute opération sensible.</p>
+          </>,
+        },
+        {
+          q: "Reconnaître un faux e-mail au nom de l'ALADJ",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Point important : <b>l'association n'écrit jamais depuis une adresse en « @aladj.fr »</b>. La seule adresse officielle est <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 700 }}>aladj50200@gmail.com</a>.</p>
+            <p style={{ margin: "0 0 8px" }}>Le domaine aladj.fr est d'ailleurs configuré pour qu'<b>aucun message ne puisse en partir</b> : si vous recevez un e-mail affichant une adresse du type « contact@aladj.fr » ou « tresorier@aladj.fr », c'est une <b>usurpation</b>. Votre messagerie devrait le rejeter d'elle-même ou le classer en indésirable.</p>
+            <p style={{ margin: "0 0 8px" }}>Dans tous les cas, l'ALADJ ne vous demandera <b>jamais par e-mail</b> un RIB, un virement bancaire, un numéro de carte, un code reçu par SMS ou votre mot de passe. La cotisation se règle uniquement selon les moyens décrits dans « Devenir membre décisionnaire » — et <b>les chèques et virements bancaires sont refusés</b>.</p>
+            <p style={{ margin: 0 }}>Les seuls e-mails automatiques du site (inscription, mot de passe oublié, confirmation de cotisation) arrivent de l'adresse de l'association ou du service technique du site, et ne contiennent <b>jamais</b> de demande d'argent. Dans le doute : ne cliquez sur rien et posez la question sur Signal.</p>
+          </>,
+        },
+        {
+          q: "Quelles données le site conserve-t-il ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Uniquement ce que vous y saisissez : votre <b>profil</b> (nom, e-mail, et si vous le souhaitez date de naissance, photo et présentation), votre <b>ludothèque</b>, vos <b>notes et commentaires</b>, vos <b>parties et scores</b>, vos <b>inscriptions aux moments jeux</b> et les <b>images</b> que vous envoyez. Les images sont stockées sur un hébergement séparé du reste des données.</p>
+            <p style={{ margin: "0 0 8px" }}>Ces données servent uniquement à faire fonctionner la vie de l'association. <b>Rien n'est revendu</b>, il n'y a <b>aucune publicité</b> et <b>aucun traceur publicitaire</b> sur le site.</p>
+            <p style={{ margin: 0 }}>Pour corriger une information vous concernant, retirer une photo ou <b>supprimer votre compte</b>, écrivez à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 700 }}>aladj50200@gmail.com</a> : le bureau s'en charge.</p>
+          </>,
+        },
+      ],
+    },
+    {
       icon: "🧰", title: "En cas de pépin",
       items: [
         {
