@@ -916,10 +916,38 @@ function AppProvider({ children }) {
       (guests || []).forEach((g) => { (guestsByEvent[g.event_id] ||= []).push(g); });
       // jeux joués : par moment ET compteur global par jeu
       const eventGamesByEvent = {};
+      // Total de parties par jeu : TOUTES les parties enregistrees par tous les
+      // membres, et non plus les seules declarations faites dans les moments jeux.
+      // Une partie chronometree pendant un moment produit a la fois une ligne de
+      // game_plays et une occurrence declaree dans event_games : on retient le
+      // maximum des deux par couple (moment, jeu) pour ne jamais compter double.
       const playCountByGame = {};
+      const declaredByPair = {};
       (eventGamesRows || []).forEach((eg) => {
         (eventGamesByEvent[eg.event_id] ||= []).push(eg);
-        playCountByGame[eg.game_id] = (playCountByGame[eg.game_id] || 0) + (eg.play_count || 1);
+        if (!eg.game_id) return;
+        const k = eg.event_id + "|" + eg.game_id;
+        declaredByPair[k] = (declaredByPair[k] || 0) + (eg.play_count || 1);
+      });
+      const recordedByPair = {};
+      (gamePlaysRows || []).forEach((gp) => {
+        if (!gp.game_id) return;
+        if (!gp.event_id) {
+          // Partie hors moment jeux (chrono a la maison, saisie manuelle) : elle
+          // compte pour une, sans risque de doublon.
+          playCountByGame[gp.game_id] = (playCountByGame[gp.game_id] || 0) + 1;
+          return;
+        }
+        const k = gp.event_id + "|" + gp.game_id;
+        (recordedByPair[k] ||= new Set()).add(gp.occurrence || 1);
+      });
+      const allPairs = new Set(Object.keys(declaredByPair));
+      Object.keys(recordedByPair).forEach((k) => allPairs.add(k));
+      allPairs.forEach((k) => {
+        const gid = k.slice(k.indexOf("|") + 1);
+        const declared = declaredByPair[k] || 0;
+        const recorded = recordedByPair[k] ? recordedByPair[k].size : 0;
+        playCountByGame[gid] = (playCountByGame[gid] || 0) + Math.max(declared, recorded);
       });
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
@@ -2202,8 +2230,17 @@ function AppProvider({ children }) {
     if (!currentUser || !personalReady) return [];
     const dismissedSet = new Set((eventPlayDismissed || []).map((d) => d.event_id + "|" + d.game_id + "|" + (d.occurrence || 1)));
     const mine = new Set();
+    // Parties chronometrees rattachees a un moment : la tablee y est connue avec
+    // certitude (chaque joueur a son siege dans la session). Il ne faut donc PAS
+    // demander aux autres participants du moment s'ils y ont joue : ils etaient a
+    // une autre table. On releve ces occurrences pour les retirer des suggestions.
+    const chronoByPair = {};
     (plays || []).forEach((pl) => {
       if (pl.eventId && pl.participants.some((pt) => pt.userId === currentUser.id)) mine.add(pl.eventId + "|" + pl.gameId + "|" + (pl.occurrence || 1));
+      if (pl.eventId && pl.gameId && pl.sessionId) {
+        const k = pl.eventId + "|" + pl.gameId;
+        (chronoByPair[k] ||= new Set()).add(pl.occurrence || 1);
+      }
     });
     const today = new Date(); today.setHours(23, 59, 59, 999);
     const out = [];
@@ -2215,7 +2252,16 @@ function AppProvider({ children }) {
         if (!pg.gameId || seen.has(pg.gameId)) return;
         seen.add(pg.gameId);
         const total = Math.max(1, pg.playCount || 1);
-        for (let occ = 1; occ <= total; occ++) {
+        const chronoOcc = chronoByPair[e.id + "|" + pg.gameId] || null;
+        const chronoCount = chronoOcc ? chronoOcc.size : 0;
+        // Seules les parties NON chronometrees restent a confirmer. On raisonne en
+        // nombre plutot qu'en numero d'occurrence : la numerotation cote serveur
+        // peut differer, mais le compte, lui, est juste.
+        const offerable = Math.max(0, total - chronoCount);
+        let offered = 0;
+        for (let occ = 1; occ <= total && offered < offerable; occ++) {
+          if (chronoOcc && chronoOcc.has(occ)) continue;   // cette manche a son chrono
+          offered++;
           const key = e.id + "|" + pg.gameId + "|" + occ;
           if (mine.has(key) || dismissedSet.has(key)) continue;
           out.push({ eventId: e.id, gameId: pg.gameId, gameName: pg.gameName, date: e.date, place: e.place, occurrence: occ, occurrenceTotal: total });
@@ -3457,6 +3503,7 @@ const NAV = [
   { key: "accueil", label: "Accueil", icon: Home },
   { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
+  { key: "chrono", label: "Chrono", icon: Clock },
   { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
   { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
@@ -4281,6 +4328,18 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>,
         },
         {
+          q: "Les jeux les plus joués",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Chaque vignette porte, en bas à droite, le <b>nombre total de parties</b> enregistrées pour ce jeu — toutes parties confondues, par l'ensemble des membres : celles des moments jeux, celles du chronomètre, et celles saisies à la main. Un jeu jamais joué n'affiche aucune pastille.</p>
+            <p style={{ margin: "0 0 8px" }}>Le tri <b>« Les plus joués 🎲 »</b> est proposé dans la <b>Ludothèque</b> comme dans <b>Mon espace</b>, à côté des tris par note et par envies. Il classe du plus joué au moins joué, et départage à égalité par ordre alphabétique.</p>
+            <Illu caption="La pastille des parties, et le tri correspondant.">
+              <MockBtn color={C.navy}>🎲 12</MockBtn>
+              <MockBtn color={C.navy} soft>Les plus joués 🎲</MockBtn>
+            </Illu>
+            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#8a7c6a" }}>À savoir : le compteur ne double jamais une partie chronométrée pendant un moment jeux, même si elle figure à la fois dans les « jeux joués » de la soirée et dans l'historique des joueurs. Il se met à jour au chargement suivant du site.</p>
+          </>,
+        },
+        {
           q: "Les mécaniques de jeu",
           a: <p style={{ margin: 0 }}>Chaque fiche porte des <b>mécaniques</b> (coopératif, jeu de plis, deck-building…) qui alimentent les filtres de la ludothèque et les recommandations. À la création d'une fiche, une liste de suggestions est proposée — et vous pouvez toujours saisir une mécanique personnalisée. Cette liste est entretenue par les administrateurs (depuis <b>Mon espace</b>) : ils peuvent ajouter, renommer, fusionner ou supprimer des mécaniques, et ces changements s'appliquent automatiquement à toutes les fiches — y compris les noms anglais issus des imports BoardGameGeek.</p>,
         },
@@ -4505,6 +4564,7 @@ function GuidePage() {
           q: "Confirmer les parties qui me concernent",
           a: <>
             <p style={{ margin: "0 0 8px" }}>L'encart <b>« Parties à confirmer »</b> de Mon espace regroupe les parties des soirées où vous étiez inscrit et les parties manuelles enregistrées par d'autres. Cochez « j'ai gagné » si c'est le cas, puis :</p>
+            <p style={{ margin: "0 0 8px" }}><b>Les parties chronométrées ne sont plus proposées à toute la soirée.</b> Quand un jeu a été chronométré pendant un moment, la tablée est connue avec certitude : seuls ceux qui étaient réellement au chrono voient la partie arriver. Les autres participants du moment — ceux qui jouaient à une autre table — ne sont plus sollicités. Les parties <b>déclarées à la main</b> dans les « jeux joués » d'un moment, elles, continuent d'être proposées à tous les inscrits, puisque personne ne sait qui y a pris part. Et si un jeu a été joué trois fois mais chronométré une seule, les <b>deux parties restantes</b> vous sont toujours proposées.</p>
             <Illu caption="Tant que vous n'avez pas confirmé, la partie ne compte pas dans vos statistiques.">
               <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49" }}><input type="checkbox" readOnly checked /> j'ai gagné</label>
               <MockBtn color={C.teal}>J'y ai joué</MockBtn>
@@ -4593,9 +4653,30 @@ function GuidePage() {
       icon: "⏱️", title: "Le chronomètre",
       items: [
         {
+          q: "L'onglet « Chrono » : la page dédiée",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le chronomètre a désormais son <b>onglet à lui</b> dans le menu, juste après la Ludothèque. On y trouve, tout en haut, les deux seules choses dont on a besoin autour d'une table : <b>Lancer un chronomètre</b> et <b>Rejoindre une partie</b> avec son code.</p>
+            <p style={{ margin: "0 0 8px" }}>En dessous, chaque fonctionnalité a sa <b>carte dépliable</b> avec un pas à pas illustré : les trois temps, le tour de chacun, les scores, le mode équipe, le minuteur, la vue tablette, l'écran allumé, les points de règle, le changement de jeu, la correction des temps et le rattachement à un moment jeux. La page se termine sur ce que le chrono apporte, aux joueurs comme à l'association.</p>
+            <p style={{ margin: 0 }}>La même tuile <b>lancer / rejoindre</b> reste disponible en bas de la page d'accueil, pour ceux qui arrivent par là.</p>
+          </>,
+        },
+        {
+          q: "Choisir le jeu de la partie",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>L'écran de préparation propose une <b>liste de jeux avec sa barre de recherche</b> : tapez quelques lettres et les propositions se resserrent, exactement comme dans la ludothèque (les accents et la ponctuation ne comptent pas). Chaque ligne rappelle le nombre de parties déjà enregistrées et la durée de la boîte.</p>
+            <p style={{ margin: "0 0 8px" }}>L'ordre des propositions s'adapte à l'endroit d'où vous venez :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>Depuis la <b>fiche d'un jeu</b> : ce jeu est proposé d'office, en tête.</li>
+              <li>Depuis un <b>moment jeux</b> : le <b>dernier jeu ajouté</b> à la soirée arrive en tête, puis les autres jeux du moment du plus récent au plus ancien.</li>
+              <li>Depuis l'<b>accueil</b> ou l'<b>onglet Chrono</b> : les jeux sont classés par nombre total de parties, du plus joué au moins joué.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Dans tous les cas, le reste de la ludothèque suit derrière, et la recherche donne accès à n'importe quel jeu — y compris ceux qui n'étaient pas prévus au programme de la soirée.</p>
+          </>,
+        },
+        {
           q: "Lancer un chrono",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Deux portes d'entrée : la fiche d'un jeu (« <b>Chronométrer une partie</b> ») ou la fiche d'un moment (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée). Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
+            <p style={{ margin: "0 0 8px" }}>Quatre portes d'entrée : la fiche d'un <b>jeu</b> (« <b>Chronométrer une partie</b> »), la fiche d'un <b>moment</b> (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée), l'onglet <b>⏱️ Chrono</b> et la tuile en bas de la <b>page d'accueil</b>. Depuis ces deux dernières, le jeu se choisit sur l'écran de préparation. Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
             <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
             <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
             <p style={{ margin: "8px 0 0" }}><b>Les « jeux joués » du moment se remplissent tout seuls.</b> Le jeu choisi dans le chrono s'ajoute immédiatement à la fiche du moment, et chaque <b>manche supplémentaire</b> relève son compteur de parties. Plus rien à ressaisir après coup — et pas de doublon : les demandes de confirmation envoyées aux participants tiennent compte de ce que le chrono a déjà enregistré. Si vous aviez relevé le compteur à la main pour des parties non chronométrées, votre chiffre est conservé : le chrono ne le fait jamais redescendre.</p>
@@ -4857,6 +4938,301 @@ function GuidePage() {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/* =============================================================================
+   PAGE — LE CHRONOMETRE
+   Vitrine et mode d'emploi illustre. Les illustrations reutilisent les vrais
+   composants du site (MockBtn / Illu) : elles restent fideles a l'interface
+   meme quand celle-ci evolue.
+   ============================================================================= */
+// Une fonctionnalite du chrono : titre, resume, et pas a pas depliable.
+function ChronoFeature({ emoji, color, title, teaser, steps, illu }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background: C.paper, border: `1px solid #ece2d0`, borderRadius: 18, overflow: "hidden", boxShadow: "0 4px 16px rgba(18,41,63,.05)", alignSelf: "start" }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "flex-start", gap: 12, width: "100%", textAlign: "left", padding: "16px 16px", background: "none", border: "none", cursor: "pointer" }}>
+        <span style={{ width: 42, height: 42, borderRadius: 12, background: `${color}1a`, display: "grid", placeItems: "center", fontSize: 21, flexShrink: 0 }}>{emoji}</span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 16.5, lineHeight: 1.2 }}>{title}</span>
+          <span style={{ display: "block", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.5, marginTop: 4 }}>{teaser}</span>
+        </span>
+        <ChevronDown size={18} color="#a89a86" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0, marginTop: 4 }} />
+      </button>
+      {open && (
+        <div style={{ padding: "0 16px 16px" }}>
+          <ol style={{ margin: "0 0 4px", paddingLeft: 20, fontSize: 14, color: "#5e5346", lineHeight: 1.7 }}>
+            {steps.map((st, i) => <li key={i} style={{ marginBottom: 5 }}>{st}</li>)}
+          </ol>
+          {illu}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChronoPage({ onAuth, setPage }) {
+  const { currentUser, openChrono } = useApp();
+  const [code, setCode] = useState("");
+  const join = () => {
+    const c = code.trim().toUpperCase();
+    if (c.length >= 4) openChrono({ joinCode: c });
+  };
+  const launch = () => { if (currentUser) openChrono({}); else onAuth("login"); };
+
+  const features = [
+    {
+      emoji: "📱", color: C.teal, title: "Faire rejoindre toute la tablée",
+      teaser: "Un code à six caractères, un QR code, et chacun suit la partie sur son propre téléphone.",
+      steps: [
+        <>Dès la partie créée, un <b>code</b> et un <b>QR code</b> s'affichent à l'écran.</>,
+        <>Chacun scanne le QR avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — ou saisit le code sur la page d'accueil.</>,
+        <>Les invités non-membres entrent simplement leur prénom : pas besoin de compte.</>,
+        <>Tout le monde voit alors <b>les mêmes chronos, en direct</b>.</>,
+      ],
+      illu: <Illu caption="Le code de la partie, à recopier ou à scanner."><MockBtn color={C.teal}>Rejoindre</MockBtn><MockBtn color={C.navy} soft>VPDMS3</MockBtn></Illu>,
+    },
+    {
+      emoji: "⏱️", color: C.amber, title: "Les trois temps d'une partie",
+      teaser: "Mise en place, jeu, rangement : trois compteurs séparés, pour des statistiques honnêtes.",
+      steps: [
+        <>Au moment de sortir la boîte, appuyez sur <b>Mise en place & explications</b>.</>,
+        <>Quand la partie commence pour de bon : <b>Lancer la partie</b>. Le premier compteur s'arrête, le second démarre.</>,
+        <>À la fin, <b>Rangement</b> compte le temps de tout remettre dans la boîte.</>,
+        <>La « durée de la partie » affichée en haut ne compte que le jeu — c'est elle qui alimente vos statistiques.</>,
+      ],
+      illu: <Illu caption="Les trois boutons de phase, dans l'ordre d'une soirée."><MockBtn color={C.teal}>Mise en place</MockBtn><MockBtn color={C.amber}>Lancer la partie</MockBtn><MockBtn color={C.purple}>Rangement</MockBtn></Illu>,
+    },
+    {
+      emoji: "👆", color: C.navy, title: "À qui le tour ?",
+      teaser: "Chacun mesure son propre temps de réflexion, d'un seul geste.",
+      steps: [
+        <>Sur son téléphone, chaque joueur a un grand bouton <b>« C'est mon tour »</b>.</>,
+        <>Un appui : son chrono personnel démarre et celui du joueur précédent s'arrête.</>,
+        <>Pour les jeux où tout le monde joue en même temps, le mode <b>Simultané</b> fait tourner tous les compteurs à la fois.</>,
+        <>Une interruption ? Le mode <b>Pause</b> gèle tous les compteurs individuels sans arrêter la partie.</>,
+      ],
+      illu: <Illu caption="Le bouton principal de l'écran joueur."><MockBtn color={C.navy}>C'est mon tour</MockBtn><MockBtn color={C.purple} soft>Simultané</MockBtn><MockBtn color={C.amber} soft>Pause</MockBtn></Illu>,
+    },
+    {
+      emoji: "🏆", color: C.amber, title: "Scores et vainqueur automatique",
+      teaser: "Saisissez les points, le site en déduit le gagnant.",
+      steps: [
+        <>Chaque joueur a une <b>pastille de score</b> : touchez-la pour ouvrir le pavé de saisie.</>,
+        <>Les scores sont <b>partagés en direct</b> entre tous les téléphones de la table.</>,
+        <>À la fin, le chrono demande quel score l'emporte : <b>le plus grand</b> ou <b>le plus petit</b>. Le vainqueur se coche tout seul.</>,
+        <>Ce réglage est mémorisé sur la fiche du jeu : la prochaine partie le retrouvera d'office.</>,
+      ],
+      illu: <Illu caption="Le sens du score, demandé une seule fois par jeu."><MockBtn color={C.amber}>Le plus grand gagne</MockBtn><MockBtn color={C.navy} soft>Le plus petit gagne</MockBtn></Illu>,
+    },
+    {
+      emoji: "👥", color: C.purple, title: "Le mode équipe",
+      teaser: "Équipe A, équipe B… les scores et les victoires suivent.",
+      steps: [
+        <>Le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes.</>,
+        <>Chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</>,
+        <>Saisir le score d'un joueur le <b>recopie sur ses coéquipiers</b> : un seul chiffre par équipe.</>,
+        <>Le trophée reste à cocher joueur par joueur, pour que chacun garde sa victoire dans ses statistiques.</>,
+      ],
+      illu: <Illu caption="Composer les équipes en cours de préparation."><MockBtn color={C.purple}>👥 Mode équipe</MockBtn><MockBtn color={C.navy} soft>Équipe A</MockBtn><MockBtn color={C.teal} soft>Seul</MockBtn></Illu>,
+    },
+    {
+      emoji: "⏳", color: C.navy, title: "Le minuteur (le sablier)",
+      teaser: "Un compte à rebours avec alarme, sans sortir un deuxième appareil.",
+      steps: [
+        <>En bas de l'écran du chrono, le bouton <b>⏳ Minuteur</b> fait apparaître une petite zone sous les chronos de phase.</>,
+        <>Réglez la <b>durée</b> avec − et +, ou d'un appui sur un raccourci : 30 s, 1, 2, 3, 5, 10 ou 15 minutes.</>,
+        <>Choisissez l'<b>alarme</b> : bip, canard, carillon doux, percussion de bois, ou aucun son. Toucher un son le fait entendre aussitôt.</>,
+        <><b>▶ Lancer le minuteur</b> ouvre une grande fenêtre lisible de l'autre bout de la table ; les dix dernières secondes passent en orange.</>,
+      ],
+      illu: <Illu caption="Discret par défaut, il ne s'affiche qu'à la demande."><MockBtn color={C.navy} soft>⏳ Minuteur</MockBtn><MockBtn color={C.navy}>▶ Lancer le minuteur</MockBtn></Illu>,
+    },
+    {
+      emoji: "📺", color: C.teal, title: "La vue tablette",
+      teaser: "Une tablette posée au milieu de la table, lisible à un mètre.",
+      steps: [
+        <>Sur un <b>grand écran en paysage</b>, le chrono bascule tout seul sur une disposition dédiée.</>,
+        <>En haut, les <b>trois grands blocs</b> de phase avec leur compteur en très gros caractères.</>,
+        <>En dessous, les joueurs en tuiles : couleur, temps, score, et le trophée.</>,
+        <>Le grand <b>QR de jonction</b> s'affiche d'un appui, pour les retardataires.</>,
+      ],
+      illu: <Illu caption="Le passage en vue tablette est automatique, et forçable à la main."><MockBtn color={C.teal}>Vue tablette</MockBtn><MockBtn color={C.navy} soft>Vue téléphone</MockBtn></Illu>,
+    },
+    {
+      emoji: "☀️", color: C.amber, title: "Garder l'écran allumé",
+      teaser: "Le téléphone ne se met plus en veille tant que la partie tourne.",
+      steps: [
+        <>Pendant une partie, un bouton <b>☀️ Écran allumé</b> apparaît en haut du chrono.</>,
+        <>Tant qu'il est actif, l'appareil <b>ne s'endort plus tout seul</b> : le chrono reste sous les yeux de la tablée.</>,
+        <>Un second appui rend la main à la veille automatique (🌙).</>,
+        <>C'est actif par défaut dès le démarrage, et relâché tout seul à la fin — inutile de vider la batterie sur l'écran de résultats.</>,
+      ],
+      illu: <Illu caption="Un interrupteur, rien de plus."><MockBtn color={C.amber}>☀️ Écran allumé</MockBtn><MockBtn color={C.navy} soft>🌙 Veille normale</MockBtn></Illu>,
+    },
+    {
+      emoji: "📖", color: C.teal, title: "Les points de règle, en pleine partie",
+      teaser: "La mémoire commune de la table, consultable sans quitter le chrono.",
+      steps: [
+        <>Le bouton <b>📖 Règles</b>, en haut de l'écran, ouvre les points de règle du jeu en cours — les mêmes que sur sa fiche.</>,
+        <>Le chiffre entre parenthèses indique combien il y en a déjà.</>,
+        <>Vous pouvez en <b>ajouter un à chaud</b>, corriger ou supprimer les vôtres, puis refermer et reprendre la partie.</>,
+        <>Tout ce qui est écrit ici apparaît immédiatement sur la fiche du jeu, pour tous les membres.</>,
+      ],
+      illu: <Illu caption="Fini le débat qu'on refait à chaque partie."><MockBtn color={C.teal}>📖 Règles (3)</MockBtn><MockBtn color={C.teal} soft>Ajouter un point de règle</MockBtn></Illu>,
+    },
+    {
+      emoji: "🔄", color: C.purple, title: "Changer de jeu, ou enchaîner",
+      teaser: "La tablette reste au milieu de la table toute la soirée.",
+      steps: [
+        <>La boîte est ouverte mais la tablée part sur autre chose ? <b>Changer de jeu</b> remplace le jeu en cours sans rien perturber : mêmes joueurs, mêmes équipes, chronos qui continuent.</>,
+        <>À la fin d'une partie, <b>🎲 Enregistrer et enchaîner un autre jeu</b> classe le résultat puis ouvre la liste des jeux.</>,
+        <>Un clic, et un nouveau chrono démarre avec les mêmes joueurs, les mêmes équipes et les mêmes couleurs.</>,
+        <><b>Tous les téléphones déjà connectés basculent tout seuls</b> : personne n'a à rescanner quoi que ce soit.</>,
+      ],
+      illu: <Illu caption="Deux sorties différentes selon le moment."><MockBtn color={C.purple} soft>🔄 Changer de jeu</MockBtn><MockBtn color={C.purple}>🎲 Enregistrer et enchaîner</MockBtn></Illu>,
+    },
+    {
+      emoji: "🛠️", color: C.red, title: "Corriger les temps",
+      teaser: "L'oubli classique : on lance la partie sans arrêter la mise en place.",
+      steps: [
+        <>Le bouton <b>Corriger les temps</b> ouvre les trois compteurs.</>,
+        <>Un geste suffit pour <b>reporter</b> du temps d'une phase à l'autre — « Mise en place → Partie », avec le nombre de minutes de votre choix.</>,
+        <>Vous pouvez aussi saisir directement les valeurs, minutes et secondes.</>,
+        <>La correction est partagée avec tous les téléphones de la table.</>,
+      ],
+      illu: <Illu caption="Ce qui manque ici est toujours en trop là."><MockBtn color={C.red} soft>Corriger les temps</MockBtn><MockBtn color={C.navy} soft>Mise en place → Partie</MockBtn></Illu>,
+    },
+    {
+      emoji: "📅", color: C.red, title: "Rattaché au moment jeux",
+      teaser: "Lancé depuis un moment, le chrono remplit la fiche de la soirée tout seul.",
+      steps: [
+        <>Depuis la fiche d'un moment, <b>tous les participants sont pré-ajoutés</b> à la partie : il ne reste qu'à retirer ceux qui ne sont pas à cette table-là.</>,
+        <>Le jeu choisi <b>s'ajoute immédiatement aux « jeux joués »</b> du moment, et chaque manche supplémentaire relève son compteur.</>,
+        <>Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche avec un bouton <b>Rejoindre</b> — plutôt que d'en lancer un second sur la même table.</>,
+        <>Seuls les joueurs réellement présents au chrono voient la partie arriver dans leur historique : les autres participants du moment ne sont pas sollicités.</>,
+      ],
+      illu: <Illu caption="Plus rien à ressaisir après la soirée."><MockBtn color={C.red}>Lancer le chrono de la partie</MockBtn><MockBtn color={C.teal} soft>Chrono en cours · Rejoindre</MockBtn></Illu>,
+    },
+  ];
+
+  return (
+    <div>
+      {/* EN-TETE */}
+      <section style={{ background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 100%)`, color: "#fff" }}>
+        <div style={{ maxWidth: 1080, margin: "0 auto", padding: "56px 24px 48px", textAlign: "center" }}>
+          <Badge color={C.amber} soft={false}><Clock size={13} /> Chronomètre de partie</Badge>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(30px,5vw,46px)", margin: "18px 0 10px", letterSpacing: "-0.02em" }}>
+            Chronométrez vos parties
+          </h1>
+          <p style={{ fontSize: "clamp(15px,2.2vw,17.5px)", opacity: .85, lineHeight: 1.6, maxWidth: 640, margin: "0 auto 30px" }}>
+            Un chrono partagé entre tous les téléphones de la table. Il compte la mise en place, le jeu et le rangement,
+            note les scores, désigne le vainqueur, et enregistre la partie dans votre historique — sans rien à ressaisir après coup.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, maxWidth: 820, margin: "0 auto", textAlign: "left" }}>
+            {/* LANCER */}
+            <div style={{ background: "rgba(255,255,255,.1)", border: "1.5px solid rgba(255,255,255,.22)", borderRadius: 20, padding: "24px 22px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ width: 40, height: 40, borderRadius: 12, background: C.amber, display: "grid", placeItems: "center", flexShrink: 0 }}><Clock size={21} color="#fff" /></span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 19 }}>Lancer un chrono</span>
+              </div>
+              <p style={{ fontSize: 14, opacity: .82, lineHeight: 1.55, margin: "0 0 16px" }}>
+                Choisissez le jeu, ajoutez les joueurs — membres ou invités — et c'est parti.
+              </p>
+              <Btn full variant="amber" size="lg" onClick={launch}><Clock size={18} /> Lancer un chronomètre</Btn>
+              {!currentUser && (
+                <p style={{ fontSize: 12.5, opacity: .7, margin: "10px 0 0", textAlign: "center" }}>
+                  Réservé aux membres connectés.
+                </p>
+              )}
+            </div>
+
+            {/* REJOINDRE */}
+            <div style={{ background: "rgba(255,255,255,.1)", border: "1.5px solid rgba(255,255,255,.22)", borderRadius: 20, padding: "24px 22px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ width: 40, height: 40, borderRadius: 12, background: C.teal, display: "grid", placeItems: "center", flexShrink: 0 }}><Users size={21} color="#fff" /></span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 19 }}>Rejoindre une partie</span>
+              </div>
+              <p style={{ fontSize: 14, opacity: .82, lineHeight: 1.55, margin: "0 0 16px" }}>
+                Saisissez le code affiché sur l'écran de l'organisateur. Pas besoin de compte.
+              </p>
+              <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+                <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => { if (e.key === "Enter") join(); }}
+                  placeholder="Ex. VPDMS3" maxLength={8}
+                  style={{ flex: 1, minWidth: 140, padding: "13px 14px", borderRadius: 13, border: "1.5px solid rgba(255,255,255,.35)", fontSize: 18, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, letterSpacing: 4, textAlign: "center", textTransform: "uppercase", color: C.navy, background: "#fff", outline: "none" }} />
+                <Btn variant="teal" onClick={join} disabled={code.trim().length < 4}>Rejoindre</Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+        <svg viewBox="0 0 1440 60" style={{ display: "block", width: "100%", height: 44 }} preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 24 T1440 20 L1440 60 Z" fill={C.cream} /></svg>
+      </section>
+
+      {/* FONCTIONNALITES */}
+      <section style={{ maxWidth: 1180, margin: "0 auto", padding: "44px 24px 12px" }}>
+        <SectionTitle kicker="Mode d'emploi" title="Tout ce que fait le chronomètre" center />
+        <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 15, margin: "12px auto 32px", maxWidth: 620, lineHeight: 1.6 }}>
+          Cliquez sur une carte pour dérouler le pas à pas. Rien n'est obligatoire : le chrono fonctionne très bien
+          en n'utilisant que les trois boutons de phase.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, alignItems: "start" }}>
+          {features.map((f) => <ChronoFeature key={f.title} {...f} />)}
+        </div>
+      </section>
+
+      {/* POURQUOI */}
+      <section style={{ maxWidth: 900, margin: "0 auto", padding: "44px 24px 20px" }}>
+        <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 22, padding: "30px 30px 26px", boxShadow: "0 4px 18px rgba(18,41,63,.05)" }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: "0 0 6px" }}>Pourquoi chronométrer ?</h2>
+          <p style={{ fontSize: 14, color: "#9c8d79", margin: "0 0 20px", fontStyle: "italic" }}>
+            Ce n'est pas une course. Le chrono ne met la pression à personne : il observe, et il retient.
+          </p>
+
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.teal, fontSize: 17, margin: "0 0 8px" }}>Pour vous, joueur</h3>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 8px" }}>
+            <b>Savoir combien de temps ça prend vraiment.</b> La boîte annonce 60 minutes ; chez nous, à cinq, avec les
+            explications, c'est deux heures et quart. Au bout de quelques parties, vous savez ce que vous pouvez lancer
+            un mardi soir à 21 h, et ce qu'il vaut mieux garder pour un dimanche.
+          </p>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 8px" }}>
+            <b>Une partie enregistrée sans effort.</b> Le chrono remplit tout seul votre historique : le jeu, la date,
+            les autres joueurs, les scores, le vainqueur. C'est ce qui alimente vos statistiques, vos badges, votre
+            rétrospective mensuelle et vos jeux les plus joués — sans que vous ayez à ressaisir quoi que ce soit.
+          </p>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 18px" }}>
+            <b>Un accessoire de table.</b> Le minuteur pour les jeux au sablier, les points de règle sous la main,
+            l'écran qui reste allumé, le tour de chacun bien visible : au fond, c'est le seul objet qu'on garde
+            à côté du plateau.
+          </p>
+
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.amber, fontSize: 17, margin: "0 0 8px" }}>Pour l'association</h3>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 8px" }}>
+            <b>Une mémoire collective.</b> Chaque partie chronométrée enrichit la fiche du jeu : durée réelle moyenne,
+            nombre de parties, points de règle tranchés une fois pour toutes. Un membre qui hésite devant une boîte
+            trouve la réponse écrite par ceux qui y ont joué avant lui.
+          </p>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: "0 0 8px" }}>
+            <b>Des jeux qui tournent.</b> Voir les jeux les plus joués, c'est aussi voir ceux qui dorment. La ludothèque
+            de l'asso ne vit que si l'on sort autre chose que les trois valeurs sûres — et pour ça, encore faut-il savoir
+            lesquelles ce sont.
+          </p>
+          <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: 0 }}>
+            <b>Des moments jeux qui se remplissent seuls.</b> Lancé depuis une soirée, le chrono ajoute les jeux joués
+            à la fiche du moment et prévient les bonnes personnes. Personne n'a plus à faire le compte-rendu le lendemain.
+          </p>
+        </div>
+      </section>
+
+      {/* RENVOI VERS LE GUIDE */}
+      <section style={{ maxWidth: 900, margin: "0 auto", padding: "8px 24px 70px", textAlign: "center" }}>
+        <p style={{ fontSize: 14.5, color: "#8a7c6a", margin: "0 0 14px" }}>
+          Une question plus précise ? La section « ⏱️ Le chronomètre » du guide répond en détail, question par question.
+        </p>
+        <Btn variant="soft" onClick={() => setPage("guide")}><HelpCircle size={16} /> Ouvrir le guide</Btn>
+      </section>
     </div>
   );
 }
@@ -5152,14 +5528,24 @@ function HomePage({ setPage, onAuth }) {
         </div>
       </section>
 
-      {/* ---- Chrono : rejoindre une partie en cours ---- */}
+      {/* ---- Chrono : lancer une partie, ou rejoindre celle d'un autre ---- */}
       <section style={{ maxWidth: 1080, margin: "0 auto", padding: "10px 24px" }}>
         <div style={{ background: C.cream, border: `2px solid ${C.teal}33`, borderRadius: 22, padding: "26px 24px", textAlign: "center" }}>
           <Clock size={28} style={{ color: C.teal, marginBottom: 10 }} />
-          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 22, margin: "0 0 6px", color: C.navy }}>Rejoindre une partie chronométrée</h2>
-          <p style={{ fontSize: 14.5, color: C.navy, opacity: .75, margin: "0 0 18px", lineHeight: 1.5, maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
-            Saisissez le code donné par l'organisateur pour suivre votre temps de jeu sur votre téléphone.
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 22, margin: "0 0 6px", color: C.navy }}>Le chronomètre de partie</h2>
+          <p style={{ fontSize: 14.5, color: C.navy, opacity: .75, margin: "0 0 18px", lineHeight: 1.5, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+            Lancez le chrono de votre table, ou saisissez le code donné par l'organisateur pour suivre votre temps de jeu sur votre téléphone.
           </p>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+            <Btn variant="teal" size="lg" onClick={() => { if (currentUser) openChrono({}); else onAuth("login"); }}>
+              <Clock size={19} /> Lancer un chronomètre
+            </Btn>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 440, margin: "0 auto 16px" }}>
+            <span style={{ flex: 1, height: 1, background: "#e2d8c4" }} />
+            <span style={{ fontSize: 12.5, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>ou rejoindre une partie</span>
+            <span style={{ flex: 1, height: 1, background: "#e2d8c4" }} />
+          </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", maxWidth: 440, margin: "0 auto" }}>
             <input
               value={chronoCode}
@@ -5173,6 +5559,10 @@ function HomePage({ setPage, onAuth }) {
               <Clock size={17} /> Rejoindre
             </Btn>
           </div>
+          <button onClick={() => setPage("chrono")}
+            style={{ background: "none", border: "none", cursor: "pointer", marginTop: 16, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.teal, textDecoration: "underline", textUnderlineOffset: 3 }}>
+            Découvrir tout ce que fait le chronomètre →
+          </button>
         </div>
       </section>
 
@@ -7985,6 +8375,12 @@ function GameCard({ g, onOpen, myGame, globalShare, onToggleShare, showBoth, own
               <ChampionBelt belt={belt} size={46} />
             </div>
           )}
+          {(g.playCount || 0) > 0 && (
+            <div title={`${g.playCount} partie${g.playCount > 1 ? "s" : ""} enregistree${g.playCount > 1 ? "s" : ""} par l'ensemble des membres`}
+              style={{ position: "absolute", bottom: 10, right: 10, background: "rgba(26,58,92,.88)", color: "#fff", borderRadius: 999, padding: "3px 9px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }}>
+              <Dice5 size={12} color="#fff" /> {g.playCount}
+            </div>
+          )}
           {bothNotes ? (
             // Deux badges empilés : moyenne (ambre) puis ma note (turquoise)
             <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
@@ -10189,6 +10585,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
+    else if (sort === "played") list = [...list].sort((a, b) => (b.playCount || 0) - (a.playCount || 0) || a.name.localeCompare(b.name, "fr"));
     return list;
   }, [communGames, q, mech, players, duration, year, wantFilter, ownFilter, sort, currentUser]);
 
@@ -10272,6 +10669,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="note">Mieux notés (général)</option>
               <option value="myNote">Mes meilleures notes</option>
+              <option value="played">Les plus joués 🎲</option>
               <option value="wants">Plus d'envies ❤</option>
               <option value="alpha">A → Z</option>
               <option value="recent">Récents</option>
@@ -13387,6 +13785,7 @@ function MyLudoPage({ setToast, setPage }) {
     else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
+    else if (sort === "played") list = [...list].sort((a, b) => (b.playCount || 0) - (a.playCount || 0) || a.name.localeCompare(b.name, "fr"));
     return list;
   }, [allMine, q, mech, players, duration, year, wantFilter, sort, currentUser]);
 
@@ -13815,6 +14214,7 @@ function MyLudoPage({ setToast, setPage }) {
               <option value="alpha">A → Z</option>
               <option value="note">Mieux notés (général)</option>
               <option value="myNote">Mes meilleures notes</option>
+              <option value="played">Les plus joués 🎲</option>
               <option value="wants">Plus d'envies ❤</option>
               <option value="recent">Récents</option>
             </select>
@@ -14073,7 +14473,13 @@ function ResetPasswordModal() {
    ROOT
    ============================================================================= */
 function Shell() {
-  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono, markMomentsSeen, passwordRecovery } = useApp();
+  const { ready, fatalError, currentUser, bannedNotice, setBannedNotice, chrono, closeChrono, markMomentsSeen, passwordRecovery, games } = useApp();
+  // Catalogue transmis au chronometre pour son selecteur de jeu : on y joint le
+  // nombre total de parties, qui donne l'ordre des propositions.
+  const chronoCatalog = useMemo(() => (games || []).map((g) => ({
+    id: g.id, name: g.name, play_time: g.time || null, image_url: g.img || null,
+    score_direction: g.scoreDirection || null, playCount: g.playCount || 0,
+  })), [games]);
   // Retour du paiement en ligne : message + nettoyage de l'URL.
   useEffect(() => {
     try {
@@ -14091,7 +14497,7 @@ function Shell() {
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
-      const valid = ["accueil", "soirees", "ludotheque", "ma-ludo", "a-venir", "locations", "guide"];
+      const valid = ["accueil", "soirees", "ludotheque", "chrono", "ma-ludo", "a-venir", "locations", "guide"];
       return u && valid.includes(u) ? u : "accueil";
     } catch (e) { return "accueil"; }
   });
@@ -14130,6 +14536,7 @@ function Shell() {
         {page === "accueil" && <HomePage setPage={setPage} onAuth={(m) => setAuth(m)} />}
         {page === "soirees" && <EventsPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "ludotheque" && <LudothequePage onAuth={(m) => setAuth(m)} setToast={setToast} setPage={setPage} />}
+        {page === "chrono" && <ChronoPage onAuth={(m) => setAuth(m)} setPage={setPage} />}
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
         {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
@@ -14159,6 +14566,7 @@ function Shell() {
           gameId={chrono.gameId}
           eventId={chrono.eventId}
           joinCode={chrono.joinCode}
+          catalog={chronoCatalog}
           onExit={closeChrono}
         />
       )}
