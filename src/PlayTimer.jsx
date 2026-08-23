@@ -10,6 +10,11 @@
 //   - gameId       : uuid d'un jeu (lancement depuis une fiche de jeu)
 //   - eventId      : uuid d'une soirée (lancement depuis un moment jeux)
 //   - joinCode     : code à 6 caractères (on REJOINT une partie existante)
+//   - catalog      : (optionnel) liste des jeux [{id,name,play_time,image_url,
+//                    score_direction,playCount}] pour le sélecteur de jeu.
+//                    Sans elle, le composant va la chercher lui-même.
+//   Aucune de gameId / eventId / joinCode n'est obligatoire : sans elles, on
+//   lance un chrono « à blanc » et le jeu est choisi sur l'écran de préparation.
 //   - onExit       : callback de fermeture
 //
 //  USAGE
@@ -40,6 +45,9 @@ const fmt = (s) => {
   const pad = (n) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
 };
+// Recherche de jeu : meme normalisation que la barre de la ludotheque.
+const normName = (s) => (s || '').toLowerCase().normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
 const initials = (name = '?') =>
   name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
@@ -1056,7 +1064,7 @@ function Avatar({ name, url, color, size = 44 }) {
   return <div style={st}>{initials(name)}</div>;
 }
 
-export default function PlayTimer({ supabase, currentUser, gameId, eventId, joinCode, onExit }) {
+export default function PlayTimer({ supabase, currentUser, gameId, eventId, joinCode, catalog, onExit }) {
   const [phase, setPhase] = useState('loading'); // loading|setup|lobby|running|done|error
   const [error, setError] = useState(null);
   // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
@@ -1103,6 +1111,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const [eventGames, setEventGames] = useState([]);  // jeux d'une soirée
   const [boxMin, setBoxMin] = useState('');
+  // Selecteur de jeu de l'ecran de preparation.
+  const [gameQuery, setGameQuery] = useState('');
+  const [fallbackCatalog, setFallbackCatalog] = useState([]);
   const [draft, setDraft] = useState([]);            // joueurs à ajouter (avant création)
   const [guestInput, setGuestInput] = useState('');
   // Carnet d'invites du foyer : raccourci de saisie pour les habitues.
@@ -1516,13 +1527,26 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             })));
           }
 
-          const { data: eg } = await supabase.from('event_games').select('game_id').eq('event_id', eventId);
-          const gIds = [...new Set((eg || []).map((r) => r.game_id))];
+          // Le jeu propose d'office est le DERNIER ajoute aux jeux du moment :
+          // c'est celui qu'on vient de poser sur la table. Les autres suivent du
+          // plus recent au plus ancien. Si la colonne created_at n'existe pas, on
+          // se rabat sur l'ordre naturel de la table, inverse.
+          let egRows = [];
+          const egTry = await supabase.from('event_games').select('game_id,created_at')
+            .eq('event_id', eventId).order('created_at', { ascending: false });
+          if (egTry.error) {
+            const egPlain = await supabase.from('event_games').select('game_id').eq('event_id', eventId);
+            egRows = (egPlain.data || []).slice().reverse();
+          } else egRows = egTry.data || [];
+          const gIds = [];
+          egRows.forEach((r) => { if (r.game_id && gIds.indexOf(r.game_id) === -1) gIds.push(r.game_id); });
           let gamesData = [];
           if (gIds.length) {
             const { data } = await supabase.from('games')
               .select('id,name,play_time,image_url,score_direction').in('id', gIds);
-            gamesData = data || [];
+            const byId = {};
+            (data || []).forEach((g) => { byId[g.id] = g; });
+            gamesData = gIds.map((id) => byId[id]).filter(Boolean);   // on garde l'ordre du moment
           }
           setEventGames(gamesData);
           const first = gamesData[0] || null;
@@ -1572,6 +1596,51 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     })();
     return () => { cancelled = true; };
   }, []); // eslint-disable-line
+
+  // ---- catalogue du selecteur de jeu ---------------------------------
+  // App fournit normalement `catalog` (avec le nombre total de parties de chaque
+  // jeu). Utilise seul, le composant va chercher la liste lui-meme.
+  useEffect(() => {
+    if (joinCode) return;                       // on rejoint : pas de choix a faire
+    if (catalog && catalog.length) return;
+    let go = true;
+    (async () => {
+      const { data } = await supabase.from('games')
+        .select('id,name,play_time,image_url,score_direction').order('name');
+      if (go) setFallbackCatalog(data || []);
+    })();
+    return () => { go = false; };
+  }, [catalog, joinCode, supabase]);
+
+  // Ordre des propositions :
+  //   - depuis une fiche de jeu   : ce jeu d'abord ;
+  //   - depuis un moment jeux     : les jeux du moment d'abord, du plus recemment
+  //                                 ajoute au plus ancien ;
+  //   - depuis l'accueil / l'onglet chrono : rien en tete.
+  // Puis, dans tous les cas, le reste de la ludotheque par nombre total de
+  // parties decroissant, et a egalite par ordre alphabetique.
+  const pickerGames = useMemo(() => {
+    const base = (catalog && catalog.length) ? catalog : fallbackCatalog;
+    const byId = new Map();
+    (base || []).forEach((g) => { if (g && g.id) byId.set(g.id, g); });
+    (eventGames || []).forEach((g) => { if (g && !byId.has(g.id)) byId.set(g.id, g); });
+    if (game && game.id && !byId.has(game.id)) byId.set(game.id, game);
+    const head = [];
+    const seen = new Set();
+    const push = (id) => { const g = byId.get(id); if (g && !seen.has(id)) { seen.add(id); head.push(g); } };
+    if (eventId) (eventGames || []).forEach((g) => push(g.id));
+    else if (gameId) push(gameId);
+    const rest = [...byId.values()].filter((g) => !seen.has(g.id))
+      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0)
+        || (a.name || '').localeCompare(b.name || '', 'fr'));
+    return [...head, ...rest];
+  }, [catalog, fallbackCatalog, eventGames, game, eventId, gameId]);
+
+  const pickerHits = useMemo(() => {
+    const q = normName(gameQuery);
+    if (!q) return pickerGames;
+    return pickerGames.filter((g) => normName(g.name).indexOf(q) !== -1);
+  }, [pickerGames, gameQuery]);
 
   // ---- recherche de membres (flux fiche de jeu) ----------------------
   useEffect(() => {
@@ -2219,17 +2288,60 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         )}
         <Card>
           <Label>Jeu</Label>
-          {eventGames.length > 1 ? (
-            <select value={game?.id || ''} style={input}
-              onChange={(e) => { const g = eventGames.find((x) => x.id === e.target.value); setGame(g); setBoxMin(g?.play_time ? String(g.play_time) : ''); }}>
-              {eventGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {game?.image_url && <img src={game.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover' }} />}
-              <div style={{ fontFamily: TITLE, fontSize: 19, fontWeight: 600 }}>{game?.name || '—'}</div>
+          {game ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              {game.image_url
+                ? <img src={game.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', flex: '0 0 auto' }} />
+                : <span style={{ width: 52, height: 52, borderRadius: 10, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: TITLE, fontSize: 19, fontWeight: 600, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game.name}</div>
+                <div style={{ fontSize: 12.5, color: `${C.navy}99` }}>
+                  {(game.playCount || 0) > 0
+                    ? `déjà joué ${game.playCount} fois par l'asso`
+                    : 'jamais joué par l\u2019asso'}
+                  {game.play_time ? ` \u00b7 ${game.play_time} min` : ''}
+                </div>
+              </div>
             </div>
+          ) : (
+            <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '2px 0 12px' }}>
+              Choisissez le jeu de la partie dans la liste ci-dessous.
+            </p>
           )}
+
+          <input value={gameQuery} onChange={(e) => setGameQuery(e.target.value)}
+            placeholder="Chercher un jeu…" style={input} />
+
+          <div style={{ maxHeight: 252, overflowY: 'auto', marginTop: 8, display: 'grid', gap: 6 }}>
+            {pickerHits.length === 0 && (
+              <div style={{ fontSize: 13.5, color: `${C.navy}88`, padding: '8px 2px' }}>Aucun jeu ne correspond.</div>
+            )}
+            {pickerHits.slice(0, 80).map((g) => {
+              const sel = !!game && g.id === game.id;
+              const fromEvent = !!eventId && (eventGames || []).some((x) => x.id === g.id);
+              return (
+                <button key={g.id} type="button"
+                  onClick={() => { setGame(g); setBoxMin(g.play_time ? String(g.play_time) : ''); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', minWidth: 0,
+                    background: sel ? `${C.teal}14` : '#fff', cursor: 'pointer',
+                    border: `1.5px solid ${sel ? C.teal : '#e6dcc9'}`, borderRadius: 12, padding: '7px 10px' }}>
+                  {g.image_url
+                    ? <img src={g.image_url} alt="" style={{ width: 38, height: 38, borderRadius: 9, objectFit: 'cover', flex: '0 0 auto' }} />
+                    : <span style={{ width: 38, height: 38, borderRadius: 9, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 15, lineHeight: 1.2, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                    <span style={{ display: 'block', fontSize: 11.5, color: `${C.navy}88` }}>
+                      {fromEvent ? 'jeu du moment \u00b7 ' : ''}
+                      {(g.playCount || 0) > 0 ? `${g.playCount} partie${g.playCount > 1 ? 's' : ''}` : 'jamais joué'}
+                      {g.play_time ? ` \u00b7 ${g.play_time} min` : ''}
+                    </span>
+                  </span>
+                  {sel && <span style={{ color: C.teal, fontWeight: 800, flex: '0 0 auto' }}>&#10003;</span>}
+                </button>
+              );
+            })}
+          </div>
+
           <div style={{ marginTop: 14 }}>
             <Label>Durée indiquée sur la boîte (min)</Label>
             <input type="number" inputMode="numeric" value={boxMin} placeholder="ex. 90"
@@ -2309,7 +2421,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           </div>
         </Card>
 
-        <button style={{ ...btnPrimary, width: '100%', marginTop: 6 }} onClick={createSession}>
+        <button style={{ ...btnPrimary, width: '100%', marginTop: 6, opacity: game ? 1 : .5, cursor: game ? 'pointer' : 'default' }}
+          disabled={!game} onClick={createSession}>
           Créer la partie
         </button>
         <p style={{ fontSize: 13, color: `${C.navy}99`, textAlign: 'center', marginTop: 10 }}>
