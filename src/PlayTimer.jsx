@@ -445,59 +445,155 @@ const SPEECH_API = (typeof window !== 'undefined')
   ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
   : null;
 
+// iOS ne gere pas le mode "continu" de la reconnaissance vocale : il rend la
+// main sans prevenir. C'est ce qui bloquait le bouton sur "J'ecoute" et laissait
+// l'ecran sans reaction. On enchaine donc des ecoutes courtes sur ces appareils.
+const IS_IOS_LIKE = (typeof navigator !== 'undefined') && (
+  /iP(hone|ad|od)/.test(navigator.userAgent || '')
+  || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
+);
+
+/* ---------------------------------------------------------------------
+   Hauteur reellement visible de l'ecran.
+   Sur iOS, l'ouverture du clavier ne reduit PAS 100vh : le bas d'une modale
+   en position fixe (donc les boutons "Ajouter" et "Dicter") passait sous le
+   clavier, sans aucun moyen d'y revenir. On suit le viewport visuel, qui lui
+   tient compte du clavier.
+   --------------------------------------------------------------------- */
+function useVisualViewport() {
+  const [vv, setVv] = useState(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return undefined;
+    const v = window.visualViewport;
+    const on = () => setVv({ h: Math.round(v.height), top: Math.round(v.offsetTop || 0) });
+    on();
+    v.addEventListener('resize', on);
+    v.addEventListener('scroll', on);
+    return () => { v.removeEventListener('resize', on); v.removeEventListener('scroll', on); };
+  }, []);
+  return vv;
+}
+
 function DictateButton({ onText, big = false, disabled }) {
   const [listening, setListening] = useState(false);
   const [err, setErr] = useState(null);
   const recRef = useRef(null);
+  const wantRef = useRef(false);      // l'utilisateur veut-il encore dicter ?
+  const watchdogRef = useRef(null);
+  const startRef = useRef(null);
+  const onTextRef = useRef(onText);
+  useEffect(() => { onTextRef.current = onText; }, [onText]);
 
-  useEffect(() => () => { try { recRef.current && recRef.current.stop(); } catch (e) {} }, []);
+  // Arret INCONDITIONNEL. Quoi que fasse le navigateur (reconnaissance
+  // fantome, onend jamais emis, micro reste ouvert), l'interface repasse en
+  // mode clavier et le bouton redevient utilisable. C'est le filet de securite
+  // qui manquait : sans lui, l'ecran paraissait fige.
+  const hardStop = useCallback((message) => {
+    wantRef.current = false;
+    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+    const rec = recRef.current;
+    recRef.current = null;
+    if (rec) {
+      rec.onresult = null; rec.onerror = null; rec.onend = null; rec.onstart = null;
+      try { rec.abort(); } catch (e) { /* deja arrete */ }
+      try { rec.stop(); } catch (e) { /* deja arrete */ }
+    }
+    setListening(false);
+    if (message !== undefined) setErr(message);
+  }, []);
 
-  if (!SPEECH_API) return null;
+  const armWatchdog = useCallback(() => {
+    if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    watchdogRef.current = setTimeout(() => {
+      hardStop('Dictée arrêtée automatiquement après 2 minutes sans parole.');
+    }, 120000);
+  }, [hardStop]);
 
-  const toggle = () => {
-    setErr(null);
-    if (listening) { try { recRef.current && recRef.current.stop(); } catch (e) {} return; }
+  const startOnce = useCallback(() => {
+    if (!SPEECH_API || !wantRef.current) return;
     let rec;
-    try { rec = new SPEECH_API(); } catch (e) { setErr("Dictee indisponible sur cet appareil."); return; }
+    try { rec = new SPEECH_API(); } catch (e) { hardStop('Dictée indisponible sur cet appareil.'); return; }
     rec.lang = 'fr-FR';
-    rec.continuous = true;
+    rec.continuous = !IS_IOS_LIKE;
     rec.interimResults = false;
+    rec.maxAlternatives = 1;
     rec.onresult = (ev) => {
       let txt = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         if (ev.results[i].isFinal) txt += ev.results[i][0].transcript;
       }
-      if (txt.trim()) onText(txt.trim());
+      if (txt.trim() && onTextRef.current) onTextRef.current(txt.trim());
+      armWatchdog();
     };
     rec.onerror = (ev) => {
-      setErr(ev?.error === 'not-allowed'
-        ? "Micro refuse : autorisez-le dans les reglages du navigateur."
-        : "La dictee s'est interrompue.");
+      const code = ev && ev.error;
+      // "no-speech" et "aborted" sont normaux : onend relancera l'ecoute.
+      if (code === 'no-speech' || code === 'aborted') return;
+      hardStop((code === 'not-allowed' || code === 'service-not-allowed')
+        ? 'Micro refusé : autorisez-le dans les réglages du navigateur.'
+        : "La dictée s'est interrompue. Vous pouvez la relancer.");
+    };
+    rec.onend = () => {
+      if (recRef.current !== rec) return;   // arret volontaire deja traite
+      recRef.current = null;
+      if (wantRef.current) { setTimeout(() => { if (startRef.current) startRef.current(); }, 250); return; }
       setListening(false);
     };
-    rec.onend = () => setListening(false);
     recRef.current = rec;
-    try { rec.start(); setListening(true); } catch (e) { setErr("Impossible de demarrer la dictee."); }
+    try { rec.start(); armWatchdog(); }
+    catch (e) { hardStop('Impossible de démarrer la dictée.'); }
+  }, [hardStop, armWatchdog]);
+
+  useEffect(() => { startRef.current = startOnce; }, [startOnce]);
+  useEffect(() => () => hardStop(), [hardStop]);
+
+  if (!SPEECH_API) return null;
+
+  const begin = () => {
+    if (listening || disabled) return;
+    setErr(null);
+    // On referme le clavier avant de dicter : c'est plus logique (on parle, on
+    // n'ecrit plus) et cela evite que la fiche soit repoussee hors de l'ecran.
+    try {
+      if (typeof document !== 'undefined' && document.activeElement && document.activeElement.blur) {
+        document.activeElement.blur();
+      }
+    } catch (e) { /* sans gravite */ }
+    wantRef.current = true;
+    setListening(true);
+    startOnce();
   };
 
+  const pad = big ? '11px 18px' : '8px 14px';
+  const fs = big ? 'clamp(15px,1.35vw,20px)' : 14;
+
   return (
-    <div>
-      <button type="button" onClick={toggle} disabled={disabled}
-        title={listening ? 'Arreter la dictee' : 'Dicter le point de regle'}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer',
-          border: `1.5px solid ${listening ? C.red : '#d9cdb6'}`,
-          background: listening ? '#fdecee' : '#fff',
-          color: listening ? C.red : `${C.navy}aa`,
-          borderRadius: 999, padding: big ? '11px 18px' : '8px 14px',
-          fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(15px,1.35vw,20px)' : 14,
-        }}>
-        <span className={listening ? 'aladj-bounce' : undefined} style={{ fontSize: big ? 20 : 16, lineHeight: 1 }}>
-          {listening ? '⏺' : '🎤'}
-        </span>
-        {listening ? "J'écoute… (toucher pour arrêter)" : 'Dicter'}
-      </button>
-      {err && <div style={{ fontSize: 12.5, color: C.red, marginTop: 6, fontWeight: 600 }}>{err}</div>}
+    <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+      {listening ? (
+        // Bouton d'arret dedie (et non un bascule) : son action ne depend
+        // d'aucun etat renvoye par le navigateur, il coupe toujours.
+        <button type="button" onClick={() => hardStop(null)} title="Arrêter la dictée"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+            border: `1.5px solid ${C.red}`, background: '#fdecee', color: C.red,
+            borderRadius: 999, padding: pad, fontFamily: TITLE, fontWeight: 600, fontSize: fs,
+          }}>
+          <span className="aladj-bounce" style={{ fontSize: big ? 20 : 16, lineHeight: 1 }}>⏺</span>
+          J'écoute… — toucher pour arrêter
+        </button>
+      ) : (
+        <button type="button" onClick={begin} disabled={disabled} title="Dicter le point de règle"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 7, cursor: disabled ? 'default' : 'pointer',
+            border: '1.5px solid #d9cdb6', background: '#fff', color: `${C.navy}aa`,
+            borderRadius: 999, padding: pad, fontFamily: TITLE, fontWeight: 600, fontSize: fs,
+            opacity: disabled ? 0.55 : 1,
+          }}>
+          <span style={{ fontSize: big ? 20 : 16, lineHeight: 1 }}>🎤</span>
+          Dicter
+        </button>
+      )}
+      {err && <div style={{ fontSize: 12.5, color: C.red, fontWeight: 600, maxWidth: 320 }}>{err}</div>}
     </div>
   );
 }
@@ -517,6 +613,15 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
   const [editText, setEditText] = useState('');
   const [busy, setBusy] = useState(false);
   const [names, setNames] = useState({});
+  const vv = useVisualViewport();
+
+  // Sortie de secours au clavier (tablette avec clavier, navigateur de bureau).
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from('game_rules')
@@ -567,10 +672,16 @@ function RulesSheet({ supabase, currentUser, isAdmin, gameId, gameName, onClose,
   };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: big ? 'rgba(60,45,25,.5)' : 'rgba(26,58,92,.55)', display: 'flex', alignItems: big ? 'center' : 'flex-end', justifyContent: 'center', padding: big ? '3vh 3vw' : 0 }}>
+    <div onClick={onClose} style={{
+      position: 'fixed', left: 0, right: 0, zIndex: 1200,
+      top: vv ? vv.top : 0, height: vv ? vv.h : '100%',
+      background: big ? 'rgba(60,45,25,.5)' : 'rgba(26,58,92,.55)',
+      display: 'flex', alignItems: big ? 'center' : 'flex-end', justifyContent: 'center',
+      padding: big ? '2vh 3vw' : 0,
+    }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: C.cream, borderRadius: big ? 26 : '20px 20px 0 0', width: '100%', maxWidth: big ? 1000 : 560,
-        maxHeight: big ? '94vh' : '86vh', overflowY: 'auto', padding: big ? 'clamp(20px,2.4vw,34px)' : '16px 16px 24px',
+        maxHeight: '100%', overflowY: 'auto', padding: big ? 'clamp(20px,2.4vw,34px)' : '16px 16px 24px',
         WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
         boxShadow: big ? '0 30px 80px rgba(60,45,25,.35)' : 'none',
       }}>
@@ -1786,6 +1897,29 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     try { await supabase.rpc('aladj_sync_event_game', { p_session_id: sessionId }); } catch (e) { /* sans gravite */ }
   }, [supabase]);
 
+  // (point 4) Une partie chronometree entre directement dans l'historique des
+  // joueurs : sans notification, elle y apparaissait sans que personne ne
+  // l'annonce. Une notification par partie enregistree — donc une par manche
+  // quand on enchaine plusieurs parties du meme jeu.
+  const notifyPlayRecorded = useCallback(async (gameName, gameIdForLink) => {
+    if (!supabase || !currentUser || !currentUser.id) return;
+    const ids = [...new Set((players || [])
+      .map((p) => p.profile_id)
+      .filter((pid) => pid && pid !== currentUser.id))];
+    if (ids.length === 0) return;
+    const label = gameName || 'un jeu';
+    try {
+      await supabase.from('notifications').insert(ids.map((rid) => ({
+        recipient_id: rid,
+        actor_id: currentUser.id,
+        type: 'play_recorded',
+        message: `Une partie de « ${label} » vient d'être ajoutée à votre historique (chronomètre).`,
+        link_kind: gameIdForLink ? 'game' : null,
+        link_id: gameIdForLink || null,
+      })));
+    } catch (e) { /* best effort : jamais bloquant pour le chrono */ }
+  }, [supabase, currentUser, players]);
+
   const start = () => rpc('start_session', { p_session_id: sid });
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
@@ -1793,7 +1927,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const openNewGame = () => { setNewGameWinners(autoWinners); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
-  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
+  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); await notifyPlayRecorded(game?.name, game?.id || session?.game_id); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -1806,6 +1940,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
+    await notifyPlayRecorded(game?.name, game?.id || session?.game_id);
     onExit();
   };
   // (4) Reprendre la main sur une autre session : on remet a zero tout ce qui
@@ -1838,6 +1973,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
         if (e0) throw e0;
         setResultSaved(true);
+        await notifyPlayRecorded(game?.name, game?.id || session?.game_id);
       }
       // 2. Nouvelle session sur le meme moment jeux (s'il y en a un).
       const { data, error: e1 } = await supabase.rpc('create_session', {
