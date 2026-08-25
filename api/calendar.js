@@ -3,7 +3,7 @@
  *  À placer dans  api/calendar.js
  *
  *  Sert un fichier .ics avec les moments jeux : les membres s'y abonnent
- *  depuis Google Agenda / Apple Calendrier et les soirées apparaissent
+ *  depuis Google Agenda / Apple Calendrier et les moments jeux apparaissent
  *  automatiquement dans leur agenda (mises à jour comprises).
  *
  *  Variables d'environnement Vercel (les 2 premières existent déjà
@@ -133,8 +133,8 @@ export default async function handler(req, res) {
     const n = counts[e.id] || 0;
     const quorum = e.min_players ? n >= e.min_players : n > 0;
     const title = e.online
-      ? `🎲 ALADJ — Soirée en ligne (BGA)${quorum ? '' : ' (en attente)'}`
-      : `🎲 ALADJ — Soirée jeux${e.place ? ' · ' + e.place : ''}${quorum ? '' : ' (en attente)'}`;
+      ? `🎲 ALADJ — Moment jeux en ligne (BGA)${quorum ? '' : ' (en attente)'}`
+      : `🎲 ALADJ — Moment jeux${e.place ? ' · ' + e.place : ''}${quorum ? '' : ' (en attente)'}`;
     const descParts = [];
     descParts.push(`${n} inscrit${n > 1 ? 's' : ''}${e.min_players ? ` (minimum ${e.min_players})` : ''}${e.max_players ? ` — maximum ${e.max_players}` : ''}`);
     if (e.notes) descParts.push(e.notes);
