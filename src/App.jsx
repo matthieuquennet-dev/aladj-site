@@ -2106,7 +2106,21 @@ function AppProvider({ children }) {
     const ev = events.find((e) => e.id === eventId);
     const inIt = ev?.players.some((p) => p.id === currentUser.id);
     if (inIt) {
-      await supabase.from("event_players").delete().eq("event_id", eventId).eq("user_id", currentUser.id);
+      const { error: delErr } = await supabase.from("event_players").delete().eq("event_id", eventId).eq("user_id", currentUser.id);
+      if (delErr) { await loadData(); return { error: delErr.message }; }
+      // (point 2) Une défection change la tablée — et fait parfois repasser le
+      // moment sous son minimum. Les autres participants doivent le savoir sans
+      // avoir à rouvrir la fiche.
+      if (ev) {
+        const remaining = (ev.players || []).filter((p) => p.id !== currentUser.id).length + ((ev.guests || []).length);
+        const quorumLost = ev.min != null && remaining < Number(ev.min);
+        await notifyUsers([ev.hostId, ...((ev.players || []).map((p) => p.id))], {
+          type: "event_join",
+          message: `${currentUser.name} s'est désinscrit du moment jeux du ${formatDateFr(ev.date)}`
+            + (quorumLost ? " — le minimum de joueurs n'est plus atteint" : ""),
+          linkKind: "event", linkId: eventId,
+        });
+      }
     } else {
       // Verrou local (48 h apres le debut / date limite d'inscription) : on evite
       // un aller-retour serveur quand la reponse est deja connue.
@@ -2122,7 +2136,7 @@ function AppProvider({ children }) {
     }
     await loadData();
     return {};
-  }, [currentUser, events, loadData]);
+  }, [currentUser, events, loadData, notifyUsers]);
 
   // Retirer une inscription d'un moment jeux.
   // Autorisé pour : le créateur du moment, le participant lui-même, un administrateur.
@@ -4264,6 +4278,14 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Parcourir la veille « À venir » : vue liste et filtres personnels",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>La page <b>À venir</b> s'affiche en <b>grille</b> (les visuels) ou en <b>liste</b> (dense, pour comparer d'un coup d'œil). Le bouton <b>Liste</b> / <b>Grille</b>, à droite des filtres, bascule de l'une à l'autre. La liste montre, pour chaque jeu : la <b>sortie</b>, le nombre de membres <b>intéressés</b>, la <b>hype moyenne</b>, et <b>votre propre vote</b> — votre intention d'achat apparaissant sous le titre.</p>
+            <p style={{ margin: "0 0 8px" }}>Un filtre supplémentaire, réservé aux membres connectés, ne garde que <b>vos</b> fiches : <b>🎯 Mes intentions d'achat</b> (celles où vous vous êtes déclaré acheteur potentiel), <b>🌡️ Ma hype</b> (celles où vous avez voté), ou <b>les deux à la fois</b>. Pratique pour retrouver sa propre liste d'envies au milieu de la veille commune.</p>
+            <p style={{ margin: 0 }}>Enfin, la <b>disponibilité</b> (date de sortie française, « déjà sorti », « sorti en VO ») se renseigne désormais <b>dès la création</b> de la fiche, y compris après un import BoardGameGeek — il n'est plus nécessaire de repasser par « Modifier la fiche ».</p>
+          </>,
+        },
+        {
           q: "Installer le site comme une application sur mon téléphone",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le site s'installe comme une vraie appli, avec son icône : sur <b>iPhone</b>, ouvrez aladj.fr dans Safari → bouton Partager → <b>« Sur l'écran d'accueil »</b>. Sur <b>Android</b>, Chrome propose « Installer l'application » (ou menu ⋮ → Ajouter à l'écran d'accueil).</p>
@@ -4274,6 +4296,11 @@ function GuidePage() {
           q: "Activer les notifications",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, activez les notifications pour être prévenu sur votre téléphone : commentaires sur vos jeux, envies de découverte, invitations aux moments, parties à confirmer, quorum atteint…</p>
+            <p style={{ margin: "0 0 8px" }}>Deux notifications s'y ajoutent :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
+              <li><b>Désinscription d'un moment jeux</b> — quand un inscrit se retire, tous les autres participants (et le créateur) sont prévenus. Si son départ fait repasser le moment <b>sous son minimum de joueurs</b>, la notification le précise : c'est le moment de battre le rappel.</li>
+              <li><b>Partie ajoutée à votre historique</b> — dès qu'une partie chronométrée est enregistrée, chaque joueur membre de la tablée reçoit une notification. <b>Une par partie</b> : trois manches du même jeu donnent trois notifications, et non une seule.</li>
+            </ul>
             <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
           </>,
         },
@@ -4336,7 +4363,7 @@ function GuidePage() {
               <MockBtn color={C.navy}>🎲 12</MockBtn>
               <MockBtn color={C.navy} soft>Les plus joués 🎲</MockBtn>
             </Illu>
-            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#8a7c6a" }}>À savoir : le compteur ne double jamais une partie chronométrée pendant un moment jeux, même si elle figure à la fois dans les « jeux joués » de la soirée et dans l'historique des joueurs. Il se met à jour au chargement suivant du site.</p>
+            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#8a7c6a" }}>À savoir : le compteur ne double jamais une partie chronométrée pendant un moment jeux, même si elle figure à la fois dans les « jeux joués » du moment et dans l'historique des joueurs. Il se met à jour au chargement suivant du site.</p>
           </>,
         },
         {
@@ -4474,7 +4501,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Page <b>Moments jeux</b> → « Proposer un moment jeux » (ou cliquez directement un jour libre du calendrier). Choisissez présentiel ou <b>en ligne sur Board Game Arena</b> — les jeux BGA sont gratuits pour tous grâce au compte premium de l'association.</p>
             <p style={{ margin: "0 0 8px" }}>Une case <b>« Moment jeux privé »</b> (décochée par défaut) permet de réserver le moment aux personnes que vous invitez — voir la question dédiée ci-dessous.</p>
-            <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
+            <p style={{ margin: "0 0 8px" }}>Le <b>nombre de joueurs maximum est obligatoire</b> : c'est lui qui ferme les inscriptions une fois la table complète. Si vous l'oubliez, un message vous le rappelle avant l'enregistrement — auparavant, la création échouait sur un message technique incompréhensible.</p>
+            <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. De même, <b>toute désinscription prévient les autres participants</b>, en signalant le cas échéant que le minimum n'est plus atteint. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
           </>,
         },
         {
@@ -4544,12 +4572,12 @@ function GuidePage() {
               </span>
             </Illu>
             <p style={{ margin: "6px 0 8px" }}>Chaque participant recevra ensuite une suggestion par partie (« Catan — partie 2/3 ») à confirmer dans son espace.</p>
-            <p style={{ margin: 0 }}><b>Qui peut modifier cette liste ?</b> <b>Tous les membres présents au moment</b> (les inscrits et le créateur), ainsi que les <b>administrateurs</b> — et personne d'autre. Chacun peut ajouter un jeu, changer son nombre de parties ou le retirer, sans avoir à être celui qui l'a ajouté : c'est la mémoire commune de la soirée, on la tient à plusieurs.</p>
+            <p style={{ margin: 0 }}><b>Qui peut modifier cette liste ?</b> <b>Tous les membres présents au moment</b> (les inscrits et le créateur), ainsi que les <b>administrateurs</b> — et personne d'autre. Chacun peut ajouter un jeu, changer son nombre de parties ou le retirer, sans avoir à être celui qui l'a ajouté : c'est la mémoire commune du moment jeux, on la tient à plusieurs.</p>
           </>,
         },
         {
           q: "Recevoir les moments dans mon agenda personnel",
-          a: <p style={{ margin: 0 }}>Sous la légende du calendrier, <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les soirées apparaissent ensuite toutes seules dans votre agenda (les moments en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
+          a: <p style={{ margin: 0 }}>Sous la légende du calendrier, <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les moments jeux apparaissent ensuite tout seuls dans votre agenda (ceux en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
         },
       ],
     },
@@ -4563,8 +4591,8 @@ function GuidePage() {
         {
           q: "Confirmer les parties qui me concernent",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>L'encart <b>« Parties à confirmer »</b> de Mon espace regroupe les parties des soirées où vous étiez inscrit et les parties manuelles enregistrées par d'autres. Cochez « j'ai gagné » si c'est le cas, puis :</p>
-            <p style={{ margin: "0 0 8px" }}><b>Les parties chronométrées ne sont plus proposées à toute la soirée.</b> Quand un jeu a été chronométré pendant un moment, la tablée est connue avec certitude : seuls ceux qui étaient réellement au chrono voient la partie arriver. Les autres participants du moment — ceux qui jouaient à une autre table — ne sont plus sollicités. Les parties <b>déclarées à la main</b> dans les « jeux joués » d'un moment, elles, continuent d'être proposées à tous les inscrits, puisque personne ne sait qui y a pris part. Et si un jeu a été joué trois fois mais chronométré une seule, les <b>deux parties restantes</b> vous sont toujours proposées.</p>
+            <p style={{ margin: "0 0 8px" }}>L'encart <b>« Parties à confirmer »</b> de Mon espace regroupe les parties des moments jeux où vous étiez inscrit et les parties manuelles enregistrées par d'autres. Cochez « j'ai gagné » si c'est le cas, puis :</p>
+            <p style={{ margin: "0 0 8px" }}><b>Les parties chronométrées ne sont plus proposées à tout le moment jeux.</b> Quand un jeu a été chronométré pendant un moment, la tablée est connue avec certitude : seuls ceux qui étaient réellement au chrono voient la partie arriver. Les autres participants du moment — ceux qui jouaient à une autre table — ne sont plus sollicités. Les parties <b>déclarées à la main</b> dans les « jeux joués » d'un moment, elles, continuent d'être proposées à tous les inscrits, puisque personne ne sait qui y a pris part. Et si un jeu a été joué trois fois mais chronométré une seule, les <b>deux parties restantes</b> vous sont toujours proposées.</p>
             <Illu caption="Tant que vous n'avez pas confirmé, la partie ne compte pas dans vos statistiques.">
               <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49" }}><input type="checkbox" readOnly checked /> j'ai gagné</label>
               <MockBtn color={C.teal}>J'y ai joué</MockBtn>
@@ -4667,16 +4695,16 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>L'ordre des propositions s'adapte à l'endroit d'où vous venez :</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li>Depuis la <b>fiche d'un jeu</b> : ce jeu est proposé d'office, en tête.</li>
-              <li>Depuis un <b>moment jeux</b> : le <b>dernier jeu ajouté</b> à la soirée arrive en tête, puis les autres jeux du moment du plus récent au plus ancien.</li>
+              <li>Depuis un <b>moment jeux</b> : le <b>dernier jeu ajouté</b> au moment arrive en tête, puis les autres jeux du moment du plus récent au plus ancien.</li>
               <li>Depuis l'<b>accueil</b> ou l'<b>onglet Chrono</b> : les jeux sont classés par nombre total de parties, du plus joué au moins joué.</li>
             </ul>
-            <p style={{ margin: 0 }}>Dans tous les cas, le reste de la ludothèque suit derrière, et la recherche donne accès à n'importe quel jeu — y compris ceux qui n'étaient pas prévus au programme de la soirée.</p>
+            <p style={{ margin: 0 }}>Dans tous les cas, le reste de la ludothèque suit derrière, et la recherche donne accès à n'importe quel jeu — y compris ceux qui n'étaient pas prévus au programme du moment.</p>
           </>,
         },
         {
           q: "Lancer un chrono",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Quatre portes d'entrée : la fiche d'un <b>jeu</b> (« <b>Chronométrer une partie</b> »), la fiche d'un <b>moment</b> (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée à la soirée), l'onglet <b>⏱️ Chrono</b> et la tuile en bas de la <b>page d'accueil</b>. Depuis ces deux dernières, le jeu se choisit sur l'écran de préparation. Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
+            <p style={{ margin: "0 0 8px" }}>Quatre portes d'entrée : la fiche d'un <b>jeu</b> (« <b>Chronométrer une partie</b> »), la fiche d'un <b>moment</b> (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée au moment jeux), l'onglet <b>⏱️ Chrono</b> et la tuile en bas de la <b>page d'accueil</b>. Depuis ces deux dernières, le jeu se choisit sur l'écran de préparation. Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
             <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
             <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
             <p style={{ margin: "8px 0 0" }}><b>Les « jeux joués » du moment se remplissent tout seuls.</b> Le jeu choisi dans le chrono s'ajoute immédiatement à la fiche du moment, et chaque <b>manche supplémentaire</b> relève son compteur de parties. Plus rien à ressaisir après coup — et pas de doublon : les demandes de confirmation envoyées aux participants tiennent compte de ce que le chrono a déjà enregistré. Si vous aviez relevé le compteur à la main pour des parties non chronométrées, votre chiffre est conservé : le chrono ne le fait jamais redescendre.</p>
@@ -4714,6 +4742,7 @@ function GuidePage() {
           q: "Rejoindre une partie en scannant un QR code",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dès qu'un chrono est lancé, un <b>QR code</b> s'affiche à côté du code à six caractères. Chacun le scanne avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — et arrive directement dans la partie, sans rien saisir.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>points de règle</b> se dictent à la voix (bouton <b>🎤 Dicter</b>) : plus commode qu'un clavier à une main au milieu d'une table. Le clavier se referme au démarrage de la dictée, et le bouton rouge <b>« J'écoute… — toucher pour arrêter »</b> coupe l'écoute à coup sûr. Sans parole pendant deux minutes, elle s'arrête toute seule. La dictée n'apparaît que sur les navigateurs qui la gèrent (Chrome, Safari) ; ailleurs, la saisie au clavier reste disponible.</p>
             <p style={{ margin: "0 0 8px" }}>En <b>vue tablette</b>, le code affiché dans le bandeau du jeu est cliquable : il ouvre un grand QR au centre de l'écran, lisible depuis l'autre bout de la table. Pratique quand un joueur arrive en cours de soirée.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>Le QR est fabriqué par le site lui-même, sans passer par aucun service extérieur : le code de votre partie ne quitte jamais votre navigateur.</p>
           </>,
@@ -4799,7 +4828,7 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}><b>Le même membre n'apparaît plus deux fois.</b> Si l'organisateur vous a déjà ajouté à la partie et que vous la rejoignez ensuite depuis votre téléphone, le chrono <b>reconnaît votre ligne</b> et vous la rend, au lieu d'en créer une seconde à votre nom.</p>
             <p style={{ margin: "0 0 8px" }}><b>Une partie jouée = un enregistrement.</b> Quand un jeu est à la fois déclaré dans les « jeux joués » d'un moment et chronométré, les deux ne se cumulent plus : <b>c'est le chrono qui fait foi</b> (il a les durées et les scores) et la partie déclarée à la main qu'il recouvre est absorbée.</p>
-            <p style={{ margin: 0 }}>Les vrais multiples restent bien comptés : si vous annoncez <b>3 parties</b> d'un jeu dans la soirée et n'en chronométrez qu'une, vous obtenez bien <b>3 enregistrements</b> — un chronométré et deux déclarés. Deux chronos successifs du même jeu comptent également pour deux parties. Un jeu chronométré depuis un moment s'ajoute par ailleurs tout seul à ses « jeux joués », pour que les autres participants reçoivent leur demande de confirmation.</p>
+            <p style={{ margin: 0 }}>Les vrais multiples restent bien comptés : si vous annoncez <b>3 parties</b> d'un jeu dans le moment et n'en chronométrez qu'une, vous obtenez bien <b>3 enregistrements</b> — un chronométré et deux déclarés. Deux chronos successifs du même jeu comptent également pour deux parties. Un jeu chronométré depuis un moment s'ajoute par ailleurs tout seul à ses « jeux joués », pour que les autres participants reçoivent leur demande de confirmation.</p>
           </>,
         },
       ],
@@ -5106,14 +5135,14 @@ function ChronoPage({ onAuth, setPage }) {
     },
     {
       emoji: "📅", color: C.red, title: "Rattaché au moment jeux",
-      teaser: "Lancé depuis un moment, le chrono remplit la fiche de la soirée tout seul.",
+      teaser: "Lancé depuis un moment, le chrono remplit sa fiche tout seul.",
       steps: [
         <>Depuis la fiche d'un moment, <b>tous les participants sont pré-ajoutés</b> à la partie : il ne reste qu'à retirer ceux qui ne sont pas à cette table-là.</>,
         <>Le jeu choisi <b>s'ajoute immédiatement aux « jeux joués »</b> du moment, et chaque manche supplémentaire relève son compteur.</>,
         <>Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche avec un bouton <b>Rejoindre</b> — plutôt que d'en lancer un second sur la même table.</>,
         <>Seuls les joueurs réellement présents au chrono voient la partie arriver dans leur historique : les autres participants du moment ne sont pas sollicités.</>,
       ],
-      illu: <Illu caption="Plus rien à ressaisir après la soirée."><MockBtn color={C.red}>Lancer le chrono de la partie</MockBtn><MockBtn color={C.teal} soft>Chrono en cours · Rejoindre</MockBtn></Illu>,
+      illu: <Illu caption="Plus rien à ressaisir après le moment jeux."><MockBtn color={C.red}>Lancer le chrono de la partie</MockBtn><MockBtn color={C.teal} soft>Chrono en cours · Rejoindre</MockBtn></Illu>,
     },
   ];
 
@@ -5220,7 +5249,7 @@ function ChronoPage({ onAuth, setPage }) {
             lesquelles ce sont.
           </p>
           <p style={{ fontSize: 15, color: "#5e5346", lineHeight: 1.7, margin: 0 }}>
-            <b>Des moments jeux qui se remplissent seuls.</b> Lancé depuis une soirée, le chrono ajoute les jeux joués
+            <b>Des moments jeux qui se remplissent seuls.</b> Lancé depuis un moment, le chrono ajoute les jeux joués
             à la fiche du moment et prévient les bonnes personnes. Personne n'a plus à faire le compte-rendu le lendemain.
           </p>
         </div>
@@ -7022,7 +7051,7 @@ function CalendarSubscribeModal({ onClose, setToast }) {
   return (
     <Modal open onClose={onClose} title="S'abonner au calendrier" width={560}>
       <p style={{ fontSize: 14, color: "#6e6256", lineHeight: 1.55, margin: "0 0 14px" }}>
-        Ajoutez les moments jeux directement dans votre agenda personnel : les soirées (et leurs modifications) apparaîtront automatiquement, sans rien faire. Les soirées « en attente » de joueurs sont marquées comme provisoires.
+        Ajoutez les moments jeux directement dans votre agenda personnel : les moments (et leurs modifications) apparaîtront automatiquement, sans rien faire. Les moments « en attente » de joueurs sont marqués comme provisoires.
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center", background: "#fff", border: "1.5px solid #e6dcc9", borderRadius: 11, padding: "9px 12px", marginBottom: 16 }}>
         <span style={{ flex: 1, fontSize: 12.5, color: C.navy, wordBreak: "break-all", fontFamily: "monospace" }}>{CALENDAR_FEED_URL}</span>
@@ -7334,8 +7363,13 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     setErr("");
     if (!f.date || !f.time || (!f.online && !f.place.trim())) { setErr("Renseignez la date, l'heure et le lieu."); return; }
     const minN = Number(f.min) || 1;
-    const maxN = f.max === "" || f.max == null ? null : Number(f.max); // null = pas de limite
-    if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
+    // (point 3) La base refuse un maximum vide. Plutot que de laisser remonter
+    // un message technique (« null value in column max_players... »), on le dit
+    // en francais, avant meme d'appeler le serveur.
+    if (f.max === "" || f.max == null) { setErr("Indiquez le nombre de joueurs maximum : il est nécessaire pour créer le moment jeux."); return; }
+    const maxN = Number(f.max);
+    if (!Number.isFinite(maxN) || maxN < 1) { setErr("Le nombre de joueurs maximum doit être un nombre entier d'au moins 1."); return; }
+    if (minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) {
       deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
@@ -7401,7 +7435,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} max={30} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
-        <Field label="Joueurs max." hint="Laisser vide = illimité"><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="illimité" /></Field>
+        <Field label="Joueurs max. *" hint="Obligatoire — au-delà, les inscriptions sont refusées."><TextInput type="number" min={1} max={40} value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder="Ex. 8" /></Field>
       </div>
 
       {/* m'inscrire moi-même */}
@@ -7981,8 +8015,10 @@ function EditEventModal({ e, onClose, onSave }) {
     setErr("");
     if (!f.date || !f.time || (!f.online && !f.place.trim())) { setErr("Renseignez la date, l'heure et le lieu."); return; }
     const minN = Number(f.min) || 1;
-    const maxN = f.max === "" || f.max == null ? null : Number(f.max);
-    if (maxN != null && minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
+    if (f.max === "" || f.max == null) { setErr("Indiquez le nombre de joueurs maximum : il est nécessaire pour enregistrer le moment jeux."); return; }
+    const maxN = Number(f.max);
+    if (!Number.isFinite(maxN) || maxN < 1) { setErr("Le nombre de joueurs maximum doit être un nombre entier d'au moins 1."); return; }
+    if (minN > maxN) { setErr("Le minimum ne peut pas dépasser le maximum."); return; }
     let deadline = null;
     if (f.useDeadline && f.deadlineDate && f.deadlineTime) deadline = new Date(`${f.deadlineDate}T${f.deadlineTime}:00`).toISOString();
     let signupDeadline = null;
@@ -8024,7 +8060,7 @@ function EditEventModal({ e, onClose, onSave }) {
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Joueurs min."><TextInput type="number" min={1} value={f.min} onChange={(ev) => setF({ ...f, min: ev.target.value })} /></Field>
-        <Field label="Joueurs max." hint="Vide = illimité"><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="illimité" /></Field>
+        <Field label="Joueurs max. *" hint="Obligatoire — au-delà, les inscriptions sont refusées."><TextInput type="number" min={1} value={f.max} onChange={(ev) => setF({ ...f, max: ev.target.value })} placeholder="Ex. 8" /></Field>
       </div>
       <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, background: f.isPrivate ? "rgba(107,58,122,.1)" : "rgba(26,58,92,.05)", border: `1.5px solid ${f.isPrivate ? C.purple : "transparent"}`, marginBottom: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={f.isPrivate} onChange={(ev) => setF({ ...f, isPrivate: ev.target.checked })} style={{ width: 18, height: 18, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
@@ -9759,6 +9795,8 @@ function UpcomingPage({ onAuth, setToast }) {
   const [sort, setSort] = useState("release");
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState("grid");   // (point 6) "grid" | "list"
+  const [mine, setMine] = useState("");       // (point 7) "" | "intent" | "hype" | "both"
 
   const allMechanics = useMemo(() => {
     const s = new Set();
@@ -9767,10 +9805,23 @@ function UpcomingPage({ onAuth, setToast }) {
   }, [upcoming]);
 
   const filtered = useMemo(() => {
+    const uid = currentUser?.id;
+    // (point 7) Deux lectures personnelles de la veille : « ce que je compte
+    // acheter » et « ce qui me fait envie ». Sans membre connecte, le filtre
+    // n'est pas propose et ne s'applique donc jamais.
+    const mineOk = (u) => {
+      if (!mine || !uid) return true;
+      const hasIntent = INTENT_INTERESTED.includes((u.intents || {})[uid]);
+      const hasHype = ((u.hypes || {})[uid] || 0) > 0;
+      if (mine === "intent") return hasIntent;
+      if (mine === "hype") return hasHype;
+      if (mine === "both") return hasIntent && hasHype;
+      return true;
+    };
     let list = upcoming.filter((u) => {
       const okQ = !q || u.name.toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (u.mechanics || []).includes(mech);
-      return okQ && okM;
+      return okQ && okM && mineOk(u);
     }).map((u) => {
       const st = upcomingStats(u);
       return { ...u, _avg: st.avg, _count: st.count };
@@ -9782,7 +9833,7 @@ function UpcomingPage({ onAuth, setToast }) {
     else if (sort === "year") list.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
     else if (sort === "recent") list.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [upcoming, q, mech, sort]);
+  }, [upcoming, q, mech, sort, mine, currentUser]);
 
   // Top 20 : toutes les fiches qui ont au moins 1 vote (différence avec ludothèque !)
   const top = useMemo(() => {
@@ -9818,6 +9869,15 @@ function UpcomingPage({ onAuth, setToast }) {
               <option value="">Toutes mécaniques</option>
               {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
+            {currentUser && (
+              <select value={mine} onChange={(e) => setMine(e.target.value)} title="Ne garder que les fiches sur lesquelles je me suis prononcé"
+                style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: mine ? C.amber : undefined }}>
+                <option value="">Toutes les fiches</option>
+                <option value="intent">🎯 Mes intentions d'achat</option>
+                <option value="hype">🌡️ Ma hype</option>
+                <option value="both">Les deux à la fois</option>
+              </select>
+            )}
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="release">Date de sortie</option>
               <option value="intent">Intention d'achat</option>
@@ -9826,10 +9886,56 @@ function UpcomingPage({ onAuth, setToast }) {
               <option value="year">Année (récent)</option>
               <option value="recent">Récemment ajoutés</option>
             </select>
+            <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
+              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
+              {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
+            </button>
           </div>
 
           {filtered.length === 0 ? (
-            <EmptyHint icon={Sparkles} text={upcoming.length === 0 ? "Aucun jeu en veille pour l'instant. Ajoutez-en un pour lancer le suivi !" : "Aucun jeu ne correspond aux filtres."} />
+            <EmptyHint icon={Sparkles} text={
+              upcoming.length === 0 ? "Aucun jeu en veille pour l'instant. Ajoutez-en un pour lancer le suivi !"
+                : mine === "intent" ? "Vous n'avez encore déclaré aucune intention d'achat. Ouvrez une fiche pour vous prononcer."
+                : mine === "hype" ? "Vous n'avez encore voté sur aucune fiche. Ouvrez-en une pour faire grimper le thermomètre."
+                : mine === "both" ? "Aucune fiche ne réunit à la fois votre intention d'achat et votre vote de hype."
+                : "Aucun jeu ne correspond aux filtres."} />
+          ) : view === "list" ? (
+            /* (point 6) Vue liste : la grille est jolie, mais pour comparer une
+               trentaine de sorties, une liste dense se parcourt bien plus vite. */
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
+                <span style={{ width: 128, flexShrink: 0 }} className="aladj-upc-col">Sortie</span>
+                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Membres intéressés par l'achat">Intérêt</span>
+                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Hype moyenne">Hype</span>
+                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Ma hype">La mienne</span>
+              </div>
+              {filtered.map((u) => {
+                const st = releaseState(u);
+                const myHype = currentUser ? ((u.hypes || {})[currentUser.id] || 0) : 0;
+                const myIntent = currentUser ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[currentUser.id]) : null;
+                const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length
+                  + (u.ludoOwners || []).length;
+                return (
+                  <button key={u.id} onClick={() => setSelected(u.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(232,163,23,.06)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                      {myIntent && <span style={{ display: "block", fontSize: 11.5, color: myIntent.color, fontWeight: 700, marginTop: 1 }}>🎯 {myIntent.label}</span>}
+                    </span>
+                    <span style={{ width: 128, flexShrink: 0, fontSize: 12, color: st.kind === "soon" ? C.amber : "#8a7c6a", fontWeight: st.kind === "soon" ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="aladj-upc-col">
+                      {st.kind === "unknown" ? (u.year ? String(u.year) : "—") : st.label}
+                    </span>
+                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wanted ? C.amber : "#cdbfa8" }}>{wanted || "—"}</span>
+                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._count ? (HYPE_LABELS[Math.round(u._avg)] || HYPE_LABELS[1]).color : "#cdbfa8" }}>
+                      {u._count ? u._avg.toFixed(1).replace(".", ",") : "—"}
+                    </span>
+                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: myHype ? HYPE_LABELS[myHype].color : "#cdbfa8" }}>{myHype || "—"}</span>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
               {filtered.map((u) => <UpcomingCard key={u.id} u={u} onOpen={() => setSelected(u.id)} currentUserId={currentUser?.id} />)}
@@ -11345,6 +11451,30 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           <TextInput type="number" step="0.01" value={preview.newPrice ?? ""} onChange={(e) => updatePreview({ newPrice: e.target.value })} placeholder="50" />
         </Field>
 
+        {/* (point 5) Disponibilité : jusqu'ici, elle n'était saisissable qu'en
+            repassant par « Modifier la fiche » après création. Même bloc que la
+            saisie manuelle, pour que les deux chemins se ressemblent. */}
+        {forUpcoming && (
+          <div style={{ background: "rgba(232,163,23,.07)", border: `1px solid ${C.amber}33`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+            <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.navy, marginBottom: 8 }}>Disponibilité</span>
+            <Field label="Date de sortie en France" hint="Laissez vide si elle n'est pas encore annoncée.">
+              <TextInput type="date" value={preview.releaseDate || ""} onChange={(e) => updatePreview({ releaseDate: e.target.value })} />
+            </Field>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginBottom: 7 }}>
+              <input type="checkbox" checked={!!preview.released} onChange={(e) => updatePreview({ released: e.target.checked })} style={{ marginTop: 3, accentColor: C.teal }} />
+              <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+                <b>Déjà sorti</b> — le jeu est disponible en boutique. À cocher quand la date exacte vous échappe : la mention « Jeu disponible » apparaîtra quand même.
+              </span>
+            </label>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!preview.voReleased} onChange={(e) => updatePreview({ voReleased: e.target.checked })} style={{ marginTop: 3, accentColor: C.purple }} />
+              <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+                <b>Sorti en VO</b> — disponible à l'étranger, pas encore traduit. Sans date française, la fiche affichera « Sorti en VO ».
+              </span>
+            </label>
+          </div>
+        )}
+
         <Field label="Mécaniques" hint="Décochez celles avec lesquelles vous n'êtes pas d'accord, cochez-en d'autres, ou ajoutez-en de personnalisées.">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {[...new Set([...MECHANIC_SUGGESTIONS, ...(preview.mechanics || [])])].map((m) => {
@@ -11422,6 +11552,11 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
             // avant de déverrouiller : c'est ce qui empêche les doublons.
             await onDone({
               ...preview,
+              ...(forUpcoming ? {
+                releaseDate: preview.releaseDate || null,
+                released: !!preview.released,
+                voReleased: !!preview.voReleased,
+              } : {}),
               selfOwns: forUpcoming ? true : (ownership === "self" || ownership === "both"),
               forUserIds: forUpcoming ? [] : ((ownership === "other" || ownership === "both") ? forUserIds : []),
             });
@@ -11914,7 +12049,7 @@ function EventPlaySuggestions() {
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "10px 13px" }}>
               <div style={{ flex: 1, minWidth: 150 }}>
                 <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>{s.gameName}{s.occurrenceTotal > 1 ? <span style={{ color: C.teal, fontSize: 13 }}> — partie {s.occurrence}/{s.occurrenceTotal}</span> : null}</div>
-                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Soirée du {new Date(s.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{s.place ? " · " + s.place : ""}</div>
+                <div style={{ fontSize: 12.5, color: "#9c8d79" }}>Moment jeux du {new Date(s.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}{s.place ? " · " + s.place : ""}</div>
               </div>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "#6b5d49", cursor: "pointer" }}>
                 <input type="checkbox" checked={won} onChange={() => setWonSet((p) => ({ ...p, [k]: !won }))} /> j'ai gagné
