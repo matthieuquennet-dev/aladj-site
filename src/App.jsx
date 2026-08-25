@@ -4282,7 +4282,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>La page <b>À venir</b> s'affiche en <b>grille</b> (les visuels) ou en <b>liste</b> (dense, pour comparer d'un coup d'œil). Le bouton <b>Liste</b> / <b>Grille</b>, à droite des filtres, bascule de l'une à l'autre. La liste montre, pour chaque jeu : la <b>sortie</b>, le nombre de membres <b>intéressés</b>, la <b>hype moyenne</b>, et <b>votre propre vote</b> — votre intention d'achat apparaissant sous le titre.</p>
             <p style={{ margin: "0 0 8px" }}>Un filtre supplémentaire, réservé aux membres connectés, ne garde que <b>vos</b> fiches : <b>🎯 Mes intentions d'achat</b> (celles où vous vous êtes déclaré acheteur potentiel), <b>🌡️ Ma hype</b> (celles où vous avez voté), ou <b>les deux à la fois</b>. Pratique pour retrouver sa propre liste d'envies au milieu de la veille commune.</p>
-            <p style={{ margin: 0 }}>Enfin, la <b>disponibilité</b> (date de sortie française, « déjà sorti », « sorti en VO ») se renseigne désormais <b>dès la création</b> de la fiche, y compris après un import BoardGameGeek — il n'est plus nécessaire de repasser par « Modifier la fiche ».</p>
+            <p style={{ margin: "0 0 8px" }}>La <b>disponibilité</b> (date de sortie française, « déjà sorti », « sorti en VO ») se renseigne désormais <b>dès la création</b> de la fiche, y compris après un import BoardGameGeek — il n'est plus nécessaire de repasser par « Modifier la fiche ». Un bloc <b>« Mon avis »</b> y est également proposé : vous pouvez poser <b>votre hype</b> et <b>votre intention d'achat</b> dans la foulée, au moment où vous avez le jeu en tête. Tout reste modifiable ensuite depuis la fiche.</p>
+            <p style={{ margin: 0 }}>Enfin, le tri <b>« Score d'intérêt »</b> résume en un seul chiffre ce que l'association pense d'un jeu. Il additionne <b>{INTEREST_OWNER_POINTS} points par membre qui le possède déjà</b>, les <b>intentions d'achat</b> ({INTENT_OPTIONS.filter((o) => INTEREST_POINTS[o.key] !== 0).map((o) => `${o.label} ${INTEREST_POINTS[o.key] > 0 ? "+" : ""}${INTEREST_POINTS[o.key]}`).join(", ")}, « Peu probable » 0) et la <b>somme de tous les votes de hype</b>. Un « Jamais » compte donc en négatif : il fait redescendre la fiche, il ne se contente pas de ne rien apporter. Le score s'affiche en <b>vue liste</b>, colonne « Score ».</p>
           </>,
         },
         {
@@ -4742,7 +4743,7 @@ function GuidePage() {
           q: "Rejoindre une partie en scannant un QR code",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dès qu'un chrono est lancé, un <b>QR code</b> s'affiche à côté du code à six caractères. Chacun le scanne avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — et arrive directement dans la partie, sans rien saisir.</p>
-            <p style={{ margin: "0 0 8px" }}>Les <b>points de règle</b> se dictent à la voix (bouton <b>🎤 Dicter</b>) : plus commode qu'un clavier à une main au milieu d'une table. Le clavier se referme au démarrage de la dictée, et le bouton rouge <b>« J'écoute… — toucher pour arrêter »</b> coupe l'écoute à coup sûr. Sans parole pendant deux minutes, elle s'arrête toute seule. La dictée n'apparaît que sur les navigateurs qui la gèrent (Chrome, Safari) ; ailleurs, la saisie au clavier reste disponible.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>points de règle</b> se dictent à la voix (bouton <b>🎤 Dicter</b>) : plus commode qu'un clavier à une main au milieu d'une table. Le clavier se referme au démarrage de la dictée, et le bouton rouge <b>« J'écoute… — toucher pour arrêter »</b> coupe l'écoute à coup sûr. Ce que le micro entend s'affiche <b>en direct sous le bouton</b>, puis vient s'ajouter au texte déjà saisi. Sans parole pendant deux minutes, elle s'arrête toute seule. La dictée n'apparaît que sur les navigateurs qui la gèrent (Chrome, Safari) ; ailleurs, la saisie au clavier reste disponible.</p>
             <p style={{ margin: "0 0 8px" }}>En <b>vue tablette</b>, le code affiché dans le bandeau du jeu est cliquable : il ouvre un grand QR au centre de l'écran, lisible depuis l'autre bout de la table. Pratique quand un joueur arrive en cours de soirée.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>Le QR est fabriqué par le site lui-même, sans passer par aucun service extérieur : le code de votre partie ne quitte jamais votre navigateur.</p>
           </>,
@@ -9622,13 +9623,40 @@ const INTENT_OPTIONS = [
   { key: "preorder",   label: "Précommandé",               color: "#b5283a", score: 8 },
   { key: "release",    label: "À la sortie",               color: "#e87317", score: 6 },
   { key: "certain",    label: "Certainement",              color: "#e8a317", score: 4 },
-  { key: "promo",      label: "En promotion",              color: "#c5a823", score: 3 },
-  { key: "completion", label: "Pour compléter une commande", color: "#7ab8a8", score: 2 },
+  { key: "completion", label: "Pour compléter une commande", color: "#c5a823", score: 3 },
+  { key: "promo",      label: "En promotion",              color: "#7ab8a8", score: 2 },
   { key: "unlikely",   label: "Peu probable",              color: "#8e8275", score: 1 },
   { key: "never",      label: "Jamais",                    color: "#6e6256", score: 0 },
 ];
 // Sont « intéressés » tous ceux qui ne se sont pas désistés.
 const INTENT_INTERESTED = ["preorder", "release", "certain", "promo", "completion"];
+
+/* --- Score d'intérêt ------------------------------------------------------
+   Une seule note qui mélange deux signaux de nature différente : l'envie
+   d'acheter (déclarée, engageante) et l'envie de jouer (le thermomètre).
+   Un « jamais » pèse négativement : il ne se contente pas de ne rien ajouter,
+   il signale un désintérêt franc et fait redescendre la fiche.
+   Barème volontairement distinct de INTENT_OPTIONS.score, qui sert au tri
+   « intention d'achat » et n'a pas la même vocation. */
+const INTEREST_POINTS = {
+  preorder: 5,     // précommandé
+  release: 4,      // à la sortie
+  certain: 3,      // certainement
+  completion: 2,   // pour compléter une commande — achat décidé, il manque l'occasion
+  promo: 1,        // en promotion — conditionné à une remise hypothétique
+  unlikely: 0,     // peu probable
+  never: -3,       // jamais
+};
+const INTEREST_OWNER_POINTS = 5; // par membre qui possède déjà le jeu
+
+/* Score d'intérêt d'une fiche : possesseurs + intentions + somme des votes. */
+function interestScore(u) {
+  const owners = (u.ludoOwners || []).length * INTEREST_OWNER_POINTS;
+  const intents = Object.values(u.intents || {})
+    .reduce((a, k) => a + (INTEREST_POINTS[k] || 0), 0);
+  const hype = Object.values(u.hypes || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+  return owners + intents + hype;
+}
 const intentScoreOf = (k) => (INTENT_OPTIONS.find((o) => o.key === k) || {}).score || 0;
 // Un jeu déjà possédé vaut le maximum. On ne le déclare pas : on le lit dans
 // la ludothèque, où le bouton « Je l'ai ! » l'a déjà inscrit.
@@ -9826,7 +9854,9 @@ function UpcomingPage({ onAuth, setToast }) {
       const st = upcomingStats(u);
       return { ...u, _avg: st.avg, _count: st.count };
     });
+    list = list.map((u) => ({ ...u, _interest: interestScore(u) }));
     if (sort === "release") list.sort(compareByRelease);
+    else if (sort === "interest") list.sort((a, b) => b._interest - a._interest || compareByRelease(a, b));
     else if (sort === "intent") list.sort((a, b) => intentScore(b) - intentScore(a) || compareByRelease(a, b));
     else if (sort === "hype") list.sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"));
     else if (sort === "alpha") list.sort((a, b) => a.name.localeCompare(b.name, "fr"));
@@ -9880,6 +9910,7 @@ function UpcomingPage({ onAuth, setToast }) {
             )}
             <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="release">Date de sortie</option>
+              <option value="interest">Score d'intérêt</option>
               <option value="intent">Intention d'achat</option>
               <option value="hype">Hype</option>
               <option value="alpha">A → Z</option>
@@ -9906,6 +9937,7 @@ function UpcomingPage({ onAuth, setToast }) {
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
                 <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
                 <span style={{ width: 128, flexShrink: 0 }} className="aladj-upc-col">Sortie</span>
+                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Score d'intérêt : possesseurs et intentions d'achat, plus la somme des votes de hype">Score</span>
                 <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Membres intéressés par l'achat">Intérêt</span>
                 <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Hype moyenne">Hype</span>
                 <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Ma hype">La mienne</span>
@@ -9927,6 +9959,7 @@ function UpcomingPage({ onAuth, setToast }) {
                     <span style={{ width: 128, flexShrink: 0, fontSize: 12, color: st.kind === "soon" ? C.amber : "#8a7c6a", fontWeight: st.kind === "soon" ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="aladj-upc-col">
                       {st.kind === "unknown" ? (u.year ? String(u.year) : "—") : st.label}
                     </span>
+                    <span title="Score d'intérêt" style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._interest > 0 ? C.purple : (u._interest < 0 ? C.red : "#cdbfa8") }}>{u._interest || "—"}</span>
                     <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wanted ? C.amber : "#cdbfa8" }}>{wanted || "—"}</span>
                     <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._count ? (HYPE_LABELS[Math.round(u._avg)] || HYPE_LABELS[1]).color : "#cdbfa8" }}>
                       {u._count ? u._avg.toFixed(1).replace(".", ",") : "—"}
@@ -9975,13 +10008,21 @@ function UpcomingPage({ onAuth, setToast }) {
 
 /* ---- Flow d'ajout : choix BGG / manuel + détection de doublons ---- */
 function AddUpcomingFlow({ onClose, setToast }) {
-  const { addUpcoming, upcoming, games } = useApp();
+  const { addUpcoming, upcoming, games, currentUser, setHype, setIntent } = useApp();
   const [mode, setMode] = useState("choose");
   const [prefillName, setPrefillName] = useState("");
 
+  // (point 2) La hype et l'intention d'achat se déclarent maintenant dès la
+  // création : elles sont posées juste après l'insertion de la fiche, ce qui
+  // évite d'avoir à la rouvrir pour se prononcer.
   const handleDone = async (data) => {
     if (!data) { onClose(); return; }
-    await addUpcoming({ ...data, source: data.source || "manuel" });
+    const res = await addUpcoming({ ...data, source: data.source || "manuel" });
+    const created = res?.upcoming;
+    if (created?.id && currentUser) {
+      if (data.myHype) { try { await setHype(created.id, Number(data.myHype)); } catch (e) { /* sans gravité */ } }
+      if (data.myIntent) { try { await setIntent(created.id, data.myIntent); } catch (e) { /* sans gravité */ } }
+    }
     onClose();
     setToast(`« ${data.name} » ajouté en veille !`);
   };
@@ -10015,10 +10056,41 @@ function AddUpcomingFlow({ onClose, setToast }) {
   );
 }
 
+/* ---- Bloc « Mon avis » posé dès la création d'une fiche À venir ----
+   Même vocabulaire et mêmes valeurs que sur la fiche détaillée : on se
+   prononce une fois, au moment où l'on a le jeu en tête. */
+function MyOpinionFields({ hype, intent, onHype, onIntent }) {
+  const { currentUser } = useApp();
+  if (!currentUser) return null;
+  return (
+    <div style={{ background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}33`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+      <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: C.navy, marginBottom: 4 }}>Mon avis <span style={{ fontWeight: 400, color: "#8a7c6a" }}>— facultatif, modifiable à tout moment</span></span>
+      <Field label="Ma hype" hint="Cliquez sur la même pastille pour retirer votre vote depuis la fiche.">
+        <Thermometer value={hype} onRate={(n) => onHype(n === hype ? 0 : n)} />
+      </Field>
+      <Field label="Mon intention d'achat">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {INTENT_OPTIONS.map((o) => {
+            const active = intent === o.key;
+            return (
+              <button key={o.key} type="button" onClick={() => onIntent(active ? "" : o.key)}
+                style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? o.color : "#e6dcc9"}`, background: active ? o.color : "#fff", color: active ? "#fff" : "#8a7c6a" }}>
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+    </div>
+  );
+}
+
 /* ---- Formulaire manuel pour une fiche À venir ---- */
 function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
   const { upcoming, games, currentUser } = useApp();
   const [f, setF] = useState({ name: initialName, year: "", min: "", max: "", time: "", mechanics: [], desc: "", img: "", newPrice: "", ludumUrl: "", releaseDate: "", released: false, voReleased: false });
+  const [myHype, setMyHype] = useState(0);
+  const [myIntent, setMyIntent] = useState("");
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
@@ -10033,7 +10105,8 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
     if (!f.name.trim()) { setErr("Le nom du jeu est obligatoire."); return; }
     setBusy(true);
     await onDone({ ...f, name: f.name.trim(), year: Number(f.year) || "", min: Number(f.min) || "", max: Number(f.max) || "", time: Number(f.time) || "", newPrice: f.newPrice,
-      releaseDate: f.releaseDate || null, released: !!f.released, voReleased: !!f.voReleased });
+      releaseDate: f.releaseDate || null, released: !!f.released, voReleased: !!f.voReleased,
+      myHype, myIntent });
   };
 
   return (
@@ -10107,6 +10180,8 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
       <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
         <TextInput value={f.ludumUrl} onChange={(e) => setF({ ...f, ludumUrl: e.target.value })} placeholder="https://www.ludum.fr/..." />
       </Field>
+
+      <MyOpinionFields hype={myHype} intent={myIntent} onHype={setMyHype} onIntent={setMyIntent} />
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Ajouter en veille</>}</Btn>
@@ -11363,9 +11438,11 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   const [translating, setTranslating] = useState(false);
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false); // anti double-clic : verrouille la validation pendant la création
-  // Procuration : ne s'applique que pour la ludothèque (pas pour les fiches À venir).
   const [ownership, setOwnership] = useState("self");
   const [forUserIds, setForUserIds] = useState([]);
+  // (point 2) Avis personnel posé dès l'import, pour les fiches À venir.
+  const [myHype, setMyHype] = useState(0);
+  const [myIntent, setMyIntent] = useState("");
   const toggleForUser = (uid) => setForUserIds((arr) => arr.includes(uid) ? arr.filter((x) => x !== uid) : [...arr, uid]);
   const otherUsers = useMemo(() => (users || []).filter((u) => u.id !== currentUser?.id).sort((a, b) => a.name.localeCompare(b.name, "fr")), [users, currentUser]);
 
@@ -11475,6 +11552,8 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           </div>
         )}
 
+        {forUpcoming && <MyOpinionFields hype={myHype} intent={myIntent} onHype={setMyHype} onIntent={setMyIntent} />}
+
         <Field label="Mécaniques" hint="Décochez celles avec lesquelles vous n'êtes pas d'accord, cochez-en d'autres, ou ajoutez-en de personnalisées.">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {[...new Set([...MECHANIC_SUGGESTIONS, ...(preview.mechanics || [])])].map((m) => {
@@ -11556,6 +11635,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
                 releaseDate: preview.releaseDate || null,
                 released: !!preview.released,
                 voReleased: !!preview.voReleased,
+                myHype, myIntent,
               } : {}),
               selfOwns: forUpcoming ? true : (ownership === "self" || ownership === "both"),
               forUserIds: forUpcoming ? [] : ((ownership === "other" || ownership === "both") ? forUserIds : []),
