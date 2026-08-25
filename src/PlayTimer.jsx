@@ -482,6 +482,8 @@ function DictateButton({ onText, big = false, disabled }) {
   const watchdogRef = useRef(null);
   const startRef = useRef(null);
   const onTextRef = useRef(onText);
+  const gotSomethingRef = useRef(false);
+  const [live, setLive] = useState('');   // transcription en cours, affichee en direct
   useEffect(() => { onTextRef.current = onText; }, [onText]);
 
   // Arret INCONDITIONNEL. Quoi que fasse le navigateur (reconnaissance
@@ -494,10 +496,17 @@ function DictateButton({ onText, big = false, disabled }) {
     const rec = recRef.current;
     recRef.current = null;
     if (rec) {
+      // Avant de couper : on n'abandonne pas le texte deja entendu.
+      if (rec.__pending && rec.__pending.trim() && onTextRef.current) {
+        gotSomethingRef.current = true;
+        onTextRef.current(rec.__pending.trim());
+      }
+      rec.__pending = '';
       rec.onresult = null; rec.onerror = null; rec.onend = null; rec.onstart = null;
       try { rec.abort(); } catch (e) { /* deja arrete */ }
       try { rec.stop(); } catch (e) { /* deja arrete */ }
     }
+    setLive('');
     setListening(false);
     if (message !== undefined) setErr(message);
   }, []);
@@ -515,14 +524,35 @@ function DictateButton({ onText, big = false, disabled }) {
     try { rec = new SPEECH_API(); } catch (e) { hardStop('Dictée indisponible sur cet appareil.'); return; }
     rec.lang = 'fr-FR';
     rec.continuous = !IS_IOS_LIKE;
-    rec.interimResults = false;
+    // On DEMANDE les resultats intermediaires. Safari (iOS comme macOS) emet
+    // souvent des resultats sans jamais poser isFinal : en ne gardant que les
+    // resultats finaux, on n'ecrivait rien du tout alors que le micro
+    // fonctionnait. On garde donc le dernier texte connu et on le valide soit
+    // au resultat final, soit a la fin de l'ecoute.
+    rec.interimResults = true;
     rec.maxAlternatives = 1;
+    rec.__nextIndex = 0;   // premier resultat pas encore valide
+    rec.__pending = '';    // texte entendu mais pas encore valide
+
+    const commit = (txt) => {
+      const t = (txt || '').trim();
+      if (!t) return;
+      gotSomethingRef.current = true;
+      if (onTextRef.current) onTextRef.current(t);
+    };
+
     rec.onresult = (ev) => {
-      let txt = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (ev.results[i].isFinal) txt += ev.results[i][0].transcript;
+      let done = '';
+      let pending = '';
+      for (let i = rec.__nextIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        const t = (r && r[0] && r[0].transcript) || '';
+        if (r && r.isFinal) { done += t; rec.__nextIndex = i + 1; }
+        else pending += t;
       }
-      if (txt.trim() && onTextRef.current) onTextRef.current(txt.trim());
+      if (done.trim()) { rec.__pending = ''; commit(done); }
+      else { rec.__pending = pending; }
+      setLive(pending.trim());
       armWatchdog();
     };
     rec.onerror = (ev) => {
@@ -534,6 +564,10 @@ function DictateButton({ onText, big = false, disabled }) {
         : "La dictée s'est interrompue. Vous pouvez la relancer.");
     };
     rec.onend = () => {
+      // Ce qui a ete entendu sans jamais etre marque "final" est valide ici :
+      // c'est le cas de figure qui faisait perdre toute la dictee sur Safari.
+      if (rec.__pending && rec.__pending.trim()) { commit(rec.__pending); rec.__pending = ''; }
+      setLive('');
       if (recRef.current !== rec) return;   // arret volontaire deja traite
       recRef.current = null;
       if (wantRef.current) { setTimeout(() => { if (startRef.current) startRef.current(); }, 250); return; }
@@ -559,6 +593,8 @@ function DictateButton({ onText, big = false, disabled }) {
         document.activeElement.blur();
       }
     } catch (e) { /* sans gravite */ }
+    gotSomethingRef.current = false;
+    setLive('');
     wantRef.current = true;
     setListening(true);
     startOnce();
@@ -572,7 +608,7 @@ function DictateButton({ onText, big = false, disabled }) {
       {listening ? (
         // Bouton d'arret dedie (et non un bascule) : son action ne depend
         // d'aucun etat renvoye par le navigateur, il coupe toujours.
-        <button type="button" onClick={() => hardStop(null)} title="Arrêter la dictée"
+        <button type="button" onClick={() => hardStop(gotSomethingRef.current ? null : "Aucune parole n'a été captée. Vérifiez que le micro n'est pas coupé, puis réessayez.")} title="Arrêter la dictée"
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer',
             border: `1.5px solid ${C.red}`, background: '#fdecee', color: C.red,
@@ -592,6 +628,11 @@ function DictateButton({ onText, big = false, disabled }) {
           <span style={{ fontSize: big ? 20 : 16, lineHeight: 1 }}>🎤</span>
           Dicter
         </button>
+      )}
+      {listening && (
+        <div style={{ fontSize: big ? 15 : 12.5, color: `${C.navy}aa`, fontStyle: 'italic', maxWidth: big ? 460 : 320, lineHeight: 1.4 }}>
+          {live ? `« ${live} »` : 'Parlez : le texte apparaîtra ici, puis dans le point de règle.'}
+        </div>
       )}
       {err && <div style={{ fontSize: 12.5, color: C.red, fontWeight: 600, maxWidth: 320 }}>{err}</div>}
     </div>
