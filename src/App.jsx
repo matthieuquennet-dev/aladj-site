@@ -5,7 +5,7 @@ import {
   Heart, ThumbsUp, Sparkles, BookOpen, RotateCcw, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
-  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad } from "./PlayTimer";
@@ -792,6 +792,10 @@ function AppProvider({ children }) {
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
+  // Listes d'envie : { userId: { games: [gameId], upcoming: [upcId] } }.
+  // Volontairement chargées pour TOUS les membres, y compris hors connexion :
+  // une liste d'envie doit pouvoir se montrer à quelqu'un d'extérieur.
+  const [wishlistByUser, setWishlistByUser] = useState({});
   // Membre pour lequel les tables personnelles (notifications, suggestions
   // refusées) ont effectivement été chargées. Tant qu'il ne correspond pas au
   // membre connecté, les compteurs restent muets : mieux vaut pas de pastille
@@ -844,8 +848,8 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }] = await Promise.all([
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -873,6 +877,7 @@ function AppProvider({ children }) {
         fetchAllRows("game_play_participants", "*", ["id"]),
         currentUserIdRef.current ? fetchAllRows("event_play_dismissed", "*", ["id"]) : Promise.resolve({ data: [] }),
         supabase.from("mechanic_suggestions").select("name,aliases").order("name"),
+        fetchAllRows("wishlist_items", "user_id,game_id,upcoming_id,created_at", ["created_at", "user_id"]),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -976,7 +981,7 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, shareWishlist: p.share_wishlist !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -1056,6 +1061,15 @@ function AppProvider({ children }) {
         message: n.message, linkKind: n.link_kind, linkId: n.link_id, read: n.read === true,
         createdAt: n.created_at,
       })));
+      {
+        const wl = {};
+        (wishRows || []).forEach((w) => {
+          const e = (wl[w.user_id] ||= { games: [], upcoming: [] });
+          if (w.game_id) e.games.push(w.game_id);
+          else if (w.upcoming_id) e.upcoming.push(w.upcoming_id);
+        });
+        setWishlistByUser(wl);
+      }
       setDismissedRecos((dismissedRows || []).map((d) => ({
         gameId: d.game_id, reason: d.reason || null,
         snoozeUntil: d.snooze_until || null, createdAt: d.created_at || null,
@@ -1165,7 +1179,7 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, isChild: data.is_child === true, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, shareWishlist: data.share_wishlist !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, isChild: data.is_child === true, momentsSeenAt: data.moments_seen_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1557,6 +1571,40 @@ function AppProvider({ children }) {
     await supabase.from("games").update({ shared }).eq("id", id);
     await loadData();
   }, [loadData]);
+
+  /* ---- Liste d'envie ----
+     Les jeux qu'un membre aimerait POSSEDER — a ne pas confondre avec
+     l'« envie de decouvrir » (game_discoveries), qui porte sur le fait d'y
+     jouer. Une entree vise soit un jeu de la ludotheque, soit une fiche
+     A venir. Un jeu qu'on possede deja est masque a l'affichage plutot que
+     supprime : si on le revend un jour, l'envie reapparait d'elle-meme. */
+  const toggleWishlist = useCallback(async (kind, id) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (kind !== "game" && kind !== "upcoming") return { error: "Cible inconnue." };
+    const col = kind === "game" ? "game_id" : "upcoming_id";
+    const mine = wishlistByUser[currentUser.id] || { games: [], upcoming: [] };
+    const already = (kind === "game" ? mine.games : mine.upcoming).includes(id);
+    if (already) {
+      const { error } = await supabase.from("wishlist_items").delete()
+        .eq("user_id", currentUser.id).eq(col, id);
+      if (error) return { error: error.message };
+    } else {
+      const { error } = await supabase.from("wishlist_items")
+        .insert({ user_id: currentUser.id, [col]: id });
+      // Contrainte d'unicite : deja dans la liste, rien a signaler.
+      if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+    }
+    await loadData();
+    return { added: !already };
+  }, [currentUser, wishlistByUser, loadData]);
+
+  // Visibilite publique de la liste d'envie (activee par defaut).
+  const setShareWishlist = useCallback(async (value) => {
+    if (!currentUser) return;
+    await supabase.from("profiles").update({ share_wishlist: value }).eq("id", currentUser.id);
+    setCurrentUser((u) => u ? { ...u, shareWishlist: value } : u);
+    await loadData();
+  }, [currentUser, loadData]);
 
   // Partage : réglage global du membre (partager toute sa ludothèque ou non)
   const setShareLibrary = useCallback(async (value) => {
@@ -2478,6 +2526,7 @@ function AppProvider({ children }) {
     household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
+    wishlistByUser, toggleWishlist, setShareWishlist,
     addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
     addGuest, removeGuest, confirmEventInvite, declineEventInvite, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
@@ -4287,6 +4336,15 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Ma liste d'envie : les jeux que j'aimerais posséder",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un <b>jeu</b> comme sur celle d'une nouveauté <b>« À venir »</b>, le bouton <b style={{ color: C.purple }}>« Je voudrais l'avoir »</b> range le jeu dans votre <b>liste d'envie</b>. Elle se retrouve dans <b>Mon espace</b>, dans l'encart <b>🎁 Ma liste d'envie</b> : un compteur qu'on déplie pour voir les vignettes, et d'où l'on ouvre chaque fiche d'un clic.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Ne pas confondre avec « J'ai envie de le découvrir »</b>, juste en dessous sur la fiche d'un jeu : celle-ci dit que vous aimeriez <b>y jouer</b> (et prévient les propriétaires), la liste d'envie dit que vous aimeriez le <b>posséder</b>. Les deux coexistent, et on peut très bien vouloir les deux à la fois.</p>
+            <p style={{ margin: "0 0 8px" }}>Un jeu que vous <b>possédez déjà</b> n'apparaît pas dans votre liste : il en sort tout seul dès que la possession est confirmée, sans que vous ayez à faire le ménage. Rien n'est effacé pour autant — si vous revendez le jeu un jour, l'envie revient d'elle-même. Même chose pour une fiche « À venir » dont le jeu est entré dans votre ludothèque.</p>
+            <p style={{ margin: 0 }}>Votre liste est <b>visible sur votre fiche de membre</b>, celle qui s'ouvre en cliquant sur votre nom depuis la page d'accueil — <b>y compris par des visiteurs qui ne sont pas de l'association</b>. C'est fait pour : on peut envoyer le lien avant un anniversaire ou Noël. Si vous préférez la garder pour vous, décochez <b>« Ma liste d'envie est visible de tous »</b> dans l'encart de Mon espace : elle redevient privée immédiatement.</p>
+          </>,
+        },
+        {
           q: "Installer le site comme une application sur mon téléphone",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le site s'installe comme une vraie appli, avec son icône : sur <b>iPhone</b>, ouvrez aladj.fr dans Safari → bouton Partager → <b>« Sur l'écran d'accueil »</b>. Sur <b>Android</b>, Chrome propose « Installer l'application » (ou menu ⋮ → Ajouter à l'écran d'accueil).</p>
@@ -4933,7 +4991,7 @@ function GuidePage() {
         {
           q: "La sauvegarde des données (administrateurs)",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
+            <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>listes d'envie</b>, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
             <p style={{ margin: "0 0 8px" }}>Seules les <b>images</b> n'y figurent pas : elles sont stockées sur un hébergement séparé et ne risquent rien lors d'une manipulation en base.</p>
             <p style={{ margin: "0 0 8px" }}>À la fin de l'export, un <b>récapitulatif</b> affiche le nombre de lignes récupérées table par table, <b>comparé automatiquement au contenu réel de la base</b>. Un bandeau vert confirme que la sauvegarde est complète ; un bandeau rouge signale les tables incomplètes et le nombre de lignes manquantes. Une table légitimement vide s'affiche simplement à zéro, sans alerte.</p>
             <p style={{ margin: 0 }}>À faire <b>régulièrement</b> et systématiquement <b>avant toute opération sensible</b> sur la base. Le fichier se conserve tel quel ; sa réinjection éventuelle passerait par l'éditeur SQL.</p>
@@ -5755,6 +5813,106 @@ function MembersModal({ onClose, onPickMember }) {
 }
 
 /* ---- Pop-up : consultation de la ludothèque d'un membre ---- */
+/* =============================================================================
+   LISTE D'ENVIE — les jeux qu'un membre aimerait posseder.
+
+   A distinguer de l'« envie de decouvrir » : ici on parle de possession, pas
+   de partie. Une entree pointe soit un jeu de la ludotheque, soit une fiche
+   « A venir ».
+
+   Regle de masquage : un jeu qu'on possede DEJA sort de la liste sans qu'on
+   ait a la nettoyer. On ne supprime rien en base — si le jeu est revendu,
+   l'envie revient d'elle-meme. Pour une fiche A venir, on regarde la fiche de
+   ludotheque associee (lien explicite ou nom similaire).
+   ============================================================================= */
+
+/* Liste resolue d'un membre : [{ kind, id, name, img, owned }] , deja filtree. */
+function useWishlistOf(memberId) {
+  const { wishlistByUser, games, upcoming } = useApp();
+  return useMemo(() => {
+    if (!memberId) return [];
+    const wl = (wishlistByUser || {})[memberId] || { games: [], upcoming: [] };
+    const owns = (g) => !!g && (g.ownerIds || []).includes(memberId);
+    const out = [];
+    (wl.games || []).forEach((gid) => {
+      const g = (games || []).find((x) => x.id === gid);
+      if (!g || owns(g)) return;                  // possede -> disparait
+      out.push({ kind: "game", id: g.id, name: g.name, img: g.img || "", year: g.year || "" });
+    });
+    (wl.upcoming || []).forEach((uid) => {
+      const u = (upcoming || []).find((x) => x.id === uid);
+      if (!u) return;
+      const linked = u.ludoGameId ? (games || []).find((x) => x.id === u.ludoGameId) : null;
+      if (owns(linked)) return;                   // la fiche ludo est a lui -> disparait
+      out.push({ kind: "upcoming", id: u.id, name: u.name, img: u.img || "", year: u.year || "", soon: true });
+    });
+    return out.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  }, [wishlistByUser, games, upcoming, memberId]);
+}
+
+/* Grille de vignettes, reutilisee dans « Mon espace » et sur la fiche d'un membre. */
+function WishlistGrid({ items, onOpenGame, onOpenUpcoming, emptyText }) {
+  if (!items.length) {
+    return <p style={{ fontSize: 13.5, color: "#a89a86", margin: 0 }}>{emptyText}</p>;
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(104px, 1fr))", gap: 12 }}>
+      {items.map((it) => {
+        const clickable = it.kind === "game" ? !!onOpenGame : !!onOpenUpcoming;
+        return (
+          <button key={it.kind + it.id} type="button" disabled={!clickable}
+            onClick={() => { if (it.kind === "game") onOpenGame && onOpenGame(it.id); else onOpenUpcoming && onOpenUpcoming(it.id); }}
+            title={clickable ? `Ouvrir la fiche de ${it.name}` : it.name}
+            style={{ display: "block", textAlign: "left", padding: 0, border: "1px solid #efe6d6", borderRadius: 12, background: "#fff", cursor: clickable ? "pointer" : "default", overflow: "hidden", minWidth: 0, font: "inherit" }}>
+            <span style={{ display: "block", position: "relative", width: "100%", aspectRatio: "1", background: it.img ? `center/cover url("${it.img}")` : `linear-gradient(135deg,${C.purple},${C.navy})` }}>
+              {!it.img && (
+                <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: 6, textAlign: "center", lineHeight: 1.15 }}>
+                  {it.name.slice(0, 14)}
+                </span>
+              )}
+              {it.soon && (
+                <span title="Fiche « À venir »" style={{ position: "absolute", top: 6, left: 6, background: C.amber, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>À venir</span>
+              )}
+            </span>
+            <span style={{ display: "block", padding: "7px 9px 9px", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 12.5, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Bouton a poser sur une fiche (jeu ou A venir). */
+function WishlistButton({ kind, id, owned, setToast = () => {}, onAuth = () => {}, size = "sm" }) {
+  const { currentUser, wishlistByUser, toggleWishlist } = useApp();
+  const [busy, setBusy] = useState(false);
+  if (!currentUser) {
+    return (
+      <Btn size={size} variant="ghost" onClick={() => onAuth("login")}>
+        <Gift size={14} /> Connectez-vous pour l'ajouter
+      </Btn>
+    );
+  }
+  if (owned) {
+    return <span style={{ fontSize: 12.5, color: "#a89a86" }}>Vous possédez ce jeu : il ne peut pas figurer dans votre liste d'envie.</span>;
+  }
+  const mine = (wishlistByUser || {})[currentUser.id] || { games: [], upcoming: [] };
+  const inList = (kind === "game" ? mine.games : mine.upcoming).includes(id);
+  return (
+    <Btn size={size} variant={inList ? "soft" : "purple"} disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        const res = await toggleWishlist(kind, id);
+        setBusy(false);
+        if (res?.error) { setToast(res.error); return; }
+        setToast(res?.added ? "Ajouté à votre liste d'envie." : "Retiré de votre liste d'envie.");
+      }}>
+      {busy ? <Loader2 size={13} className="aladj-spin" /> : (inList ? <X size={13} /> : <Gift size={13} />)}
+      {inList ? " Retirer de ma liste d'envie" : " Je voudrais l'avoir"}
+    </Btn>
+  );
+}
+
 function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = () => {} }) {
   const [gameOpen, setGameOpen] = useState(null); // fiche jeu ouverte depuis le top 10
   const [editOpen, setEditOpen] = useState(false); // modification du profil (administrateurs)
@@ -5793,6 +5951,10 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
       .sort((a, b) => (b.count - a.count) || a.game.name.localeCompare(b.game.name, "fr"))
       .slice(0, 10);
   }, [plays, games, memberId]);
+  // Liste d'envie du membre — visible des visiteurs extérieurs, sauf si le
+  // membre l'a mise en privé. Sa propre liste reste toujours visible pour lui.
+  const theirWishlist = useWishlistOf(memberId);
+  const wishlistVisible = !!member && (member.shareWishlist !== false || currentUser?.id === memberId);
   // Nombre d'extensions que ce membre possède
   const theirExtCount = (() => {
     let n = 0;
@@ -5889,6 +6051,18 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
             <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 12, padding: "12px 14px", fontSize: 14, color: "#5e5346", lineHeight: 1.55, whiteSpace: "pre-line" }}>{member.bio}</div>
           )}
         </div>
+      )}
+
+      {wishlistVisible && theirWishlist.length > 0 && (
+        <>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <Gift size={16} color={C.purple} /> Sa liste d'envie
+            <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux qu'{member?.name ? "il ou elle" : "il"} aimerait posséder</span>
+          </h4>
+          <div style={{ marginBottom: 18 }}>
+            <WishlistGrid items={theirWishlist} onOpenGame={setGameOpen} emptyText="" />
+          </div>
+        </>
       )}
 
       {theirTop.length > 0 && (
@@ -9008,6 +9182,19 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         )}
       </div>
 
+      {/* Section : liste d'envie (posséder), distincte de l'envie de découvrir (jouer) */}
+      <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+            <Gift size={16} color={C.purple} /> Ma liste d'envie
+          </h4>
+          <WishlistButton kind="game" id={g.id} owned={!!currentUser && (g.ownerIds || []).includes(currentUser.id)} setToast={setToast} onAuth={onAuth} />
+        </div>
+        <p style={{ fontSize: 12.5, color: "#a89a86", margin: "6px 0 0", lineHeight: 1.5 }}>
+          Les jeux que vous aimeriez <b>posséder</b> — à ne pas confondre avec l'envie de le découvrir juste en dessous, qui porte sur le fait d'y jouer.
+        </p>
+      </div>
+
       {/* Section : envie de découvrir */}
       <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
@@ -10191,7 +10378,7 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
 
 /* ---- Fiche détaillée d'un jeu À venir ---- */
 function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
-  const { upcoming, users, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment, askConfirm } = useApp();
+  const { upcoming, users, games, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment, askConfirm } = useApp();
   const u = upcoming.find((x) => x.id === upcId);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -10257,6 +10444,14 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "13px 20px", borderRadius: 13, textDecoration: "none", marginBottom: 18 }}>
         <ShoppingBag size={17} /> Acheter chez Ludum
       </a>
+
+      {/* Liste d'envie : utile surtout ici, sur un jeu que personne n'a encore. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}33`, borderRadius: 13, padding: "12px 16px", marginBottom: 18 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>
+          <Gift size={17} color={C.purple} /> Ma liste d'envie
+        </span>
+        <WishlistButton kind="upcoming" id={u.id} owned={!!currentUser && !!u.ludoGameId && (games || []).some((x) => x.id === u.ludoGameId && (x.ownerIds || []).includes(currentUser.id))} setToast={setToast} onAuth={onAuth} />
+      </div>
 
       {/* Prix neuf annoncé (s'il a été renseigné) */}
       {u.newPrice != null && (
@@ -12311,6 +12506,7 @@ const BACKUP_TABLES = [
   ["poll_comments", [["created_at", "id"]]],
   // Divers
   ["notifications", [["id"], ["created_at"]]],
+  ["wishlist_items", [["id"], ["created_at"]]],
   ["push_subscriptions", [["id"], ["created_at"]]],
   ["reco_dismissed", [["id"], ["created_at"]]],
 ];
@@ -12461,7 +12657,7 @@ function AdminBackupSection() {
       </div>
       <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 12px" }}>
         Télécharge une copie de <b>toutes les tables du site</b> (membres, jeux, notes, prêts, foyers, moments,
-        veille, parties et scores, chronomètre, notifications…) dans un fichier daté. Le contenu est ensuite
+        veille, listes d'envie, parties et scores, chronomètre, notifications…) dans un fichier daté. Le contenu est ensuite
         <b> vérifié table par table</b> contre le nombre de lignes réel en base. Les <b>images</b> ne sont pas
         concernées : elles sont stockées à part et ne risquent rien lors d'une manipulation en base.
         À faire régulièrement, et systématiquement avant toute opération sensible.
@@ -13276,6 +13472,64 @@ function MyTop10Section({ setToast, onOpenGame }) {
       <Top10Editor open={editOpen} onClose={() => setEditOpen(false)} setToast={setToast} />
     </div>
   );
+}
+
+/* ---- Encart « Ma liste d'envie » de Mon espace ----
+   Replie par defaut : c'est un compteur qu'on ouvre quand on veut, pas une
+   liste qui occupe l'ecran en permanence. */
+function MyWishlistSection({ setToast }) {
+  const { currentUser, setShareWishlist } = useApp();
+  const [open, setOpen] = useState(false);
+  const [gameOpen, setGameOpen] = useState(null);
+  const [upcOpen, setUpcOpen] = useState(null);
+  const items = useWishlistOf(currentUser?.id);
+  if (!currentUser) return null;
+  const shared = currentUser.shareWishlist !== false;
+  return (
+    <div style={{ background: "rgba(107,58,122,.07)", border: `2px solid ${C.purple}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", font: "inherit", flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
+          <Gift size={19} color={C.purple} /> Ma liste d'envie
+          <span style={{ background: C.purple, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{items.length}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.purple, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          {open ? "Replier" : "Voir la liste"} <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </span>
+      </button>
+      <p style={{ fontSize: 13, color: "#6e6256", margin: "8px 0 0", lineHeight: 1.5 }}>
+        Les jeux que vous aimeriez <b>posséder</b>. Ajoutez-les depuis la fiche d'un jeu ou d'une nouveauté « À venir ».
+        Un jeu que vous possédez déjà en <b>disparaît tout seul</b>, sans rien avoir à nettoyer.
+      </p>
+      {open && (
+        <div style={{ marginTop: 14 }}>
+          <WishlistGrid items={items} onOpenGame={setGameOpen} onOpenUpcoming={setUpcOpen}
+            emptyText="Votre liste est vide pour l'instant. Ouvrez la fiche d'un jeu et cliquez sur « Je voudrais l'avoir »." />
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 16, padding: "11px 14px", borderRadius: 12, background: shared ? "rgba(30,138,138,.08)" : "rgba(181,40,58,.07)", border: "1px solid #ece2d0", cursor: "pointer" }}>
+            <input type="checkbox" checked={shared} onChange={(e) => setShareWishlist(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.teal, marginTop: 2, flexShrink: 0 }} />
+            <span style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+              <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy }}>{shared ? "Ma liste d'envie est visible de tous" : "Ma liste d'envie est privée"}</b>
+              <span style={{ display: "block", marginTop: 2 }}>
+                {shared
+                  ? "Elle apparaît sur votre fiche de membre, y compris pour les visiteurs qui ne sont pas de l'association — pratique à montrer avant un anniversaire. Décochez pour la garder pour vous."
+                  : "Vous seul la voyez. Cochez pour la rendre consultable depuis votre fiche de membre."}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+      {gameOpen && <GameDetailModalById id={gameOpen} onClose={() => setGameOpen(null)} setToast={setToast} />}
+      {upcOpen && <UpcomingDetailModal upcId={upcOpen} onClose={() => setUpcOpen(null)} setToast={setToast} onAuth={() => {}} />}
+    </div>
+  );
+}
+
+/* Petit adaptateur : ouvrir une fiche de jeu a partir de son seul identifiant. */
+function GameDetailModalById({ id, onClose, setToast = () => {}, onAuth = () => {} }) {
+  const { games } = useApp();
+  const g = (games || []).find((x) => x.id === id);
+  if (!g) return null;
+  return <GameDetailModal g={g} onClose={onClose} onAuth={onAuth} setToast={setToast} />;
 }
 
 function MyPlaysSection({ setToast }) {
@@ -14191,6 +14445,7 @@ function MyLudoPage({ setToast, setPage }) {
       </div>
       <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
       <EventPlaySuggestions />
+      <MyWishlistSection setToast={setToast} />
       <MyPlaysSection setToast={setToast} />
       <MyBadgesSection setToast={setToast} />
       <MyRetroSection />
