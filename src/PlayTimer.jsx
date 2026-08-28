@@ -1942,24 +1942,40 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // joueurs : sans notification, elle y apparaissait sans que personne ne
   // l'annonce. Une notification par partie enregistree — donc une par manche
   // quand on enchaine plusieurs parties du meme jeu.
-  const notifyPlayRecorded = useCallback(async (gameName, gameIdForLink) => {
+  const notifyPlayRecorded = useCallback(async (gameName, gameIdForLink, sessionId = null) => {
     if (!supabase || !currentUser || !currentUser.id) return;
+    const label = gameName || 'un jeu';
+    const message = `Une partie de « ${label} » vient d'être enregistrée : elle est ajoutée à votre historique.`;
+    const target = sessionId || sid;
+    // Voie principale : une RPC serveur (SECURITY DEFINER) qui retrouve
+    // elle-meme la tablee de la session. L'insertion directe ci-dessous
+    // ecrivait pour un AUTRE destinataire que soi : suivant la politique RLS
+    // de "notifications", elle pouvait etre refusee en silence, et personne
+    // n'etait prevenu de la partie enregistree.
+    if (target) {
+      try {
+        const { error: eRpc } = await supabase.rpc('aladj_notify_play_recorded', {
+          p_session_id: target, p_message: message, p_game_id: gameIdForLink || null,
+        });
+        if (!eRpc) return;
+      } catch (e) { /* on retombe sur la voie directe ci-dessous */ }
+    }
+    // Repli : insertion directe, tant que la migration SQL n'a pas ete jouee.
     const ids = [...new Set((players || [])
       .map((p) => p.profile_id)
       .filter((pid) => pid && pid !== currentUser.id))];
     if (ids.length === 0) return;
-    const label = gameName || 'un jeu';
     try {
       await supabase.from('notifications').insert(ids.map((rid) => ({
         recipient_id: rid,
         actor_id: currentUser.id,
         type: 'play_recorded',
-        message: `Une partie de « ${label} » vient d'être ajoutée à votre historique (chronomètre).`,
+        message,
         link_kind: gameIdForLink ? 'game' : null,
         link_id: gameIdForLink || null,
       })));
     } catch (e) { /* best effort : jamais bloquant pour le chrono */ }
-  }, [supabase, currentUser, players]);
+  }, [supabase, currentUser, players, sid]);
 
   const start = () => rpc('start_session', { p_session_id: sid });
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
@@ -1968,7 +1984,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const openNewGame = () => { setNewGameWinners(autoWinners); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
-  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); await notifyPlayRecorded(game?.name, game?.id || session?.game_id); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
+  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -1981,7 +1997,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
-    await notifyPlayRecorded(game?.name, game?.id || session?.game_id);
+    await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
     onExit();
   };
   // (4) Reprendre la main sur une autre session : on remet a zero tout ce qui
@@ -2014,7 +2030,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
         if (e0) throw e0;
         setResultSaved(true);
-        await notifyPlayRecorded(game?.name, game?.id || session?.game_id);
+        await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
       }
       // 2. Nouvelle session sur le meme moment jeux (s'il y en a un).
       const { data, error: e1 } = await supabase.rpc('create_session', {
