@@ -5,7 +5,7 @@ import {
   Heart, ThumbsUp, Sparkles, BookOpen, RotateCcw, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
-  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad } from "./PlayTimer";
@@ -752,7 +752,7 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     scoreDirection: row.score_direction || null,
   };
 }
-function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}) {
+function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}, suggestionsByEvent = {}, votesBySuggestion = {}) {
   return {
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
@@ -771,6 +771,20 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
       gameImg: gamesIndexById[eg.game_id]?.img || "",
       createdAt: eg.created_at,
     })),
+    // Suggestions de jeux : proposees par les personnes presentes au moment,
+    // notees par elles (+3 / +2 / +1 / -1 / -3). Triees du plus desire au moins
+    // desire, puis par ordre alphabetique pour departager les ex aequo.
+    suggestions: (suggestionsByEvent[row.id] || []).map((s) => {
+      const votes = (votesBySuggestion[s.id] || []).map((v) => ({ userId: v.voter_id, value: Number(v.value) }));
+      return {
+        id: s.id, gameId: s.game_id, addedBy: s.added_by, addedByName: nameById[s.added_by] || "Membre",
+        gameName: gamesIndexById[s.game_id]?.name || "(jeu supprimé)",
+        gameImg: gamesIndexById[s.game_id]?.img || "",
+        createdAt: s.created_at,
+        votes,
+        score: votes.reduce((a, v) => a + v.value, 0),
+      };
+    }).sort((a, b) => (b.score - a.score) || a.gameName.localeCompare(b.gameName, "fr")),
     createdAt: row.created_at ? new Date(row.created_at).getTime() : 0,
   };
 }
@@ -848,7 +862,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -878,6 +892,8 @@ function AppProvider({ children }) {
         currentUserIdRef.current ? fetchAllRows("event_play_dismissed", "*", ["id"]) : Promise.resolve({ data: [] }),
         supabase.from("mechanic_suggestions").select("name,aliases").order("name"),
         fetchAllRows("wishlist_items", "user_id,game_id,upcoming_id,created_at", ["created_at", "user_id"]),
+        fetchAllRows("event_game_suggestions", "id,event_id,game_id,added_by,created_at", ["event_id", "id"]),
+        fetchAllRows("event_suggestion_votes", "suggestion_id,voter_id,value", ["suggestion_id", "voter_id"]),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -956,6 +972,13 @@ function AppProvider({ children }) {
       });
       const commentsByEvent = {};
       (comments || []).forEach((c) => { (commentsByEvent[c.event_id] ||= []).push(c); });
+      // Suggestions de jeux d'un moment, et les votes qui s'y rattachent.
+      // Les tables peuvent etre absentes tant que la migration n'a pas ete
+      // jouee : fetchAllRows renvoie alors un tableau vide, sans casser le site.
+      const suggestionsByEvent = {};
+      (sugRows || []).forEach((s) => { (suggestionsByEvent[s.event_id] ||= []).push(s); });
+      const votesBySuggestion = {};
+      (sugVoteRows || []).forEach((v) => { (votesBySuggestion[v.suggestion_id] ||= []).push(v); });
       const commentsByGame = {};
       (gameComments || []).forEach((c) => { (commentsByGame[c.game_id] ||= []).push(c); });
       // propriétaires multiples par jeu (table de liaison game_owners)
@@ -987,7 +1010,7 @@ function AppProvider({ children }) {
       const gamesIndexById = {};
       mappedGames.forEach((g) => { gamesIndexById[g.id] = g; });
       setGames(mappedGames);
-      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent, eventGamesByEvent, gamesIndexById)));
+      setEvents((eventsRows || []).map((e) => mapEvent(e, playersByEvent, nameById, guestsByEvent, commentsByEvent, eventGamesByEvent, gamesIndexById, suggestionsByEvent, votesBySuggestion)));
       setPlaces((placesRows || []).map((p) => ({ id: p.id, name: p.name, address: p.address || "", accessInfo: p.access_info || "", createdBy: p.created_by, createdByName: nameById[p.created_by] || "Membre" })));
       setLoans((loansRows || []).map((l) => ({
         id: l.id, gameId: l.game_id, lenderId: l.lender_id, borrowerId: l.borrower_id,
@@ -1739,6 +1762,47 @@ function AppProvider({ children }) {
     if (!currentUser) return;
     await supabase.from("event_games").delete().eq("id", playedGameId);
     await loadData();
+  }, [currentUser, loadData]);
+
+  // ---- Suggestions de jeux pour un moment (avant la partie) ----
+  // Proposer un jeu : réservé aux membres présents au moment (et aux admins).
+  const addEventSuggestion = useCallback(async (eventId, gameId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("event_game_suggestions")
+      .insert({ event_id: eventId, game_id: gameId, added_by: currentUser.id });
+    if (error) {
+      if (/duplicate|unique/i.test(error.message)) return { error: "Ce jeu figure déjà dans les suggestions." };
+      if (/relation .* does not exist|schema cache/i.test(error.message)) return { error: "Les suggestions ne sont pas encore activées sur le site." };
+      return { error: error.message };
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Retirer une suggestion : celui qui l'a proposée, l'organisateur, ou un admin.
+  const removeEventSuggestion = useCallback(async (suggestionId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("event_game_suggestions").delete().eq("id", suggestionId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Voter pour une suggestion. value ∈ {3, 2, 1, -1, -3}.
+  // Recliquer sur le vote déjà posé le retire (on redevient sans avis).
+  const voteEventSuggestion = useCallback(async (suggestionId, value, currentValue = null) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (currentValue === value) {
+      const { error } = await supabase.from("event_suggestion_votes").delete()
+        .eq("suggestion_id", suggestionId).eq("voter_id", currentUser.id);
+      if (error) return { error: error.message };
+    } else {
+      const { error } = await supabase.from("event_suggestion_votes")
+        .upsert({ suggestion_id: suggestionId, voter_id: currentUser.id, value }, { onConflict: "suggestion_id,voter_id" });
+      if (error) return { error: error.message };
+    }
+    await loadData();
+    return {};
   }, [currentUser, loadData]);
 
   // ============================================================
@@ -2528,6 +2592,7 @@ function AppProvider({ children }) {
     setGameWeight, createLoan, closeLoan,
     wishlistByUser, toggleWishlist, setShareWishlist,
     addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
+    addEventSuggestion, removeEventSuggestion, voteEventSuggestion,
     addGuest, removeGuest, confirmEventInvite, declineEventInvite, addComment, updateComment, removeComment,
     addGameComment, updateGameComment, removeGameComment,
     addPlace, updatePlace,
@@ -4635,6 +4700,23 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Suggérer des jeux avant le moment (et voter)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un moment, l'encart <b>« 💡 Jeux suggérés »</b> sert à préparer le programme. Chaque personne inscrite au moment peut <b>proposer un jeu</b> de la ludothèque, puis chacun dit l'envie qu'il en a. Cinq niveaux, du plus au moins désiré :</p>
+            <Illu caption="Les cinq votes possibles. Recliquer sur celui qu'on a posé le retire.">
+              <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <Legend color={C.teal} label="Deux pouces en haut · +3" />
+                <Legend color={C.teal} label="Un pouce en haut · +2" />
+                <Legend color="#8a7c6a" label="Égal · +1" />
+                <Legend color={C.red} label="Un pouce en bas · −1" />
+                <Legend color={C.red} label="Une croix · −3" />
+              </span>
+            </Illu>
+            <p style={{ margin: "6px 0 8px" }}>Le total apparaît dans la <b>pastille ronde en bas à droite</b> de chaque miniature — verte quand le jeu est désiré, rouge quand il ne l'est pas. Les jeux se classent tout seuls, du plus attendu au moins attendu. Un clic sur la pastille montre <b>qui a voté quoi</b>, et un clic sur l'image ouvre la fiche du jeu.</p>
+            <p style={{ margin: 0 }}><b>Qui peut y toucher ?</b> Proposer un jeu et voter sont réservés aux <b>membres inscrits au moment</b> (et au créateur), ainsi qu'aux administrateurs. Retirer une suggestion revient à celui qui l'a proposée, à l'organisateur du moment ou à un administrateur. Suggérer un jeu n'engage à rien : c'est une envie, pas une réservation — les <b>jeux joués</b>, eux, se déclarent après coup dans l'encart suivant.</p>
+          </>,
+        },
+        {
           q: "Recevoir les moments dans mon agenda personnel",
           a: <p style={{ margin: 0 }}>Sous la légende du calendrier, <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les moments jeux apparaissent ensuite tout seuls dans votre agenda (ceux en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
         },
@@ -5915,6 +5997,7 @@ function WishlistButton({ kind, id, owned, setToast = () => {}, onAuth = () => {
 
 function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = () => {} }) {
   const [gameOpen, setGameOpen] = useState(null); // fiche jeu ouverte depuis le top 10
+  const [upcOpen, setUpcOpen] = useState(null);   // fiche « À venir » ouverte depuis la liste d'envie
   const [editOpen, setEditOpen] = useState(false); // modification du profil (administrateurs)
   const { games, users, plays, events, upcoming, beltByGame, householdByUser, currentUser } = useApp();
   const member = users.find((u) => u.id === memberId);
@@ -6060,7 +6143,7 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
             <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux qu'{member?.name ? "il ou elle" : "il"} aimerait posséder</span>
           </h4>
           <div style={{ marginBottom: 18 }}>
-            <WishlistGrid items={theirWishlist} onOpenGame={setGameOpen} emptyText="" />
+            <WishlistGrid items={theirWishlist} onOpenGame={setGameOpen} onOpenUpcoming={setUpcOpen} emptyText="" />
           </div>
         </>
       )}
@@ -6118,7 +6201,10 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
           {theirGames.map((g) => {
             const myRating = g.ratings?.[memberId] || 0;
             return (
-              <div key={g.id} style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #efe6d6", background: "#fff" }}>
+              <button key={g.id} type="button" onClick={() => setGameOpen(g.id)} title={`Ouvrir la fiche de ${g.name}`}
+                style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #efe6d6", background: "#fff", padding: 0, cursor: "pointer", textAlign: "left", display: "block", width: "100%", minWidth: 0, font: "inherit", transition: "border-color .15s" }}
+                onMouseEnter={(ev) => { ev.currentTarget.style.borderColor = C.teal; }}
+                onMouseLeave={(ev) => { ev.currentTarget.style.borderColor = "#efe6d6"; }}>
                 <div style={{ position: "relative" }}>
                   <GameCover g={g} />
                   {myRating > 0 && (
@@ -6134,7 +6220,7 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
                     {g.time && <span>{g.time} min</span>}
                   </div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -6165,6 +6251,7 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
         const gg = games.find((g) => g.id === gameOpen);
         return gg ? <GameDetailModal g={gg} onClose={() => setGameOpen(null)} onAuth={onAuth} setToast={setToast} /> : null;
       })()}
+      {upcOpen && <UpcomingDetailModal upcId={upcOpen} onClose={() => setUpcOpen(null)} onAuth={onAuth} setToast={setToast} />}
       {editOpen && member && <ProfileEditModal member={member} onClose={() => setEditOpen(false)} />}
     </Modal>
   );
@@ -7941,6 +8028,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             </>
           )}
 
+          {/* SUGGESTIONS DE JEUX */}
+          <EventGameSuggestions e={e} canSuggest={!expired && canEditPlayed} canManage={!!canManage} />
+
           {/* JEUX JOUÉS */}
           <EventPlayedGames e={e} isParticipant={!expired && canEditPlayed} canManage={!expired && !!canManage} />
 
@@ -8053,6 +8143,189 @@ function EventLiveChronos({ eventId }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* ---- Section : suggestions de jeux pour un moment ----------------------------
+   Avant la partie, les personnes présentes au moment proposent des jeux et
+   disent l'envie qu'elles en ont. Cinq niveaux, du plus au moins désiré :
+   deux pouces en haut (+3), un pouce en haut (+2), égal (+1), un pouce en
+   bas (-1), une croix (-3). La somme des votes donne le classement, affichée
+   dans une pastille en bas à droite de la miniature.
+   ---------------------------------------------------------------------------- */
+const SUGGESTION_VOTE_OPTIONS = [
+  { v: 3, label: "Très envie" },
+  { v: 2, label: "Envie" },
+  { v: 1, label: "Pourquoi pas" },
+  { v: -1, label: "Peu envie" },
+  { v: -3, label: "Pas celui-là" },
+];
+
+function SuggestionVoteIcon({ v }) {
+  if (v === 3) return <span style={{ display: "inline-flex", gap: 1 }}><ThumbsUp size={11} /><ThumbsUp size={11} /></span>;
+  if (v === 2) return <ThumbsUp size={13} />;
+  if (v === 1) return <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, lineHeight: 1 }}>=</span>;
+  if (v === -1) return <ThumbsDown size={13} />;
+  return <X size={13} />;
+}
+
+function EventGameSuggestions({ e, canSuggest, canManage }) {
+  const { games, users, currentUser, addEventSuggestion, removeEventSuggestion, voteEventSuggestion, askConfirm } = useApp();
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [openedGameId, setOpenedGameId] = useState(null);
+  const [detailFor, setDetailFor] = useState(null); // suggestion dont on déplie le détail des votes
+  const list = e.suggestions || [];
+
+  const alreadyIds = new Set(list.map((s) => s.gameId));
+  const hits = useMemo(() => {
+    if (!q.trim()) return [];
+    const n = q.trim().toLowerCase();
+    return (games || []).filter((g) => !alreadyIds.has(g.id) && g.name.toLowerCase().includes(n)).slice(0, 8);
+  }, [games, q, list]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submit = async (gameId) => {
+    setBusy(true); setErr("");
+    const res = await addEventSuggestion(e.id, gameId);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setQ("");
+  };
+
+  const vote = async (suggestionId, value, mine) => {
+    if (!canSuggest || busy) return;
+    setBusy(true); setErr("");
+    const res = await voteEventSuggestion(suggestionId, value, mine);
+    setBusy(false);
+    if (res?.error) setErr(res.error);
+  };
+
+  const scoreColor = (n) => (n > 0 ? C.teal : n < 0 ? C.red : "#a89a86");
+  const nameOf = (uid) => (users || []).find((u) => u.id === uid)?.name || "Membre";
+
+  return (
+    <div style={{ borderTop: "1px solid #f0e8d8", paddingTop: 18, marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: 0 }}>💡 Jeux suggérés ({list.length})</h4>
+        {canSuggest && !adding && <Btn size="sm" variant="soft" onClick={() => setAdding(true)}><Plus size={14} /> Proposer un jeu</Btn>}
+      </div>
+      <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "#9c8d79", lineHeight: 1.5 }}>
+        Ce qu'on aimerait sortir ce jour-là. Chaque inscrit dit son envie, et le total classe les jeux — de quoi arriver avec une idée du programme.
+      </p>
+
+      {list.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun jeu suggéré pour l'instant.</span>}
+
+      {list.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 12, marginBottom: adding ? 14 : 0 }}>
+          {list.map((s) => {
+            const mine = currentUser ? (s.votes.find((v) => v.userId === currentUser.id)?.value ?? null) : null;
+            const gameExists = !!(games || []).find((g) => g.id === s.gameId);
+            const canRemove = !!currentUser && (s.addedBy === currentUser.id || canManage);
+            const open = detailFor === s.id;
+            return (
+              <div key={s.id} style={{ border: "1px solid #efe6d6", borderRadius: 13, background: "#fff", overflow: "hidden", minWidth: 0 }}>
+                <div style={{ position: "relative" }}>
+                  <button type="button" disabled={!gameExists} onClick={() => gameExists && setOpenedGameId(s.gameId)}
+                    title={gameExists ? `Ouvrir la fiche de ${s.gameName}` : s.gameName}
+                    style={{ display: "block", width: "100%", aspectRatio: "1", padding: 0, border: "none", cursor: gameExists ? "pointer" : "default",
+                      background: s.gameImg ? `center/cover url("${s.gameImg}")` : `linear-gradient(135deg,${C.teal},${C.purple})` }}>
+                    {!s.gameImg && (
+                      <span style={{ display: "grid", placeItems: "center", width: "100%", height: "100%", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, padding: 6, textAlign: "center", lineHeight: 1.15 }}>
+                        {s.gameName.slice(0, 16)}
+                      </span>
+                    )}
+                  </button>
+                  {/* pastille de score, en bas à droite de la miniature */}
+                  <button type="button" onClick={() => setDetailFor(open ? null : s.id)} title={`Score ${s.score > 0 ? "+" : ""}${s.score} · ${s.votes.length} vote${s.votes.length > 1 ? "s" : ""} — voir le détail`}
+                    style={{ position: "absolute", right: 6, bottom: 6, width: 36, height: 36, borderRadius: "50%", border: "2.5px solid #fff",
+                      background: scoreColor(s.score), color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14,
+                      display: "grid", placeItems: "center", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,.25)", padding: 0 }}>
+                    {s.score > 0 ? `+${s.score}` : s.score}
+                  </button>
+                  {canRemove && (
+                    <button type="button" title="Retirer cette suggestion"
+                      onClick={async () => { if (await askConfirm({ title: "Retirer ce jeu ?", message: "Le jeu et les votes qui s'y rattachent seront retirés des suggestions de ce moment.", confirmLabel: "Retirer" })) removeEventSuggestion(s.id); }}
+                      style={{ position: "absolute", left: 6, top: 6, width: 26, height: 26, borderRadius: 8, border: "none", background: "rgba(255,255,255,.9)", color: C.red, display: "grid", placeItems: "center", cursor: "pointer", padding: 0 }}>
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+                <div style={{ padding: "8px 9px 9px" }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 12.5, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.gameName}</div>
+                  <div style={{ fontSize: 10.5, color: "#a89a86", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>proposé par {s.addedByName}</div>
+                  {canSuggest && (
+                    <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
+                      {SUGGESTION_VOTE_OPTIONS.map((o) => {
+                        const active = mine === o.v;
+                        const col = o.v > 1 ? C.teal : o.v === 1 ? "#8a7c6a" : C.red;
+                        return (
+                          <button key={o.v} type="button" disabled={busy} onClick={() => vote(s.id, o.v, mine)}
+                            title={`${o.label} (${o.v > 0 ? "+" : ""}${o.v})${active ? " — cliquez pour retirer votre vote" : ""}`}
+                            style={{ flex: 1, minWidth: 0, height: 26, borderRadius: 7, cursor: busy ? "wait" : "pointer", padding: 0,
+                              display: "grid", placeItems: "center",
+                              border: active ? `1.5px solid ${col}` : "1.5px solid #ece2d0",
+                              background: active ? col : "#fff", color: active ? "#fff" : col }}>
+                            <SuggestionVoteIcon v={o.v} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {open && (
+                    <div style={{ marginTop: 8, borderTop: "1px dashed #ece2d0", paddingTop: 6 }}>
+                      {s.votes.length === 0 && <span style={{ fontSize: 11, color: "#a89a86" }}>Personne n'a encore voté.</span>}
+                      {[...s.votes].sort((a, b) => b.value - a.value).map((v) => (
+                        <div key={v.userId} style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: 11, color: "#6e6256", lineHeight: 1.5 }}>
+                          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(v.userId)}</span>
+                          <span style={{ fontWeight: 700, color: scoreColor(v.value), flexShrink: 0 }}>{v.value > 0 ? `+${v.value}` : v.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {adding && (
+        <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: 12, marginTop: 12 }}>
+          <Field label="Rechercher un jeu de la ludothèque" hint="Tous les membres présents à ce moment peuvent proposer un jeu et voter.">
+            <div style={{ position: "relative" }}>
+              <Search size={16} color="#b6a78f" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <TextInput value={q} onChange={(ev) => setQ(ev.target.value)} placeholder="Nom du jeu..." autoFocus style={{ paddingLeft: 38 }} />
+            </div>
+          </Field>
+          {q.trim() && (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5, maxHeight: 240, overflowY: "auto", marginBottom: 10 }}>
+              {hits.length === 0 && <span style={{ fontSize: 13, color: "#a89a86", padding: "4px 6px" }}>Aucun jeu correspondant (ou déjà suggéré).</span>}
+              {hits.map((g) => (
+                <button key={g.id} type="button" onClick={() => submit(g.id)} disabled={busy}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #ece2d0", borderRadius: 9, padding: "7px 10px", cursor: busy ? "wait" : "pointer", textAlign: "left" }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})` }} />
+                  <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{g.name}</span>
+                  <Plus size={13} color={C.purple} />
+                </button>
+              ))}
+            </div>
+          )}
+          <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setQ(""); setErr(""); }}>Fermer</Btn>
+        </div>
+      )}
+
+      {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "8px 11px", borderRadius: 8, fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+
+      {!canSuggest && currentUser && list.length > 0 && (
+        <span style={{ fontSize: 12.5, color: "#a89a86", display: "block", marginTop: 8 }}>Seuls les membres inscrits à ce moment jeux (et les administrateurs) peuvent proposer un jeu ou voter.</span>
+      )}
+
+      {openedGameId && (
+        <GameDetailModal g={(games || []).find((g) => g.id === openedGameId)} onClose={() => setOpenedGameId(null)} onAuth={() => {}} setToast={() => {}} />
+      )}
     </div>
   );
 }
@@ -11635,6 +11908,10 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
   const [saving, setSaving] = useState(false); // anti double-clic : verrouille la validation pendant la création
   const [ownership, setOwnership] = useState("self");
   const [forUserIds, setForUserIds] = useState([]);
+  // Fiches ouvertes au clic sur un doublon détecté (ludothèque ou « À venir ») :
+  // on veut pouvoir vérifier de quel jeu il s'agit sans quitter l'ajout en cours.
+  const [openGameId, setOpenGameId] = useState(null);
+  const [openUpcId, setOpenUpcId] = useState(null);
   // (point 2) Avis personnel posé dès l'import, pour les fiches À venir.
   const [myHype, setMyHype] = useState(0);
   const [myIntent, setMyIntent] = useState("");
@@ -11862,7 +12139,9 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
             {existing.slice(0, 4).map((g) => {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
-                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
+                <div key={g.id} role="button" tabIndex={0} onClick={() => setOpenGameId(g.id)} title={`Ouvrir la fiche de ${g.name}`}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px", cursor: "pointer", transition: "background .15s" }}
+                  onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.08)"; }} onMouseLeave={(ev) => { ev.currentTarget.style.background = "#fff"; }}>
                   <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
                     {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
                   </div>
@@ -11872,7 +12151,7 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
                   </span>
                   {alreadyMine
                     ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 6px" }}>✓ Vous l'avez</span>
-                    : <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>}
+                    : <span onClick={(ev) => ev.stopPropagation()} style={{ flexShrink: 0 }}><Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn></span>}
                 </div>
               );
             })}
@@ -11886,12 +12165,16 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
             <Sparkles size={15} color={C.amber} />
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Aussi en « À venir »</span>
           </div>
-          <p style={{ fontSize: 12, color: "#6e6256", margin: "0 0 8px" }}>Astuce : vous pouvez aussi utiliser le bouton <b>« Je l'ai ! »</b> depuis l'onglet À venir.</p>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
+          <p style={{ fontSize: 12, color: "#6e6256", margin: "0 0 8px" }}>Astuce : vous pouvez aussi utiliser le bouton <b>« Je l'ai ! »</b> depuis l'onglet À venir. Cliquez sur une fiche pour l'ouvrir.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 5 }}>
             {existingUpcoming.slice(0, 3).map((u) => (
-              <div key={u.id} style={{ fontSize: 13, color: "#5e5346", padding: "3px 8px", background: "#fff", borderRadius: 7 }}>
-                • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
-              </div>
+              <button key={u.id} type="button" onClick={() => setOpenUpcId(u.id)} title={`Ouvrir la fiche de ${u.name}`}
+                style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: "#5e5346", padding: "5px 8px", background: "#fff", border: "1px solid #f0e4cd", borderRadius: 8, cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0, font: "inherit" }}
+                onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.08)"; }} onMouseLeave={(ev) => { ev.currentTarget.style.background = "#fff"; }}>
+                <span style={{ width: 28, height: 28, borderRadius: 6, flexShrink: 0, background: u.img ? `center/cover url("${u.img}")` : `linear-gradient(135deg,${C.amber},${C.purple})` }} />
+                <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13 }}>{u.name}{u.year ? ` (${u.year})` : ""}</span>
+                <ChevronRight size={15} color="#cdb9a0" />
+              </button>
             ))}
           </div>
         </div>
@@ -11912,6 +12195,9 @@ function BggImport({ onBack, onDone, onManual, forUpcoming = false }) {
           </button>
         ))}
       </div>
+      {/* Fiches ouvertes au clic sur un doublon détecté */}
+      {openGameId && <GameDetailModalById id={openGameId} onClose={() => setOpenGameId(null)} />}
+      {openUpcId && <UpcomingDetailModal upcId={openUpcId} onClose={() => setOpenUpcId(null)} onAuth={() => {}} setToast={() => {}} />}
     </div>
   );
 }
@@ -11927,6 +12213,9 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
   // forUserIds = les autres membres pour qui on déclare la possession.
   const [ownership, setOwnership] = useState("self");
   const [forUserIds, setForUserIds] = useState([]);
+  // Fiches ouvertes au clic sur un doublon détecté (ludothèque ou « À venir »).
+  const [openGameId, setOpenGameId] = useState(null);
+  const [openUpcId, setOpenUpcId] = useState(null);
   const toggleMech = (m) => setF((s) => ({ ...s, mechanics: s.mechanics.includes(m) ? s.mechanics.filter((x) => x !== m) : [...s.mechanics, m] }));
   const toggleForUser = (uid) => setForUserIds((arr) => arr.includes(uid) ? arr.filter((x) => x !== uid) : [...arr, uid]);
   // Membres sélectionnables (tous sauf moi)
@@ -11974,7 +12263,9 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
             {similar.slice(0, 5).map((g) => {
               const alreadyMine = (g.ownerIds || []).includes(currentUser?.id);
               return (
-                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px" }}>
+                <div key={g.id} role="button" tabIndex={0} onClick={() => setOpenGameId(g.id)} title={`Ouvrir la fiche de ${g.name}`}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "8px 10px", cursor: "pointer", transition: "background .15s" }}
+                  onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.08)"; }} onMouseLeave={(ev) => { ev.currentTarget.style.background = "#fff"; }}>
                   <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0, background: g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.purple})`, display: "grid", placeItems: "center" }}>
                     {!g.img && <span style={{ color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name.slice(0, 2).toUpperCase()}</span>}
                   </div>
@@ -11984,7 +12275,7 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
                   </span>
                   {alreadyMine
                     ? <span style={{ fontSize: 12, color: C.teal, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", padding: "0 8px" }}>✓ Vous l'avez</span>
-                    : <Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn>}
+                    : <span onClick={(ev) => ev.stopPropagation()} style={{ flexShrink: 0 }}><Btn size="sm" variant="teal" onClick={async () => { await addOwner(g.id); onDone(null, "Ajouté à votre ludothèque !"); }}><Plus size={13} /> Je l'ai aussi</Btn></span>}
                 </div>
               );
             })}
@@ -11999,12 +12290,16 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
             <Sparkles size={15} color={C.amber} />
             <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 14 }}>Une fiche « À venir » existe</span>
           </div>
-          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Astuce : depuis la fiche « À venir » du jeu, cliquez sur <b>« Je l'ai ! »</b> — votre ludothèque sera créée en un clic, avec toutes les infos déjà remplies.</p>
+          <p style={{ fontSize: 12.5, color: "#6e6256", margin: "0 0 10px" }}>Astuce : depuis la fiche « À venir » du jeu, cliquez sur <b>« Je l'ai ! »</b> — votre ludothèque sera créée en un clic, avec toutes les infos déjà remplies. Cliquez sur une fiche pour l'ouvrir.</p>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
             {similarUpcoming.slice(0, 3).map((u) => (
-              <div key={u.id} style={{ fontSize: 13.5, color: "#5e5346", padding: "4px 8px", background: "#fff", borderRadius: 8 }}>
-                • <b>{u.name}</b>{u.year ? ` (${u.year})` : ""}
-              </div>
+              <button key={u.id} type="button" onClick={() => setOpenUpcId(u.id)} title={`Ouvrir la fiche de ${u.name}`}
+                style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, color: "#5e5346", padding: "5px 9px", background: "#fff", border: "1px solid #f0e4cd", borderRadius: 9, cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0, font: "inherit" }}
+                onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(30,138,138,.08)"; }} onMouseLeave={(ev) => { ev.currentTarget.style.background = "#fff"; }}>
+                <span style={{ width: 30, height: 30, borderRadius: 7, flexShrink: 0, background: u.img ? `center/cover url("${u.img}")` : `linear-gradient(135deg,${C.amber},${C.purple})` }} />
+                <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{u.name}{u.year ? ` (${u.year})` : ""}</span>
+                <ChevronRight size={15} color="#cdb9a0" />
+              </button>
             ))}
           </div>
         </div>
@@ -12088,6 +12383,9 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" variant="amber" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Plus size={18} /> Ajouter le jeu</>}</Btn>
+      {/* Fiches ouvertes au clic sur un doublon détecté */}
+      {openGameId && <GameDetailModalById id={openGameId} onClose={() => setOpenGameId(null)} />}
+      {openUpcId && <UpcomingDetailModal upcId={openUpcId} onClose={() => setOpenUpcId(null)} onAuth={() => {}} setToast={() => {}} />}
     </div>
   );
 }
@@ -12504,6 +12802,9 @@ const BACKUP_TABLES = [
   ["poll_options", [["id"]]],
   ["poll_votes", [["id"]]],
   ["poll_comments", [["created_at", "id"]]],
+  // Suggestions de jeux dans les moments
+  ["event_game_suggestions", [["id"], ["created_at"]]],
+  ["event_suggestion_votes", [["suggestion_id", "voter_id"]]],
   // Divers
   ["notifications", [["id"], ["created_at"]]],
   ["wishlist_items", [["id"], ["created_at"]]],
