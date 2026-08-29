@@ -1,6 +1,7 @@
 {
   "crons": [
-    { "path": "/api/retro-email", "schedule": "0 8 1 * *" }
+    { "path": "/api/retro-email", "schedule": "0 8 1 * *" },
+    { "path": "/api/loan-reminders", "schedule": "0 7 * * *" }
   ],
   "headers": [
     {
