@@ -806,6 +806,10 @@ function AppProvider({ children }) {
   // Demandes de location en cours (RLS : uniquement celles qui me concernent,
   // comme demandeur ou comme proprietaire destinataire).
   const [loanRequests, setLoanRequests] = useState([]);
+  // Discussions dont je fais partie (RLS : les autres sont invisibles).
+  // Les MESSAGES ne sont pas chargés ici : ils le sont à l'ouverture d'un
+  // fil, sinon la moindre visite tirerait toute la messagerie de l'asso.
+  const [conversations, setConversations] = useState([]);
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
@@ -865,7 +869,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }, { data: convRows }, { data: convMemberRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -899,6 +903,8 @@ function AppProvider({ children }) {
         fetchAllRows("event_suggestion_votes", "suggestion_id,voter_id,value", ["suggestion_id", "voter_id"]),
         currentUserIdRef.current ? supabase.from("loan_requests").select("*").order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("loan_request_owners").select("*") : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("conversations").select("*").order("last_message_at", { ascending: false }) : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("conversation_members").select("*") : Promise.resolve({ data: [] }),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -1044,6 +1050,32 @@ function AppProvider({ children }) {
             status: o.status || "pending", respondedAt: o.responded_at || null,
           })),
         })));
+      }
+
+      // ---- Messagerie ----
+      // Le non-lu se déduit de deux dates : le dernier message de la
+      // discussion, et la dernière fois que JE l'ai ouverte. Pas de comptage
+      // de messages, donc pas de requête supplémentaire par discussion.
+      {
+        const me = currentUserIdRef.current;
+        const membersByConv = {};
+        (convMemberRows || []).forEach((m) => { (membersByConv[m.conversation_id] ||= []).push(m); });
+        setConversations((convRows || []).map((c) => {
+          const mine = (membersByConv[c.id] || []).find((m) => m.user_id === me);
+          const lastMsg = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+          const lastRead = mine?.last_read_at ? new Date(mine.last_read_at).getTime() : 0;
+          return {
+            id: c.id, title: c.title || "Discussion",
+            createdBy: c.created_by, createdByName: nameById[c.created_by] || "Membre",
+            contextKind: c.context_kind || null, contextId: c.context_id || null,
+            createdAt: c.created_at, lastMessageAt: c.last_message_at,
+            lastReadAt: mine?.last_read_at || null,
+            unread: lastMsg > lastRead,
+            members: (membersByConv[c.id] || []).map((m) => ({
+              id: m.user_id, name: nameById[m.user_id] || "Membre",
+            })),
+          };
+        }));
       }
       // poids privés de l'utilisateur connecté (RLS ne renvoie que les siens)
       const wmap = {};
@@ -1749,6 +1781,91 @@ function AppProvider({ children }) {
     await loadData();
     return {};
   }, [currentUser, loanRequests, notifyUsers, loadData]);
+
+  /* ---- Messagerie ----
+     Groupes fermes : les participants sont fixes a la creation. Chacun peut
+     partir ; quand le dernier s'en va, la discussion et ses messages sont
+     supprimes par un declencheur cote base. Aucun acces administrateur. */
+  const createConversation = useCallback(async (title, memberIds, firstMessage, context) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const ids = [...new Set(memberIds || [])].filter((id) => id && id !== currentUser.id);
+    if (ids.length === 0) return { error: "Choisissez au moins un destinataire." };
+    if (!String(title || "").trim()) return { error: "Donnez un titre à la discussion." };
+    const { data, error } = await supabase.rpc("aladj_create_conversation", {
+      p_title: String(title).trim(),
+      p_member_ids: ids,
+      p_context_kind: context?.kind || null,
+      p_context_id: context?.id || null,
+      p_first_message: (firstMessage || "").trim(),
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return { id: data };
+  }, [currentUser, loadData]);
+
+  // Les messages ne vivent pas dans l'état global : on les récupère à la
+  // demande, à l'ouverture d'un fil, et on les rafraîchit tant qu'il est ouvert.
+  const fetchMessages = useCallback(async (conversationId) => {
+    if (!currentUser) return { error: "Connectez-vous.", messages: [] };
+    const { data, error } = await supabase.from("messages")
+      .select("*").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true });
+    if (error) return { error: error.message, messages: [] };
+    return {
+      messages: (data || []).map((m) => ({
+        id: m.id, conversationId: m.conversation_id, authorId: m.author_id,
+        authorName: (users.find((u) => u.id === m.author_id) || {}).name || "Membre",
+        content: m.content, kind: m.kind || "text", createdAt: m.created_at,
+      })),
+    };
+  }, [currentUser, users]);
+
+  const sendMessage = useCallback(async (conversationId, content) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (!String(content || "").trim()) return { error: "Message vide." };
+    const { error } = await supabase.rpc("aladj_send_message", {
+      p_conversation_id: conversationId, p_content: String(content).trim(),
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Marquer une discussion comme lue. Mise à jour locale immédiate pour que la
+  // pastille s'éteigne sans attendre l'aller-retour réseau.
+  const markConversationRead = useCallback(async (conversationId) => {
+    if (!currentUser) return;
+    const now = new Date().toISOString();
+    setConversations((prev) => prev.map((c) => c.id === conversationId
+      ? { ...c, unread: false, lastReadAt: now } : c));
+    await supabase.from("conversation_members")
+      .update({ last_read_at: now })
+      .eq("conversation_id", conversationId).eq("user_id", currentUser.id);
+  }, [currentUser]);
+
+  const leaveConversation = useCallback(async (conversationId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data, error } = await supabase.rpc("aladj_leave_conversation", {
+      p_conversation_id: conversationId,
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return { deleted: data === "deleted" };
+  }, [currentUser, loadData]);
+
+  const deleteMessage = useCallback(async (messageId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("messages").delete()
+      .eq("id", messageId).eq("author_id", currentUser.id);
+    if (error) return { error: error.message };
+    return {};
+  }, [currentUser]);
+
+  // Nombre de discussions comportant du non-lu : alimente la pastille rouge.
+  const messagesUnread = useMemo(
+    () => (conversations || []).filter((c) => c.unread).length,
+    [conversations],
+  );
 
   /* Alertes de l'onglet « Mes locations » (et pastille rouge de la navigation).
      - pendingForMe : demandes recues auxquelles je n'ai pas encore repondu
@@ -2766,6 +2883,8 @@ function AppProvider({ children }) {
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     loanRequests, loanAlerts, createLoanRequest, acceptLoanRequest, declineLoanRequest, cancelLoanRequest,
+    conversations, messagesUnread, createConversation, fetchMessages, sendMessage,
+    markConversationRead, leaveConversation, deleteMessage,
     wishlistByUser, toggleWishlist, setShareWishlist,
     addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
     addEventSuggestion, removeEventSuggestion, voteEventSuggestion,
@@ -3824,14 +3943,14 @@ function isDecideur(u) {
 }
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, reload, personalReady } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, reload, personalReady } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
-  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length : 0;
+  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length + (messagesUnread || 0) : 0;
   // Pastille de « Mes locations » : demandes à traiter, locations à venir
   // et jeux empruntés en retard. Jamais les retards côté propriétaire.
   const loanBadge = personalReady ? ((loanAlerts || {}).count || 0) : 0;
@@ -4605,6 +4724,7 @@ function GuidePage() {
               <li><b>Partie ajoutée à votre historique</b> — dès qu'une partie chronométrée est enregistrée, chaque joueur membre de la tablée reçoit une notification. <b>Une par partie</b> : trois manches du même jeu donnent trois notifications, et non une seule.</li>
               <li><b>Locations</b> — demande de location reçue, engagement d'un propriétaire, refus nominatif, annulation, prêt enregistré, et les rappels de retour (la veille, le jour J, puis chaque semaine de retard).</li>
             </ul>
+            <p style={{ margin: "0 0 8px" }}>En revanche, la <b>messagerie n'alimente pas cette liste</b> : un échange un peu vif la remplirait à lui seul. Les nouveaux messages se signalent par une <b>pastille rouge</b> sur « Ma messagerie » et sur le compteur de Mon espace.</p>
             <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
           </>,
         },
@@ -4788,6 +4908,23 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Ma messagerie",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, la case <b>Ma messagerie</b> regroupe toutes vos discussions en cours. Chaque discussion réunit <b>un ou plusieurs membres</b>, porte un <b>titre</b> donné par celui qui l'a créée, et se lit dans une fenêtre dédiée. Ctrl + Entrée envoie le message.</p>
+            <p style={{ margin: "0 0 8px" }}>Une <b>pastille rouge</b> signale les discussions où quelqu'un a répondu depuis votre dernier passage : sur la case elle-même, sur la ligne de la discussion concernée, et dans le compteur de l'onglet <b>Mon espace</b>. Elle s'éteint dès que vous ouvrez le fil.</p>
+            <p style={{ margin: 0 }}>Vous pouvez supprimer vos propres messages : ils disparaissent alors pour tout le monde.</p>
+          </>,
+        },
+        {
+          q: "Créer une discussion, la quitter",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Bouton <b>« Nouvelle discussion »</b> dans Ma messagerie : donnez un titre, cochez les membres concernés, écrivez un premier message si vous voulez. Vous êtes inclus d'office.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>participants sont fixés à la création</b> : personne ne peut être ajouté ensuite. C'est volontaire — personne ne découvre ainsi un historique qu'il n'était pas censé lire. Pour élargir le cercle, créez une nouvelle discussion.</p>
+            <p style={{ margin: "0 0 8px" }}>Chacun peut <b>quitter</b> une discussion à tout moment (bouton en haut du fil). Vous perdez alors l'accès à l'historique et vous ne pouvez pas y revenir de vous-même ; les autres participants voient une ligne signalant votre départ. Quand le <b>dernier participant</b> s'en va, la discussion et tous ses messages sont <b>définitivement supprimés</b> de la base.</p>
+            <p style={{ margin: 0 }}><b>Aucun administrateur ne peut lire vos discussions.</b> Il n'existe aucun écran, aucune fonction ni aucune permission le permettant, et ces messages sont volontairement <b>exclus de la sauvegarde</b> de l'association. Le revers de la médaille : ils ne sont récupérables par personne en cas de suppression.</p>
+          </>,
+        },
+        {
           q: "Le top 10 ever des membres",
           a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b>, juste au-dessus de votre ludothèque : composez votre <b>top 10 ever</b> — les 10 jeux que vous garderiez s'il n'y avait plus que ça à jouer sur Terre, dans l'ordre. Il s'affiche sur votre fiche de membre, et chaque jeu élu le mentionne fièrement sur sa fiche (« 💎 Dans le top 10 de Fabien (n°3) »). Modifiable à tout moment. Pour voir votre fiche telle que les autres la voient : bouton « Voir ma fiche » en haut de Mon espace.</p>,
         },
@@ -4811,6 +4948,13 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dès que vous vous engagez sur une demande, une <b>pastille rouge</b> apparaît sur l'onglet <b>Mes locations</b> et une zone <b>« Location à venir »</b> s'affiche en haut de la page. Un clic sur <b>« Enregistrer la location »</b> ouvre le formulaire de prêt <b>déjà rempli</b> : le jeu, le membre à qui vous le louez, le tarif calculé et le poids de votre exemplaire s'il est connu. Tout reste modifiable — vous pouvez baisser le tarif, le mettre à zéro pour un prêt gratuit, corriger le poids.</p>
             <p style={{ margin: 0 }}>La pastille s'éteint dès que la location est enregistrée, ou si vous annulez la location à venir (le demandeur en est alors prévenu).</p>
+          </>,
+        },
+        {
+          q: "Discuter d'une location",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur chaque carte de <b>Mes locations</b> — demande reçue, location à venir, demande envoyée acceptée — un bouton <b>« Discuter »</b> ouvre un fil privé avec l'autre personne. Pratique pour convenir du lieu et de l'heure de la remise en main propre, ce que le petit message de la demande ne permet pas.</p>
+            <p style={{ margin: 0 }}>Ce fil est une discussion ordinaire : il apparaît dans <b>Ma messagerie</b> comme les autres, avec une étiquette « Location » qui rappelle son origine. Il survit à la location : rien ne s'efface quand le jeu est rendu.</p>
           </>,
         },
         {
@@ -11371,6 +11515,8 @@ function LocationsPage({ setToast }) {
                       setBusyId(null);
                       setToast(res?.error || "Location annulée.");
                     }}><X size={14} /> Annuler</Btn>
+                    <ContextChatButton contextKind="loan_request" contextId={r.id}
+                      title={`Location de « ${r.gameName} »`} memberIds={[r.requesterId]} setToast={setToast} />
                   </div>
                   {!g && <p style={{ fontSize: 12.5, color: C.red, margin: "8px 0 0" }}>Fiche du jeu introuvable — impossible de pré-remplir la location.</p>}
                 </div>
@@ -11425,6 +11571,8 @@ function LocationsPage({ setToast }) {
                       setBusyId(null);
                       setToast(res?.error || "Refus envoyé.");
                     }}><X size={14} /> Je refuse</Btn>
+                    <ContextChatButton contextKind="loan_request" contextId={r.id}
+                      title={`Location de « ${r.gameName} »`} memberIds={[r.requesterId]} setToast={setToast} />
                   </div>
                 </div>
               );
@@ -11455,6 +11603,7 @@ function LocationsPage({ setToast }) {
                       </div>
                     )}
                   </div>
+                  <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn size="sm" variant="soft" disabled={busyId === r.id} onClick={async () => {
                     const ok = await askConfirm({
                       title: "Annuler ma demande ?",
@@ -11467,6 +11616,11 @@ function LocationsPage({ setToast }) {
                     setBusyId(null);
                     setToast(res?.error || "Demande annulée.");
                   }}><X size={14} /> Annuler</Btn>
+                    {r.acceptedBy && (
+                      <ContextChatButton contextKind="loan_request" contextId={r.id}
+                        title={`Location de « ${r.gameName} »`} memberIds={[r.acceptedBy]} setToast={setToast} />
+                    )}
+                  </span>
                 </div>
               </div>
             ))}
@@ -13260,7 +13414,12 @@ function MyBadgesSection({ setToast }) {
      • les vues (v_game_play_durations, v_game_phase_time…) — elles se
        recalculent toutes seules à partir des tables ;
      • les images — elles vivent sur Cloudflare R2, en dehors de la base, et ne
-       risquent donc rien lors d'une manipulation SQL.
+       risquent donc rien lors d'une manipulation SQL ;
+     • la MESSAGERIE (conversations, conversation_members, messages) — c'est
+       délibéré et ce n'est pas un oubli. Les discussions entre membres sont
+       privées : aucun administrateur ne doit pouvoir les lire, y compris par
+       le détour d'un fichier de sauvegarde. La contrepartie est assumée :
+       une fausse manipulation SQL sur ces tables serait irréversible.
 
    Chaque table est accompagnée d'une CASCADE de colonnes de tri : on essaie le
    premier jeu, et si la requête échoue (colonne absente), on passe au suivant,
@@ -13321,6 +13480,8 @@ const BACKUP_TABLES = [
   ["wishlist_items", [["id"], ["created_at"]]],
   ["push_subscriptions", [["id"], ["created_at"]]],
   ["reco_dismissed", [["id"], ["created_at"]]],
+  // NE PAS AJOUTER ICI : conversations, conversation_members, messages.
+  // Voir l'explication en tête de liste — l'absence est volontaire.
 ];
 
 /* Requête de secours, à coller dans l'éditeur SQL de Supabase, utilisée
@@ -14289,6 +14450,375 @@ function MyTop10Section({ setToast, onOpenGame }) {
 /* ---- Encart « Ma liste d'envie » de Mon espace ----
    Replie par defaut : c'est un compteur qu'on ouvre quand on veut, pas une
    liste qui occupe l'ecran en permanence. */
+/* =============================================================================
+   MESSAGERIE — « Ma messagerie » dans Mon espace, fil de discussion, création
+
+   Groupes fermés : les participants sont fixés à la création. Chacun peut
+   quitter une discussion ; quand le dernier part, elle disparaît de la base
+   (déclencheur SQL). Aucun administrateur ne peut lire un fil dont il n'est
+   pas membre, et ces tables sont volontairement absentes de la sauvegarde.
+   ============================================================================= */
+
+/* Date courte et lisible dans une liste de discussions. */
+function fmtConvDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const hier = new Date(now); hier.setDate(hier.getDate() - 1);
+  if (d.toDateString() === hier.toDateString()) return "hier";
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "2-digit" });
+}
+
+/* Étiquette de contexte d'une discussion rattachée à un objet du site. */
+function ConvContextChip({ conv }) {
+  if (!conv.contextKind) return null;
+  const label = conv.contextKind === "loan_request" ? "Location" : "Discussion liée";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0,
+      background: "rgba(30,138,138,.12)", color: C.teal, borderRadius: 999,
+      padding: "2px 9px", fontSize: 11.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600,
+    }}>
+      <ArrowRightLeft size={11} /> {label}
+    </span>
+  );
+}
+
+/* ---- Section « Ma messagerie » de Mon espace ---- */
+function MyMessagesSection({ setToast }) {
+  const { currentUser, conversations, messagesUnread } = useApp();
+  const [open, setOpen] = useState(false);
+  const [openConv, setOpenConv] = useState(null);
+  const [composing, setComposing] = useState(false);
+  if (!currentUser) return null;
+  const list = conversations || [];
+
+  return (
+    <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", font: "inherit", flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
+          <MessageCircle size={19} color={C.teal} /> Ma messagerie
+          <span style={{ background: messagesUnread > 0 ? C.red : C.teal, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>
+            {messagesUnread > 0 ? `${messagesUnread} non lu${messagesUnread > 1 ? "s" : ""}` : list.length}
+          </span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          {open ? "Replier" : "Voir mes discussions"} <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </span>
+      </button>
+      <p style={{ fontSize: 13, color: "#6e6256", margin: "8px 0 0", lineHeight: 1.5 }}>
+        Vos échanges privés avec un ou plusieurs membres. Les participants sont fixés à la création : personne ne peut être ajouté ensuite.
+      </p>
+
+      {open && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ marginBottom: 12 }}>
+            <Btn size="sm" variant="teal" onClick={() => setComposing(true)}><Plus size={14} /> Nouvelle discussion</Btn>
+          </div>
+          {list.length === 0 ? (
+            <EmptyHint icon={MessageCircle} text="Aucune discussion pour l'instant. Lancez-en une avec « Nouvelle discussion »." />
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+              {list.map((c) => {
+                const others = (c.members || []).filter((m) => m.id !== currentUser.id);
+                return (
+                  <div key={c.id} role="button" tabIndex={0} onClick={() => setOpenConv(c.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter") setOpenConv(c.id); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, cursor: "pointer",
+                      background: c.unread ? "rgba(30,138,138,.12)" : "#fff",
+                      border: c.unread ? `1.5px solid ${C.teal}` : "1px solid #ece2d0",
+                    }}>
+                    <span style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0, background: c.unread ? C.teal : "#f0e8d8", display: "grid", placeItems: "center" }}>
+                      <MessageCircle size={16} color={c.unread ? "#fff" : "#9c8d79"} />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>{c.title}</span>
+                        <ConvContextChip conv={c} />
+                      </span>
+                      <span style={{ display: "block", fontSize: 12.5, color: "#9c8d79", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {others.length === 0 ? "Vous seul" : `Avec ${others.map((m) => m.name).join(", ")}`}
+                      </span>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                      <span style={{ fontSize: 11.5, color: "#a89a86" }}>{fmtConvDate(c.lastMessageAt)}</span>
+                      {c.unread && <span style={{ width: 9, height: 9, borderRadius: "50%", background: C.red }} />}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {openConv && <ConversationModal conversationId={openConv} onClose={() => setOpenConv(null)} setToast={setToast} />}
+      {composing && <NewConversationModal onClose={() => setComposing(false)} setToast={setToast} onCreated={(id) => setOpenConv(id)} />}
+    </div>
+  );
+}
+
+/* ---- Modale : le fil d'une discussion ----
+   Les messages sont chargés à l'ouverture puis rafraîchis toutes les 12 s
+   tant que la fenêtre reste ouverte. Un abonnement temps réel serait plus
+   élégant, mais le sondage court est infiniment plus simple à diagnostiquer
+   et suffit largement au rythme d'une conversation entre membres. */
+function ConversationModal({ conversationId, onClose, setToast }) {
+  const { currentUser, conversations, fetchMessages, sendMessage,
+          markConversationRead, leaveConversation, deleteMessage, askConfirm } = useApp();
+  const conv = (conversations || []).find((c) => c.id === conversationId);
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const bottomRef = useRef(null);
+  const markedRef = useRef(false);
+
+  const reload = useCallback(async () => {
+    const res = await fetchMessages(conversationId);
+    if (res.error) { setErr(res.error); return; }
+    setMessages(res.messages);
+    setLoading(false);
+  }, [conversationId, fetchMessages]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => { if (alive) await reload(); })();
+    const t = setInterval(() => { if (alive) reload(); }, 12000);
+    return () => { alive = false; clearInterval(t); };
+  }, [reload]);
+
+  // On marque comme lu une seule fois, à l'ouverture : rouvrir le fil ne doit
+  // pas relancer une écriture à chaque sondage.
+  useEffect(() => {
+    if (markedRef.current) return;
+    markedRef.current = true;
+    markConversationRead(conversationId);
+  }, [conversationId, markConversationRead]);
+
+  useEffect(() => {
+    if (bottomRef.current?.scrollIntoView) bottomRef.current.scrollIntoView({ block: "end" });
+  }, [messages.length]);
+
+  if (!conv) {
+    return (
+      <Modal open onClose={onClose} title="Discussion" width={560}>
+        <p style={{ fontSize: 14, color: "#5e5346", margin: 0 }}>Cette discussion n'existe plus.</p>
+      </Modal>
+    );
+  }
+
+  const others = (conv.members || []).filter((m) => m.id !== currentUser?.id);
+
+  const submit = async () => {
+    setErr("");
+    if (!draft.trim()) return;
+    setBusy(true);
+    const res = await sendMessage(conversationId, draft);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setDraft("");
+    await reload();
+  };
+
+  return (
+    <Modal open onClose={onClose} title={conv.title} width={600}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #f0e8d8" }}>
+        <span style={{ fontSize: 13, color: "#6e6256" }}>
+          {others.length === 0 ? "Vous êtes seul dans cette discussion." : `Avec ${others.map((m) => m.name).join(", ")}`}
+        </span>
+        <ConvContextChip conv={conv} />
+        <span style={{ marginLeft: "auto" }}>
+          <Btn size="sm" variant="soft" onClick={async () => {
+            const last = others.length === 0;
+            const ok = await askConfirm({
+              title: "Quitter cette discussion ?",
+              message: last
+                ? "Vous êtes le dernier participant : la discussion et tous ses messages seront définitivement supprimés."
+                : "Vous ne verrez plus cette discussion ni son historique. Les autres participants seront informés de votre départ. Vous ne pourrez pas y revenir seul.",
+              confirmLabel: "Quitter",
+            });
+            if (!ok) return;
+            const res = await leaveConversation(conversationId);
+            if (res?.error) { setErr(res.error); return; }
+            onClose();
+            setToast(res.deleted ? "Discussion supprimée." : "Vous avez quitté la discussion.");
+          }}><LogOut size={13} /> Quitter</Btn>
+        </span>
+      </div>
+
+      <div style={{ maxHeight: "48vh", overflowY: "auto", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 14 }}>
+        {loading && <div style={{ textAlign: "center", padding: 20 }}><Loader2 size={20} className="aladj-spin" color={C.teal} /></div>}
+        {!loading && messages.length === 0 && (
+          <p style={{ fontSize: 13.5, color: "#a89a86", textAlign: "center", margin: "12px 0" }}>Aucun message. À vous d'ouvrir le bal.</p>
+        )}
+        {messages.map((m) => {
+          if (m.kind === "system") {
+            return (
+              <div key={m.id} style={{ textAlign: "center", fontSize: 12, color: "#a89a86", fontStyle: "italic", padding: "2px 0" }}>
+                {m.content}
+              </div>
+            );
+          }
+          const mine = m.authorId === currentUser?.id;
+          return (
+            <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+              <div style={{
+                maxWidth: "78%", borderRadius: 14, padding: "9px 13px",
+                background: mine ? C.teal : "#fff",
+                border: mine ? "none" : "1px solid #ece2d0",
+                color: mine ? "#fff" : "#5e5346",
+              }}>
+                {!mine && (
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, color: C.navy, marginBottom: 2 }}>{m.authorName}</div>
+                )}
+                <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.content}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", marginTop: 3 }}>
+                  <span style={{ fontSize: 10.5, opacity: mine ? .8 : .6, color: mine ? "#fff" : "#a89a86" }}>{fmtConvDate(m.createdAt)}</span>
+                  {mine && (
+                    <button title="Supprimer ce message" onClick={async () => {
+                      const ok = await askConfirm({ title: "Supprimer ce message ?", message: "Il disparaîtra pour tous les participants.", confirmLabel: "Supprimer" });
+                      if (!ok) return;
+                      await deleteMessage(m.id);
+                      await reload();
+                    }} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#fff", opacity: .8, display: "grid", placeItems: "center" }}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 12 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} maxLength={4000}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }}
+          placeholder="Votre message…"
+          style={{ ...inputStyle, flex: 1, resize: "vertical", fontFamily: "'Nunito',sans-serif", marginBottom: 0 }} />
+        <Btn variant="teal" onClick={submit} disabled={busy || !draft.trim()}>
+          {busy ? <Loader2 size={16} className="aladj-spin" /> : <ArrowRight size={16} />}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 11.5, color: "#a89a86", margin: "6px 0 0" }}>Ctrl + Entrée pour envoyer.</p>
+    </Modal>
+  );
+}
+
+/* ---- Modale : créer une discussion ----
+   context (facultatif) : { kind, id } rattache le fil à un objet du site. */
+function NewConversationModal({ onClose, setToast, onCreated, presetMembers, presetTitle, context }) {
+  const { users, currentUser, createConversation } = useApp();
+  const [title, setTitle] = useState(presetTitle || "");
+  const [sel, setSel] = useState(() => (presetMembers || []).map((m) => (typeof m === "string" ? m : m.id)));
+  const [msg, setMsg] = useState("");
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const candidates = (users || [])
+    .filter((u) => !u.banned && u.id !== currentUser?.id)
+    .filter((u) => !q.trim() || u.name.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+  const toggle = (id) => setSel((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+
+  const submit = async () => {
+    setErr("");
+    if (!title.trim()) { setErr("Donnez un titre à la discussion."); return; }
+    if (sel.length === 0) { setErr("Choisissez au moins un destinataire."); return; }
+    setBusy(true);
+    const res = await createConversation(title, sel, msg, context);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    onClose();
+    setToast("Discussion créée.");
+    if (onCreated && res.id) onCreated(res.id);
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Nouvelle discussion" width={560}>
+      <Field label="Titre de la discussion" hint="Visible de tous les participants. Ex. « Covoiturage samedi », « Échange Wingspan ».">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120}
+          placeholder="ex. Organisation du tournoi de mars" style={inputStyle} />
+      </Field>
+
+      <Field label={`Participants (${sel.length} choisi${sel.length > 1 ? "s" : ""})`} hint="Les participants sont fixés maintenant : personne ne pourra être ajouté ensuite. Vous êtes inclus d'office.">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un membre…" style={{ ...inputStyle, marginBottom: 8 }} />
+        <div style={{ maxHeight: 230, overflowY: "auto", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
+          {candidates.length === 0 && <span style={{ fontSize: 13, color: "#a89a86" }}>Aucun membre ne correspond.</span>}
+          {candidates.map((u) => {
+            const on = sel.includes(u.id);
+            return (
+              <button key={u.id} type="button" onClick={() => toggle(u.id)} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 11, textAlign: "left",
+                cursor: "pointer", background: on ? "rgba(30,138,138,.1)" : "#fff",
+                border: on ? `1.5px solid ${C.teal}` : "1.5px solid #ece2d0",
+              }}>
+                <span style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, display: "grid", placeItems: "center", background: on ? C.teal : "#f0e8d8" }}>
+                  {on && <Check size={13} color="#fff" />}
+                </span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{u.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      <Field label="Premier message (facultatif)">
+        <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3} maxLength={4000}
+          placeholder="Votre message…" style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
+      </Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" variant="teal" onClick={submit} disabled={busy}>
+        {busy ? <Loader2 size={18} className="aladj-spin" /> : <><MessageCircle size={18} /> Créer la discussion</>}
+      </Btn>
+    </Modal>
+  );
+}
+
+/* ---- Bouton « Discuter » rattaché à un objet du site ----
+   Rouvre le fil existant pour ce contexte s'il y en a un, sinon en propose la
+   création avec le titre et les participants déjà remplis. C'est tout ce que
+   l'ancrage change : une discussion ordinaire, avec une étiquette. */
+function ContextChatButton({ contextKind, contextId, title, memberIds, setToast, size = "sm" }) {
+  const { currentUser, conversations } = useApp();
+  const [openConv, setOpenConv] = useState(null);
+  const [creating, setCreating] = useState(false);
+  if (!currentUser) return null;
+  const existing = (conversations || []).find((c) => c.contextKind === contextKind && c.contextId === contextId);
+  const unread = existing?.unread;
+
+  return (
+    <>
+      <Btn size={size} variant="soft" onClick={() => { if (existing) setOpenConv(existing.id); else setCreating(true); }}>
+        <MessageCircle size={14} /> Discuter
+        {unread && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, marginLeft: 2 }} />}
+      </Btn>
+      {openConv && <ConversationModal conversationId={openConv} onClose={() => setOpenConv(null)} setToast={setToast} />}
+      {creating && (
+        <NewConversationModal
+          onClose={() => setCreating(false)} setToast={setToast}
+          onCreated={(id) => setOpenConv(id)}
+          presetTitle={title} presetMembers={memberIds}
+          context={{ kind: contextKind, id: contextId }}
+        />
+      )}
+    </>
+  );
+}
+
 function MyWishlistSection({ setToast }) {
   const { currentUser, setShareWishlist } = useApp();
   const [open, setOpen] = useState(false);
@@ -15258,6 +15788,7 @@ function MyLudoPage({ setToast, setPage }) {
       </div>
       <RecordPlayModal open={recordOpen} onClose={() => setRecordOpen(false)} setToast={setToast} />
       <EventPlaySuggestions />
+      <MyMessagesSection setToast={setToast} />
       <MyWishlistSection setToast={setToast} />
       <MyPlaysSection setToast={setToast} />
       <MyBadgesSection setToast={setToast} />
