@@ -803,6 +803,9 @@ function AppProvider({ children }) {
   const [events, setEvents] = useState([]);
   const [places, setPlaces] = useState([]);
   const [loans, setLoans] = useState([]);
+  // Demandes de location en cours (RLS : uniquement celles qui me concernent,
+  // comme demandeur ou comme proprietaire destinataire).
+  const [loanRequests, setLoanRequests] = useState([]);
   const [upcoming, setUpcoming] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
@@ -862,7 +865,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -894,6 +897,8 @@ function AppProvider({ children }) {
         fetchAllRows("wishlist_items", "user_id,game_id,upcoming_id,created_at", ["created_at", "user_id"]),
         fetchAllRows("event_game_suggestions", "id,event_id,game_id,added_by,created_at", ["event_id", "id"]),
         fetchAllRows("event_suggestion_votes", "suggestion_id,voter_id,value", ["suggestion_id", "voter_id"]),
+        currentUserIdRef.current ? supabase.from("loan_requests").select("*").order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
+        currentUserIdRef.current ? supabase.from("loan_request_owners").select("*") : Promise.resolve({ data: [] }),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -1017,7 +1022,29 @@ function AppProvider({ children }) {
         lenderName: nameById[l.lender_id] || "Membre", borrowerName: nameById[l.borrower_id] || "Membre",
         gameName: (gamesRows || []).find((g) => g.id === l.game_id)?.name || "Jeu",
         weight: l.weight_g, startedAt: l.started_at, dueAt: l.due_at, returned: l.returned, returnedAt: l.returned_at,
+        price: l.price_eur != null ? Number(l.price_eur) : null,
       })));
+
+      // ---- Demandes de location ----
+      // Chaque demande porte la liste de ses destinataires (les proprietaires
+      // sollicites) avec l'etat de leur reponse.
+      {
+        const targetsByReq = {};
+        (loanReqOwnerRows || []).forEach((o) => { (targetsByReq[o.request_id] ||= []).push(o); });
+        setLoanRequests((loanReqRows || []).map((r) => ({
+          id: r.id, gameId: r.game_id,
+          gameName: (gamesRows || []).find((g) => g.id === r.game_id)?.name || "Jeu",
+          requesterId: r.requester_id, requesterName: nameById[r.requester_id] || "Membre",
+          message: r.message || "", status: r.status || "pending",
+          acceptedBy: r.accepted_by || null,
+          acceptedByName: r.accepted_by ? (nameById[r.accepted_by] || "Membre") : null,
+          acceptedAt: r.accepted_at || null, loanId: r.loan_id || null, createdAt: r.created_at,
+          targets: (targetsByReq[r.id] || []).map((o) => ({
+            ownerId: o.owner_id, ownerName: nameById[o.owner_id] || "Membre",
+            status: o.status || "pending", respondedAt: o.responded_at || null,
+          })),
+        })));
+      }
       // poids privés de l'utilisateur connecté (RLS ne renvoie que les siens)
       const wmap = {};
       (weightsRows || []).forEach((w) => { wmap[w.game_id] = w.weight_g; });
@@ -1566,19 +1593,33 @@ function AppProvider({ children }) {
   }, [currentUser, loadData]);
 
   // Créer une location (le prêteur = utilisateur connecté). Durée fixe : 2 semaines.
-  const createLoan = useCallback(async (gameId, borrowerId, weightG) => {
+  // priceEur : tarif retenu (pré-rempli par le calcul, mais modifiable).
+  // requestId : demande de location que ce prêt vient concrétiser, le cas échéant.
+  const createLoan = useCallback(async (gameId, borrowerId, weightG, priceEur, requestId) => {
     if (!currentUser) return { error: "Connectez-vous." };
     if (!borrowerId) return { error: "Choisissez l'emprunteur." };
     const due = new Date(); due.setDate(due.getDate() + 14); // +2 semaines
-    const { error } = await supabase.from("loans").insert({
+    const { data, error } = await supabase.from("loans").insert({
       game_id: gameId, lender_id: currentUser.id, borrower_id: borrowerId,
       weight_g: weightG === "" || weightG == null ? null : Number(weightG),
+      price_eur: priceEur === "" || priceEur == null ? null : Number(String(priceEur).replace(",", ".")),
       due_at: due.toISOString(), returned: false,
-    });
+    }).select("id").single();
     if (error) return { error: error.message };
+    // La demande d'origine passe en « location effectuée » : la pastille rouge
+    // du propriétaire s'éteint d'elle-même.
+    if (requestId && data?.id) {
+      await supabase.rpc("aladj_fulfill_loan_request", { p_request_id: requestId, p_loan_id: data.id });
+    }
+    const gName = (games.find((x) => x.id === gameId) || {}).name || "un jeu";
+    await notifyUsers([borrowerId], {
+      type: "loan_started",
+      message: `${currentUser.name} vous a prêté « ${gName} » — retour prévu le ${due.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}`,
+      linkKind: "loan", linkId: requestId || null,
+    });
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, games, notifyUsers, loadData]);
 
   // Clore une location : seul le prêteur le peut (le jeu a été rendu)
   const closeLoan = useCallback(async (loanId) => {
@@ -1586,6 +1627,126 @@ function AppProvider({ children }) {
     await supabase.from("loans").update({ returned: true, returned_at: new Date().toISOString() }).eq("id", loanId).eq("lender_id", currentUser.id);
     await loadData();
   }, [currentUser, loadData]);
+
+  /* ---- Demandes de location ----
+     Un membre demande a louer un jeu a un ou plusieurs de ses proprietaires.
+     Premier arrive, premier servi : le premier proprietaire qui accepte
+     emporte la location, les autres en sont informes et n'ont plus rien a
+     faire. L'atomicite est garantie cote base (verrou de ligne dans les
+     fonctions SECURITY DEFINER) : deux acceptations simultanees ne peuvent
+     pas aboutir toutes les deux. */
+  const createLoanRequest = useCallback(async (gameId, ownerIds, message) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const ids = [...new Set(ownerIds || [])].filter((id) => id && id !== currentUser.id);
+    if (ids.length === 0) return { error: "Choisissez au moins un propriétaire." };
+    const { data, error } = await supabase.rpc("aladj_create_loan_request", {
+      p_game_id: gameId, p_owner_ids: ids, p_message: (message || "").trim(),
+    });
+    if (error) return { error: error.message };
+    const gName = (games.find((x) => x.id === gameId) || {}).name || "un jeu";
+    await notifyUsers(ids, {
+      type: "loan_request",
+      message: `${currentUser.name} vous demande la location de « ${gName} »`,
+      linkKind: "loan", linkId: data || null,
+    });
+    await loadData();
+    return { id: data };
+  }, [currentUser, games, notifyUsers, loadData]);
+
+  const acceptLoanRequest = useCallback(async (requestId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const req = (loanRequests || []).find((r) => r.id === requestId);
+    const { data, error } = await supabase.rpc("aladj_accept_loan_request", { p_request_id: requestId });
+    if (error) return { error: error.message };
+    if (data === "too_late") { await loadData(); return { error: "Un autre propriétaire s'est déjà engagé sur cette demande." }; }
+    if (data !== "accepted") { await loadData(); return { error: "Cette demande ne vous concerne plus." }; }
+    if (req) {
+      await notifyUsers([req.requesterId], {
+        type: "loan_request_accepted",
+        message: `${currentUser.name} s'engage à vous louer « ${req.gameName} »`,
+        linkKind: "loan", linkId: requestId,
+      });
+      const others = (req.targets || []).filter((t) => t.ownerId !== currentUser.id).map((t) => t.ownerId);
+      await notifyUsers(others, {
+        type: "loan_request_taken",
+        message: `${currentUser.name}, propriétaire de « ${req.gameName} », s'engage à réaliser la location demandée par ${req.requesterName}`,
+        linkKind: "loan", linkId: requestId,
+      });
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loanRequests, notifyUsers, loadData]);
+
+  const declineLoanRequest = useCallback(async (requestId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const req = (loanRequests || []).find((r) => r.id === requestId);
+    const { data, error } = await supabase.rpc("aladj_decline_loan_request", { p_request_id: requestId });
+    if (error) return { error: error.message };
+    if (data === "not_target") { await loadData(); return { error: "Cette demande ne vous concerne plus." }; }
+    if (req) {
+      // Refus nominatif : le demandeur sait exactement qui ne peut pas lui prêter.
+      await notifyUsers([req.requesterId], {
+        type: "loan_request_declined",
+        message: data === "all_declined"
+          ? `${currentUser.name} ne peut pas vous louer « ${req.gameName} » — plus aucun propriétaire sollicité n'est disponible`
+          : `${currentUser.name} ne peut pas vous louer « ${req.gameName} »`,
+        linkKind: "loan", linkId: requestId,
+      });
+    }
+    await loadData();
+    return { all: data === "all_declined" };
+  }, [currentUser, loanRequests, notifyUsers, loadData]);
+
+  // Annulation : par le demandeur (il renonce) ou par le proprietaire engage
+  // (il se retracte). Dans les deux cas, l'autre partie est prevenue et la
+  // pastille rouge de la « location a venir » disparait.
+  const cancelLoanRequest = useCallback(async (requestId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const req = (loanRequests || []).find((r) => r.id === requestId);
+    const { data, error } = await supabase.rpc("aladj_cancel_loan_request", { p_request_id: requestId });
+    if (error) return { error: error.message };
+    if (data === "forbidden") { await loadData(); return { error: "Vous ne pouvez pas annuler cette demande." }; }
+    if (req) {
+      const iAmRequester = currentUser.id === req.requesterId;
+      const recipients = iAmRequester
+        ? (req.acceptedBy ? [req.acceptedBy] : (req.targets || []).map((t) => t.ownerId))
+        : [req.requesterId];
+      await notifyUsers(recipients, {
+        type: "loan_request_cancelled",
+        message: iAmRequester
+          ? `${currentUser.name} annule sa demande de location de « ${req.gameName} »`
+          : `${currentUser.name} annule la location à venir de « ${req.gameName} »`,
+        linkKind: "loan", linkId: requestId,
+      });
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loanRequests, notifyUsers, loadData]);
+
+  /* Alertes de l'onglet « Mes locations » (et pastille rouge de la navigation).
+     - pendingForMe : demandes recues auxquelles je n'ai pas encore repondu
+     - upcoming     : locations a venir (je me suis engage, rien d'enregistre)
+     - mySent       : mes propres demandes encore vivantes
+     - lateBorrowed : jeux que j'emprunte et que j'aurais du rendre
+     La pastille ne compte JAMAIS les retards cote proprietaire : c'est
+     l'emprunteur qui doit agir. */
+  const loanAlerts = useMemo(() => {
+    const uid = currentUser?.id;
+    const empty = { pendingForMe: [], upcoming: [], mySent: [], lateBorrowed: [], count: 0 };
+    if (!uid) return empty;
+    const reqs = loanRequests || [];
+    const pendingForMe = reqs.filter((r) => r.status === "pending"
+      && (r.targets || []).some((t) => t.ownerId === uid && t.status === "pending"));
+    const upcoming = reqs.filter((r) => r.status === "accepted" && r.acceptedBy === uid);
+    const mySent = reqs.filter((r) => r.requesterId === uid && (r.status === "pending" || r.status === "accepted"));
+    const now = Date.now();
+    const lateBorrowed = (loans || []).filter((l) => l.borrowerId === uid && !l.returned
+      && new Date(l.dueAt).getTime() < now);
+    return {
+      pendingForMe, upcoming, mySent, lateBorrowed,
+      count: pendingForMe.length + upcoming.length + lateBorrowed.length,
+    };
+  }, [currentUser, loanRequests, loans]);
 
   const removeGame = useCallback(async (id) => { await supabase.from("games").delete().eq("id", id); await loadData(); }, [loadData]);
 
@@ -1989,6 +2150,14 @@ function AppProvider({ children }) {
     if (!currentUser) return;
     const unique = [...new Set(recipients)].filter((id) => id && id !== currentUser.id);
     if (unique.length === 0) return;
+    // La RLS de la table notifications bloque silencieusement certaines
+    // insertions pour autrui : on passe d'abord par la fonction
+    // SECURITY DEFINER, avec repli sur l'insertion directe si elle manque.
+    const { error: rpcErr } = await supabase.rpc("aladj_notify", {
+      p_recipients: unique, p_type: type, p_message: message,
+      p_link_kind: linkKind, p_link_id: linkId,
+    });
+    if (!rpcErr) return;
     const rows = unique.map((rid) => ({
       recipient_id: rid, actor_id: currentUser.id, type, message,
       link_kind: linkKind, link_id: linkId,
@@ -2590,6 +2759,7 @@ function AppProvider({ children }) {
     household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
+    loanRequests, loanAlerts, createLoanRequest, acceptLoanRequest, declineLoanRequest, cancelLoanRequest,
     wishlistByUser, toggleWishlist, setShareWishlist,
     addEvent, updateEvent, toggleJoin, removePlayer, removeEvent, addPlayedGame, removePlayedGame,
     addEventSuggestion, removeEventSuggestion, voteEventSuggestion,
@@ -3648,7 +3818,7 @@ function isDecideur(u) {
 }
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, reload, personalReady } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, reload, personalReady } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
@@ -3656,6 +3826,9 @@ function Navbar({ page, setPage, onAuth }) {
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
   const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length : 0;
+  // Pastille de « Mes locations » : demandes à traiter, locations à venir
+  // et jeux empruntés en retard. Jamais les retards côté propriétaire.
+  const loanBadge = personalReady ? ((loanAlerts || {}).count || 0) : 0;
 
   return (
     <>
@@ -3671,7 +3844,7 @@ function Navbar({ page, setPage, onAuth }) {
         <nav style={{ display: "flex", gap: 4, marginLeft: 12 }} className="aladj-desktop-nav">
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : 0);
+            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
             return (
               <button key={n.key} onClick={() => setPage(n.key)} style={{
                 position: "relative",
@@ -3715,7 +3888,7 @@ function Navbar({ page, setPage, onAuth }) {
           marginLeft: 8, display: "none", position: "relative", background: C.navy, color: "#fff", border: "none", borderRadius: 10, width: 40, height: 40, cursor: "pointer", placeItems: "center",
         }}>
           {open ? <X size={20} /> : <Menu size={20} />}
-          {!open && (ludoBadge + momentsUnseen) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{ludoBadge + momentsUnseen}</span>}
+          {!open && (ludoBadge + momentsUnseen + loanBadge) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{ludoBadge + momentsUnseen + loanBadge}</span>}
         </button>
       </div>
 
@@ -3723,7 +3896,7 @@ function Navbar({ page, setPage, onAuth }) {
         <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, borderTop: "1px solid #ece2d0" }}>
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : 0);
+            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
             return (
               <button key={n.key} onClick={() => { setPage(n.key); setOpen(false); }} style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer",
@@ -4424,6 +4597,7 @@ function GuidePage() {
             <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
               <li><b>Désinscription d'un moment jeux</b> — quand un inscrit se retire, tous les autres participants (et le créateur) sont prévenus. Si son départ fait repasser le moment <b>sous son minimum de joueurs</b>, la notification le précise : c'est le moment de battre le rappel.</li>
               <li><b>Partie ajoutée à votre historique</b> — dès qu'une partie chronométrée est enregistrée, chaque joueur membre de la tablée reçoit une notification. <b>Une par partie</b> : trois manches du même jeu donnent trois notifications, et non une seule.</li>
+              <li><b>Locations</b> — demande de location reçue, engagement d'un propriétaire, refus nominatif, annulation, prêt enregistré, et les rappels de retour (la veille, le jour J, puis chaque semaine de retard).</li>
             </ul>
             <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
           </>,
@@ -4613,7 +4787,32 @@ function GuidePage() {
         },
         {
           q: "Louer un jeu à un autre membre",
-          a: <p style={{ margin: 0 }}>Les membres peuvent se louer des jeux entre eux (environ 10 % du prix neuf). Tout se passe dans la rubrique <b>Location</b> de la fiche du jeu ; vos prêts et emprunts en cours sont récapitulés dans <b>Mes locations</b>.</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Les membres peuvent se louer des jeux entre eux (environ 10 % du prix neuf, arrondi au 0,50 € supérieur, pour deux semaines). Tout se passe dans la rubrique <b>Location</b> de la fiche du jeu ; vos prêts, emprunts et demandes en cours sont récapitulés dans <b>Mes locations</b>.</p>
+            <p style={{ margin: 0 }}>Le <b>propriétaire</b> y trouve le poids de son exemplaire (privé) et le bouton « Prêter ce jeu ». Les <b>autres membres</b> y trouvent le bouton « Demander la location de ce jeu ».</p>
+          </>,
+        },
+        {
+          q: "Demander la location d'un jeu",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un jeu que vous ne possédez pas : <b>« Demander la location de ce jeu »</b>. Si plusieurs membres possèdent ce jeu, vous choisissez à qui vous vous adressez — <b>un, plusieurs ou tous</b> (tous sont cochés par défaut, c'est ce qui maximise vos chances). Vous pouvez joindre un petit message : une date qui vous arrange, un lieu de remise.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque propriétaire sollicité reçoit une notification et retrouve la demande dans <b>Mes locations</b>. <b>Le premier qui accepte réalise la location</b> : les autres sont automatiquement libérés et reçoivent une notification les prévenant que tel propriétaire s'en charge. Personne ne se déplace pour rien.</p>
+            <p style={{ margin: 0 }}>Chaque propriétaire peut aussi <b>refuser</b>. Le refus est nominatif : vous savez exactement qui ne peut pas vous prêter le jeu, et la demande reste vivante tant qu'il reste au moins un propriétaire qui n'a pas répondu. Vous pouvez annuler votre demande à tout moment.</p>
+          </>,
+        },
+        {
+          q: "La location à venir et la pastille rouge",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dès que vous vous engagez sur une demande, une <b>pastille rouge</b> apparaît sur l'onglet <b>Mes locations</b> et une zone <b>« Location à venir »</b> s'affiche en haut de la page. Un clic sur <b>« Enregistrer la location »</b> ouvre le formulaire de prêt <b>déjà rempli</b> : le jeu, le membre à qui vous le louez, le tarif calculé et le poids de votre exemplaire s'il est connu. Tout reste modifiable — vous pouvez baisser le tarif, le mettre à zéro pour un prêt gratuit, corriger le poids.</p>
+            <p style={{ margin: 0 }}>La pastille s'éteint dès que la location est enregistrée, ou si vous annulez la location à venir (le demandeur en est alors prévenu).</p>
+          </>,
+        },
+        {
+          q: "Rappels de retour et retards",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>La durée d'une location est de <b>deux semaines</b>. Si vous empruntez un jeu, vous recevez une notification de rappel <b>la veille</b> de l'échéance, une autre <b>le jour même</b>, puis un rappel <b>chaque semaine</b> tant que le jeu n'est pas rendu.</p>
+            <p style={{ margin: 0 }}>Une <b>pastille rouge</b> reste affichée sur l'onglet <b>Mes locations</b> tant qu'un jeu emprunté est en retard, avec une zone rouge en haut de la page. Elle ne concerne que l'emprunteur : c'est lui qui doit agir. Elle disparaît quand le propriétaire clôture le prêt avec « Le jeu a bien été rendu ».</p>
+          </>,
         },
       ],
     },
@@ -5669,7 +5868,7 @@ function HomePage({ setPage, onAuth }) {
             </div>
           </div>
           <p style={{ fontSize: 13, color: "#9c8d79", margin: 0, textAlign: "center", lineHeight: 1.55, borderTop: "1px solid #f0e8d8", paddingTop: 14 }}>
-            <Info size={13} style={{ verticalAlign: "-2px" }} /> Le tarif et le suivi de chaque location se gèrent depuis la fiche du jeu, dans la rubrique <b>Location</b>. Retrouvez vos prêts et emprunts en cours sur la page <b>Mes locations</b>.
+            <Info size={13} style={{ verticalAlign: "-2px" }} /> Le tarif et le suivi de chaque location se gèrent depuis la fiche du jeu, dans la rubrique <b>Location</b> — c'est aussi là qu'on <b>demande</b> la location d'un jeu à son ou ses propriétaires. Retrouvez vos prêts, emprunts et demandes en cours sur la page <b>Mes locations</b>.
           </p>
         </div>
       </section>
@@ -9547,14 +9746,22 @@ function VotersModal({ g, onClose }) {
 
 /* ---- Section location d'une fiche de jeu ---- */
 function GameRentalSection({ g, onClose, setToast, isOwner }) {
-  const { currentUser, myWeights, setGameWeight, loans } = useApp();
+  const { currentUser, myWeights, setGameWeight, loans, loanRequests, cancelLoanRequest, askConfirm } = useApp();
   const [showLoan, setShowLoan] = useState(false);
+  const [showRequest, setShowRequest] = useState(false);
   const [editWeight, setEditWeight] = useState(false);
   const [w, setW] = useState(myWeights[g.id] != null ? String(myWeights[g.id]) : "");
   const price = rentalPrice(g.newPrice);
   const myWeight = myWeights[g.id];
   // ce jeu est-il actuellement prêté par moi ?
   const myActiveLoan = (loans || []).find((l) => l.gameId === g.id && l.lenderId === currentUser?.id && !l.returned);
+  // Propriétaires confirmés à qui je peux demander la location (moi exclu).
+  const askableOwners = (g.owners || []).filter((o) => o.id !== currentUser?.id);
+  // Ma demande en cours sur ce jeu, s'il y en a une.
+  const myRequest = (loanRequests || []).find((r) => r.gameId === g.id
+    && r.requesterId === currentUser?.id && (r.status === "pending" || r.status === "accepted"));
+  // Ce jeu est-il déjà entre mes mains ?
+  const myActiveBorrow = (loans || []).find((l) => l.gameId === g.id && l.borrowerId === currentUser?.id && !l.returned);
 
   return (
     <div style={{ borderTop: "1px solid #f0e8d8", marginTop: 18, paddingTop: 18 }}>
@@ -9604,16 +9811,126 @@ function GameRentalSection({ g, onClose, setToast, isOwner }) {
         </div>
       )}
 
+      {/* demander la location : réservé aux membres qui ne possèdent pas le jeu */}
+      {!isOwner && currentUser && askableOwners.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          {myActiveBorrow ? (
+            <div style={{ background: "rgba(30,138,138,.09)", borderRadius: 12, padding: "10px 14px", fontSize: 13.5, color: "#5e5346" }}>
+              Vous empruntez actuellement ce jeu à <b>{myActiveBorrow.lenderName}</b>. Retrouvez-le dans « Mes locations ».
+            </div>
+          ) : myRequest ? (
+            <div style={{ background: myRequest.status === "accepted" ? "rgba(30,138,138,.09)" : "rgba(232,163,23,.1)", borderRadius: 12, padding: "12px 14px" }}>
+              <div style={{ fontSize: 13.5, color: "#5e5346", marginBottom: 8 }}>
+                {myRequest.status === "accepted"
+                  ? <><b>{myRequest.acceptedByName}</b> s'est engagé à vous louer ce jeu. Il vous reste à convenir de la remise en main propre.</>
+                  : <>Demande envoyée à {(myRequest.targets || []).map((t) => t.ownerName).join(", ")} — en attente de réponse.</>}
+              </div>
+              <Btn size="sm" variant="soft" onClick={async () => {
+                const ok = await askConfirm({ title: "Annuler la demande ?", message: `Votre demande de location de « ${g.name} » sera annulée et les propriétaires sollicités en seront informés.`, confirmLabel: "Annuler la demande" });
+                if (!ok) return;
+                const res = await cancelLoanRequest(myRequest.id);
+                setToast(res?.error || "Demande annulée.");
+              }}><X size={13} /> Annuler ma demande</Btn>
+            </div>
+          ) : (
+            <Btn variant="amber" full onClick={() => setShowRequest(true)}><Mail size={16} /> Demander la location de ce jeu</Btn>
+          )}
+        </div>
+      )}
+      {!currentUser && askableOwners.length > 0 && (
+        <p style={{ fontSize: 13, color: "#a89a86", margin: "4px 0 0" }}>Connectez-vous pour demander la location de ce jeu.</p>
+      )}
+
       {showLoan && <LoanModal g={g} onClose={() => setShowLoan(false)} setToast={setToast} defaultWeight={myWeight} />}
+      {showRequest && <LoanRequestModal g={g} owners={askableOwners} onClose={() => setShowRequest(false)} setToast={setToast} />}
     </div>
   );
 }
 
+/* ---- Modale : demander la location d'un jeu a un ou plusieurs proprietaires ----
+   Choix explicite des destinataires : un, plusieurs ou tous. Le premier qui
+   accepte emporte la location ; les autres sont automatiquement liberes. */
+function LoanRequestModal({ g, owners, onClose, setToast }) {
+  const { createLoanRequest } = useApp();
+  // Par defaut tous les proprietaires sont coches : c'est le choix qui donne le
+  // plus de chances d'obtenir le jeu. Decision autonome, facile a inverser.
+  const [sel, setSel] = useState(() => owners.map((o) => o.id));
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const price = rentalPrice(g.newPrice);
+  const allChecked = sel.length === owners.length;
+  const toggle = (id) => setSel((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+
+  const submit = async () => {
+    setErr("");
+    if (sel.length === 0) { setErr("Choisissez au moins un propriétaire."); return; }
+    setBusy(true);
+    const res = await createLoanRequest(g.id, sel, msg);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    onClose();
+    setToast(sel.length > 1 ? "Demande envoyée aux propriétaires choisis." : "Demande envoyée.");
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Demander « ${g.name} »`} width={520}>
+      {price != null && (
+        <div style={{ background: "rgba(30,138,138,.07)", borderRadius: 12, padding: "12px 14px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13.5, color: "#5e5346" }}>Tarif indicatif <span style={{ color: "#9c8d79", fontSize: 12 }}>(2 semaines)</span></span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 19 }}>{fmtEuro(price)}</span>
+        </div>
+      )}
+
+      <Field label={`À qui adressez-vous la demande ? (${sel.length}/${owners.length})`} hint="Le premier propriétaire qui accepte réalise la location ; les autres en sont informés et n'ont rien à faire.">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
+          {owners.length > 1 && (
+            <button type="button" onClick={() => setSel(allChecked ? [] : owners.map((o) => o.id))} style={{
+              background: "none", border: "none", padding: "2px 0", textAlign: "left", cursor: "pointer",
+              color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+            }}>{allChecked ? "Tout décocher" : "Tout cocher"}</button>
+          )}
+          {owners.map((o) => {
+            const on = sel.includes(o.id);
+            return (
+              <button key={o.id} type="button" onClick={() => toggle(o.id)} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", borderRadius: 11, textAlign: "left",
+                cursor: "pointer", background: on ? "rgba(30,138,138,.1)" : "#fff",
+                border: on ? `1.5px solid ${C.teal}` : "1.5px solid #ece2d0",
+              }}>
+                <span style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, display: "grid", placeItems: "center", background: on ? C.teal : "#f0e8d8" }}>
+                  {on && <Check size={13} color="#fff" />}
+                </span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5 }}>{o.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      <Field label="Message (facultatif)" hint="Une date qui vous arrangerait, un lieu de remise…">
+        <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3} maxLength={500}
+          placeholder="ex. Je peux passer le récupérer samedi après-midi."
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
+      </Field>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <Btn full size="lg" variant="amber" onClick={submit} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Mail size={18} /> Envoyer la demande</>}</Btn>
+    </Modal>
+  );
+}
+
 /* ---- Modale : enregistrer un prêt ---- */
-function LoanModal({ g, onClose, setToast, defaultWeight }) {
+// request : demande de location que ce prêt vient concrétiser (facultatif).
+// Tous les champs restent modifiables, même pré-remplis.
+function LoanModal({ g, onClose, setToast, defaultWeight, request }) {
   const { users, currentUser, createLoan } = useApp();
-  const [borrowerId, setBorrowerId] = useState("");
+  const [borrowerId, setBorrowerId] = useState(request?.requesterId || "");
   const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
+  const [price, setPrice] = useState(() => {
+    const p = rentalPrice(g.newPrice);
+    return p != null ? String(p).replace(".", ",") : "";
+  });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   // date de retour = dans 14 jours
@@ -9626,7 +9943,7 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
     setErr("");
     if (!borrowerId) { setErr("Choisissez à qui vous prêtez le jeu."); return; }
     setBusy(true);
-    const res = await createLoan(g.id, borrowerId, weight);
+    const res = await createLoan(g.id, borrowerId, weight, price, request?.id || null);
     setBusy(false);
     if (res?.error) { setErr(res.error); return; }
     onClose();
@@ -9635,6 +9952,12 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
 
   return (
     <Modal open onClose={onClose} title={`Prêter « ${g.name} »`} width={520}>
+      {request && (
+        <div style={{ background: "rgba(232,163,23,.12)", border: `1px solid ${C.amber}`, borderRadius: 12, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, color: "#5e5346" }}>
+          Champs pré-remplis d'après la demande de <b>{request.requesterName}</b>. Tout reste modifiable.
+          {request.message ? <div style={{ marginTop: 6, fontStyle: "italic", color: "#6e6256" }}>« {request.message} »</div> : null}
+        </div>
+      )}
       <Field label="À qui prêtez-vous ce jeu ?">
         <select value={borrowerId} onChange={(e) => setBorrowerId(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
           <option value="">— Choisir un membre —</option>
@@ -9646,6 +9969,13 @@ function LoanModal({ g, onClose, setToast, defaultWeight }) {
         <Calendar size={18} color={C.teal} />
         <span style={{ fontSize: 13.5, color: "#5e5346" }}>Retour prévu le <b>{dueStr}</b> <span style={{ color: "#9c8d79" }}>(dans 2 semaines)</span></span>
       </div>
+
+      <Field label="Tarif convenu (€)" hint="Pré-rempli avec le tarif calculé (10 % du prix neuf). Ajustez-le librement, ou laissez vide pour un prêt gratuit.">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="ex. 3,50" style={{ ...inputStyle, flex: 1 }} />
+          <span style={{ fontSize: 14, color: "#9c8d79" }}>€</span>
+        </div>
+      </Field>
 
       <Field label="Poids relevé (g)" hint="Pré-rempli avec votre poids enregistré. Sert à vérifier le jeu au retour (visible de vous seul).">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -10962,10 +11292,16 @@ function EditUpcomingModal({ u, onClose, setToast }) {
 }
 
 function LocationsPage({ setToast }) {
-  const { loans, currentUser, closeLoan } = useApp();
+  const { loans, games, myWeights, currentUser, closeLoan, loanAlerts,
+          acceptLoanRequest, declineLoanRequest, cancelLoanRequest, askConfirm } = useApp();
   const myLent = (loans || []).filter((l) => l.lenderId === currentUser?.id && !l.returned);
   const myBorrowed = (loans || []).filter((l) => l.borrowerId === currentUser?.id && !l.returned);
   const history = (loans || []).filter((l) => (l.lenderId === currentUser?.id || l.borrowerId === currentUser?.id) && l.returned);
+  const alerts = loanAlerts || { pendingForMe: [], upcoming: [], mySent: [], lateBorrowed: [] };
+  // Demande dont on est en train d'enregistrer la location (modale pré-remplie).
+  const [fulfilling, setFulfilling] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const gameOf = (id) => (games || []).find((x) => x.id === id) || null;
 
   const fmtDue = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) + " à " + new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
@@ -10973,6 +11309,165 @@ function LocationsPage({ setToast }) {
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 20px 80px" }}>
       <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 32, color: C.navy, margin: "0 0 6px" }}>Mes locations</h1>
       <p style={{ color: "#8a7c6a", margin: "0 0 32px", fontSize: 15 }}>Les jeux que vous prêtez et ceux que vous empruntez.</p>
+
+      {/* RETARDS — priorité absolue : c'est l'emprunteur qui doit agir */}
+      {alerts.lateBorrowed.length > 0 && (
+        <section style={{ background: "rgba(181,40,58,.07)", border: `2px solid ${C.red}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.red, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
+            <AlertTriangle size={19} color={C.red} /> À rendre en retard ({alerts.lateBorrowed.length})
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+            {alerts.lateBorrowed.map((l) => (
+              <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", background: "#fff", border: "1px solid rgba(181,40,58,.25)", borderRadius: 12, padding: "10px 14px" }}>
+                <span style={{ fontSize: 13.5, color: "#5e5346" }}>
+                  <b style={{ color: C.navy }}>{l.gameName}</b> — à rendre à <b>{l.lenderName}</b>, échéance du {fmtDue(l.dueAt)}
+                </span>
+                <Countdown dueAt={l.dueAt} />
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "10px 0 0" }}>
+            Cette alerte reste affichée tant que le jeu n'a pas été rendu et le prêt clôturé par son propriétaire. Un rappel vous parvient aussi chaque semaine dans vos notifications.
+          </p>
+        </section>
+      )}
+
+      {/* LOCATIONS À VENIR — je me suis engagé, il reste à enregistrer le prêt */}
+      {alerts.upcoming.length > 0 && (
+        <section style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.navy, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
+            <Clock size={19} color={C.amber} /> Location à venir ({alerts.upcoming.length})
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+            {alerts.upcoming.map((r) => {
+              const g = gameOf(r.gameId);
+              const price = g ? rentalPrice(g.newPrice) : null;
+              return (
+                <div key={r.id} style={{ background: "#fff", border: "1px solid #ece2d0", borderRadius: 13, padding: "13px 16px" }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5 }}>{r.gameName}</div>
+                  <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 3 }}>
+                    À louer à <b>{r.requesterName}</b>{price != null ? <> · tarif calculé <b>{fmtEuro(price)}</b></> : null}
+                  </div>
+                  {r.message && <div style={{ fontSize: 13, color: "#6e6256", fontStyle: "italic", marginTop: 6 }}>« {r.message} »</div>}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                    <Btn size="sm" variant="teal" disabled={!g} onClick={() => setFulfilling(r)}>
+                      <ArrowRightLeft size={14} /> Enregistrer la location
+                    </Btn>
+                    <Btn size="sm" variant="soft" disabled={busyId === r.id} onClick={async () => {
+                      const ok = await askConfirm({
+                        title: "Annuler cette location ?",
+                        message: `${r.requesterName} sera prévenu que vous ne réalisez finalement pas la location de « ${r.gameName} ».`,
+                        confirmLabel: "Annuler la location",
+                      });
+                      if (!ok) return;
+                      setBusyId(r.id);
+                      const res = await cancelLoanRequest(r.id);
+                      setBusyId(null);
+                      setToast(res?.error || "Location annulée.");
+                    }}><X size={14} /> Annuler</Btn>
+                  </div>
+                  {!g && <p style={{ fontSize: 12.5, color: C.red, margin: "8px 0 0" }}>Fiche du jeu introuvable — impossible de pré-remplir la location.</p>}
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 12.5, color: "#8a7c6a", margin: "10px 0 0" }}>
+            « Enregistrer la location » ouvre le formulaire avec le jeu, le membre, le tarif et le poids déjà remplis — tout reste modifiable.
+          </p>
+        </section>
+      )}
+
+      {/* DEMANDES REÇUES — en attente de ma réponse */}
+      {alerts.pendingForMe.length > 0 && (
+        <section style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.navy, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
+            <Mail size={19} color={C.teal} /> Demandes de location reçues ({alerts.pendingForMe.length})
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+            {alerts.pendingForMe.map((r) => {
+              const g = gameOf(r.gameId);
+              const price = g ? rentalPrice(g.newPrice) : null;
+              const others = (r.targets || []).filter((t) => t.ownerId !== currentUser?.id);
+              return (
+                <div key={r.id} style={{ background: "#fff", border: "1px solid #ece2d0", borderRadius: 13, padding: "13px 16px" }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5 }}>{r.gameName}</div>
+                  <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 3 }}>
+                    <b>{r.requesterName}</b> souhaite vous le louer{price != null ? <> · tarif calculé <b>{fmtEuro(price)}</b></> : null}
+                  </div>
+                  {others.length > 0 && (
+                    <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 4 }}>
+                      Demande également adressée à {others.map((t) => t.ownerName).join(", ")} — le premier qui accepte réalise la location.
+                    </div>
+                  )}
+                  {r.message && <div style={{ fontSize: 13, color: "#6e6256", fontStyle: "italic", marginTop: 6 }}>« {r.message} »</div>}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                    <Btn size="sm" variant="teal" disabled={busyId === r.id} onClick={async () => {
+                      setBusyId(r.id);
+                      const res = await acceptLoanRequest(r.id);
+                      setBusyId(null);
+                      setToast(res?.error || "Vous vous êtes engagé sur cette location.");
+                    }}><Check size={14} /> J'accepte</Btn>
+                    <Btn size="sm" variant="soft" disabled={busyId === r.id} onClick={async () => {
+                      const ok = await askConfirm({
+                        title: "Refuser cette demande ?",
+                        message: `${r.requesterName} sera prévenu nominativement que vous ne pouvez pas lui louer « ${r.gameName} ».`,
+                        confirmLabel: "Refuser",
+                      });
+                      if (!ok) return;
+                      setBusyId(r.id);
+                      const res = await declineLoanRequest(r.id);
+                      setBusyId(null);
+                      setToast(res?.error || "Refus envoyé.");
+                    }}><X size={14} /> Je refuse</Btn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* MES DEMANDES ENVOYÉES */}
+      {alerts.mySent.length > 0 && (
+        <section style={{ marginBottom: 30 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+            <Mail size={19} color={C.navy} /> Mes demandes en cours ({alerts.mySent.length})
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+            {alerts.mySent.map((r) => (
+              <div key={r.id} style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 14, padding: "13px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5 }}>{r.gameName}</div>
+                    {r.status === "accepted" ? (
+                      <div style={{ fontSize: 13.5, color: C.teal, marginTop: 3, fontWeight: 600 }}>
+                        {r.acceptedByName} s'est engagé à vous le louer.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 3 }}>
+                        En attente : {(r.targets || []).map((t) => `${t.ownerName}${t.status === "declined" ? " (refusé)" : ""}`).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                  <Btn size="sm" variant="soft" disabled={busyId === r.id} onClick={async () => {
+                    const ok = await askConfirm({
+                      title: "Annuler ma demande ?",
+                      message: `Votre demande de location de « ${r.gameName} » sera annulée et les propriétaires sollicités en seront informés.`,
+                      confirmLabel: "Annuler la demande",
+                    });
+                    if (!ok) return;
+                    setBusyId(r.id);
+                    const res = await cancelLoanRequest(r.id);
+                    setBusyId(null);
+                    setToast(res?.error || "Demande annulée.");
+                  }}><X size={14} /> Annuler</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
 
       {/* JEUX QUE JE PRÊTE */}
       <section style={{ marginBottom: 40 }}>
@@ -10990,7 +11485,7 @@ function LocationsPage({ setToast }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>{l.gameName}</div>
-                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Prêté à <b>{l.borrowerName}</b></div>
+                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Prêté à <b>{l.borrowerName}</b>{l.price != null ? <> · <b>{fmtEuro(l.price)}</b></> : null}</div>
                       <div style={{ fontSize: 13, color: "#9c8d79", marginTop: 2 }}>Retour prévu le {fmtDue(l.dueAt)}</div>
                       {/* poids visible du prêteur seulement */}
                       {l.weight != null && (
@@ -11027,7 +11522,7 @@ function LocationsPage({ setToast }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>{l.gameName}</div>
-                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Emprunté à <b>{l.lenderName}</b></div>
+                      <div style={{ fontSize: 13.5, color: "#5e5346", marginTop: 4 }}>Emprunté à <b>{l.lenderName}</b>{l.price != null ? <> · <b>{fmtEuro(l.price)}</b></> : null}</div>
                       <div style={{ fontSize: 13, color: "#9c8d79", marginTop: 2 }}>À rendre le {fmtDue(l.dueAt)}</div>
                       {late && <div style={{ fontSize: 12.5, color: C.red, marginTop: 6, fontWeight: 600 }}>⚠ Pensez à rendre ce jeu à son propriétaire.</div>}
                     </div>
@@ -11056,6 +11551,16 @@ function LocationsPage({ setToast }) {
             ))}
           </div>
         </section>
+      )}
+
+      {fulfilling && gameOf(fulfilling.gameId) && (
+        <LoanModal
+          g={gameOf(fulfilling.gameId)}
+          request={fulfilling}
+          defaultWeight={(myWeights || {})[fulfilling.gameId]}
+          onClose={() => setFulfilling(null)}
+          setToast={setToast}
+        />
       )}
     </div>
   );
@@ -14696,7 +15201,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = personalReady ? notifications.filter((n) => !n.read).length : 0;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => (t || "").startsWith("loan") ? ArrowRightLeft : t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -14715,6 +15220,7 @@ function MyLudoPage({ setToast, setPage }) {
                     if (n.linkKind === "game" && n.linkId) setSelected(n.linkId);
                     else if (n.linkKind === "poll" || n.linkKind === "idea") setPage("decideur");
                     else if (n.linkKind === "event") setPage("soirees");
+                    else if (n.linkKind === "loan") setPage("locations");
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
                     background: n.read ? "#fff" : "rgba(30,138,138,.1)", border: n.read ? "1px solid #ece2d0" : `1px solid ${C.teal}`,
