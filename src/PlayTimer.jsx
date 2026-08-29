@@ -1272,6 +1272,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Seul le carnet de celui qui lance la partie est propose -- c'est lui qui
   // connait ses invites, et chaque foyer garde le sien.
   const [guestBook, setGuestBook] = useState([]);
+  const guestBookRef = useRef([]);   // voir hydratePlayers : repli sur le carnet local
   const [guestBusy, setGuestBusy] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const [memberHits, setMemberHits] = useState([]);
@@ -1459,10 +1460,20 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       const { data } = await supabase.from('profiles').select('id,name,avatar_url,fav_colors').in('id', ids);
       (data || []).forEach((p) => { byId[p.id] = p; });
     }
+    // Photo d'un invite : d'abord celle recopiee sur la ligne joueur (visible par
+    // tout le monde), sinon celle du carnet de CET appareil (repli pour les
+    // sessions lancees avant la migration).
+    const bookByName = {};
+    (guestBookRef.current || []).forEach((g) => {
+      if (g && g.avatar_url) bookByName[String(g.name || '').trim().toLowerCase()] = g.avatar_url;
+    });
+    const guestAvatar = (r) => r.guest_avatar_url
+      || bookByName[String(r.guest_name || '').trim().toLowerCase()]
+      || null;
     return rows.map((r) => ({
       ...r,
       name: r.profile_id ? (byId[r.profile_id]?.name || 'Membre') : (r.guest_name || 'Invité'),
-      avatar_url: r.profile_id ? byId[r.profile_id]?.avatar_url : null,
+      avatar_url: r.profile_id ? byId[r.profile_id]?.avatar_url : guestAvatar(r),
       favColors: r.profile_id ? (byId[r.profile_id]?.fav_colors || []) : [],
     }));
   }, [supabase]);
@@ -1470,7 +1481,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const refetchPlayers = useCallback(async (sessionId) => {
     const { data } = await supabase
       .from('play_session_players')
-      .select('id,profile_id,guest_name,auth_user_id,score,team,color')
+      .select('id,profile_id,guest_name,guest_avatar_url,auth_user_id,score,team,color')
       .eq('session_id', sessionId)
       .order('sort_order', { ascending: true, nullsFirst: false })
       .order('joined_at', { ascending: true });
@@ -1588,15 +1599,24 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [session?.next_session_id]); // eslint-disable-line
 
   // Chargement du carnet d'invites (une fois, a l'ouverture du chrono).
+  // On demande la version enrichie (avec la photo) et on retombe sur l'ancienne
+  // si la migration SQL n'a pas encore ete jouee : le carnet reste utilisable.
   useEffect(() => {
     if (!currentUser?.id) { setGuestBook([]); return undefined; }
     let go = true;
     (async () => {
+      const ext = await supabase.rpc('aladj_my_guests_ext');
+      if (!ext.error) { if (go) setGuestBook(ext.data || []); return; }
       const { data } = await supabase.rpc('aladj_my_guests');
       if (go) setGuestBook(data || []);
     })();
     return () => { go = false; };
   }, [supabase, currentUser?.id]);
+
+  // Le carnet sert aussi de repli pour retrouver la photo d'un invite quand la
+  // ligne joueur n'en porte pas encore (session lancee avant cette version).
+  // On passe par une reference : hydratePlayers doit rester stable.
+  useEffect(() => { guestBookRef.current = guestBook; }, [guestBook]);
 
   // Recherche du jeu suivant.
   useEffect(() => {
@@ -1807,12 +1827,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [memberQuery, supabase]);
 
   // ---- actions -------------------------------------------------------
+  // Recopie les photos du carnet sur les invites d'une session, pour que TOUS
+  // les telephones connectes les voient. Purement decoratif : un echec (RPC
+  // absente, migration pas encore jouee) ne doit jamais empecher de jouer.
+  const applyGuestAvatars = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    try { await supabase.rpc('aladj_apply_guest_avatars', { p_session_id: sessionId }); }
+    catch (e) { /* sans gravite */ }
+  }, [supabase]);
+
   // Ajouter un invite du carnet a la tablee (sans doublon).
-  const addGuestFromBook = (name) => {
+  const addGuestFromBook = (name, avatarUrl) => {
     const nm = (name || '').trim();
     if (!nm) return;
     if (draft.some((d) => !d.profileId && (d.name || '').toLowerCase() === nm.toLowerCase())) return;
-    setDraft((ds) => [...ds, { key: 'gb' + Date.now() + Math.random(), profileId: null, guestName: nm, name: nm, avatar_url: null }]);
+    setDraft((ds) => [...ds, { key: 'gb' + Date.now() + Math.random(), profileId: null, guestName: nm, name: nm, avatar_url: avatarUrl || null }]);
   };
 
   // Garder un invite saisi a la main pour les prochaines parties.
@@ -1821,8 +1850,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setGuestBusy(true);
     try {
       await supabase.rpc('aladj_add_guest', { p_name: name });
-      const { data } = await supabase.rpc('aladj_my_guests');
-      setGuestBook(data || []);
+      const ext = await supabase.rpc('aladj_my_guests_ext');
+      if (!ext.error) { setGuestBook(ext.data || []); }
+      else {
+        const { data } = await supabase.rpc('aladj_my_guests');
+        setGuestBook(data || []);
+      }
     } catch (e) { /* sans gravite : c'est un confort, pas une obligation */ }
     setGuestBusy(false);
   };
@@ -1860,6 +1893,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           p_guest_name: d.guestName,
         });
       }
+      await applyGuestAvatars(sessionId);   // les photos du carnet suivent la tablee
       const sess = await refetchSession(sessionId);
       await refetchPlayers(sessionId);
       await refetchTotals(sessionId);
@@ -2059,6 +2093,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         if (p.team != null) await supabase.rpc('aladj_set_player_team', { p_session_id: nid, p_player_id: m.id, p_team: p.team });
         if (p.color) await supabase.rpc('aladj_set_player_color', { p_session_id: nid, p_player_id: m.id, p_color: p.color });
       }
+      // 4 bis. Les photos des invites suivent le nouveau jeu.
+      await applyGuestAvatars(nid);
+
       // 5. On designe la suite : les telephones deja connectes basculent seuls.
       await supabase.rpc('aladj_link_next_session', { p_old: sid, p_new: nid });
 
@@ -2140,6 +2177,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
+    if (!profileId) { await applyGuestAvatars(sid); await refetchPlayers(sid); }
   };
 
   // ---- score en direct (partage entre tous les telephones) -----------
@@ -2559,11 +2597,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <Label>Mes invités</Label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {libres.map((g) => (
-                    <button key={g.id} onClick={() => addGuestFromBook(g.name)} title={`Ajouter ${g.name}`}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: C.white,
+                    <button key={g.id} onClick={() => addGuestFromBook(g.name, g.avatar_url)} title={`Ajouter ${g.name}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: C.white,
                         border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999,
-                        padding: '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
-                      <span style={{ color: C.purple, fontWeight: 800 }}>+</span> {g.name}
+                        padding: g.avatar_url ? '4px 14px 4px 4px' : '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
+                      {g.avatar_url
+                        ? <img src={g.avatar_url} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' }} />
+                        : <span style={{ color: C.purple, fontWeight: 800 }}>+</span>}
+                      {g.name}
                     </button>
                   ))}
                 </div>
@@ -3519,10 +3560,13 @@ function TeamsSheet({ players, hexFor, onSet, onClose, isHost, onRemove, onAddGu
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
                   {libres.map((g) => (
                     <button key={g.id} onClick={() => onAddGuest(g.name)} title={`Ajouter ${g.name}`}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: C.white,
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: C.white,
                         border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999,
-                        padding: '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
-                      <span style={{ color: C.purple, fontWeight: 800 }}>+</span> {g.name}
+                        padding: g.avatar_url ? '4px 14px 4px 4px' : '6px 13px', cursor: 'pointer', fontFamily: BODY, fontSize: 14, fontWeight: 600 }}>
+                      {g.avatar_url
+                        ? <img src={g.avatar_url} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' }} />
+                        : <span style={{ color: C.purple, fontWeight: 800 }}>+</span>}
+                      {g.name}
                     </button>
                   ))}
                 </div>
