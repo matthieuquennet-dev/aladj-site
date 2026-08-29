@@ -5,7 +5,7 @@ import {
   Heart, ThumbsUp, Sparkles, BookOpen, RotateCcw, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
-  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad } from "./PlayTimer";
@@ -1799,6 +1799,13 @@ function AppProvider({ children }) {
       p_first_message: (firstMessage || "").trim(),
     });
     if (error) return { error: error.message };
+    // Même raison que dans sendMessage : mon premier message ne doit pas
+    // m'apparaître comme un non-lu.
+    if (data) {
+      await supabase.from("conversation_members")
+        .update({ last_read_at: new Date().toISOString() })
+        .eq("conversation_id", data).eq("user_id", currentUser.id);
+    }
     await loadData();
     return { id: data };
   }, [currentUser, loadData]);
@@ -1827,6 +1834,12 @@ function AppProvider({ children }) {
       p_conversation_id: conversationId, p_content: String(content).trim(),
     });
     if (error) return { error: error.message };
+    // Sans cette ligne, envoyer un message allumait ma propre pastille de
+    // non-lu : la discussion venait d'être « mise à jour » après ma dernière
+    // lecture… par moi-même. On avance donc ma date de lecture avec l'envoi.
+    await supabase.from("conversation_members")
+      .update({ last_read_at: new Date().toISOString() })
+      .eq("conversation_id", conversationId).eq("user_id", currentUser.id);
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -1866,6 +1879,60 @@ function AppProvider({ children }) {
     () => (conversations || []).filter((c) => c.unread).length,
     [conversations],
   );
+
+  /* ---- Veille de la messagerie ----
+     Jusqu'ici, un message reçu ne se signalait qu'après un rechargement complet
+     de la page : la pastille existait, mais personne ne la voyait apparaître.
+     On interroge donc, toutes les 40 secondes et au retour sur l'onglet, les
+     deux seules colonnes qui décident du non-lu (dernier message / dernière
+     lecture). Jamais loadData() : bien trop lourd pour tourner en boucle.
+     Une discussion apparue ou disparue entre-temps est le seul cas qui déclenche
+     un vrai rechargement — c'est rare, et sinon la nouvelle discussion resterait
+     invisible. */
+  const conversationsRef = useRef([]);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
+  const refreshConversations = useCallback(async () => {
+    const me = currentUserIdRef.current;
+    if (!me) return;
+    const [convRes, memRes] = await Promise.all([
+      supabase.from("conversations").select("id,last_message_at"),
+      supabase.from("conversation_members").select("conversation_id,user_id,last_read_at"),
+    ]);
+    if (convRes.error || !convRes.data) return;
+    const rows = convRes.data;
+    const prev = conversationsRef.current || [];
+    const byId = {};
+    rows.forEach((r) => { byId[r.id] = r; });
+    if (rows.length !== prev.length || prev.some((c) => !byId[c.id])) { await loadData(); return; }
+    const readByConv = {};
+    (memRes.data || []).forEach((m) => { if (m.user_id === me) readByConv[m.conversation_id] = m.last_read_at || null; });
+    const ms = (v) => (v ? new Date(v).getTime() : 0);
+    let changed = false;
+    const next = prev.map((c) => {
+      const row = byId[c.id];
+      const lastRead = readByConv[c.id] !== undefined ? readByConv[c.id] : c.lastReadAt;
+      const unread = ms(row.last_message_at) > ms(lastRead);
+      if (unread === c.unread && (row.last_message_at || null) === (c.lastMessageAt || null)) return c;
+      changed = true;
+      return { ...c, unread, lastMessageAt: row.last_message_at || c.lastMessageAt, lastReadAt: lastRead || null };
+    });
+    if (changed) setConversations(next);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      refreshConversations();
+    };
+    const t = setInterval(tick, 40000);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", tick);
+    };
+  }, [currentUser, refreshConversations]);
 
   /* Alertes de l'onglet « Mes locations » (et pastille rouge de la navigation).
      - pendingForMe : demandes recues auxquelles je n'ai pas encore repondu
@@ -2401,8 +2468,13 @@ function AppProvider({ children }) {
   }, [currentUser]);
 
   // ---- Regroupement familial (foyers) ----
+  // On demande d'abord la version enrichie (avec la photo). Si la migration SQL
+  // n'est pas encore passée, on retombe sur l'ancienne : le carnet reste
+  // parfaitement utilisable, simplement sans photo.
   const reloadGuests = useCallback(async () => {
     if (!currentUserIdRef.current) { setHouseholdGuests([]); return; }
+    const ext = await supabase.rpc("aladj_my_guests_ext");
+    if (!ext.error) { setHouseholdGuests(ext.data || []); return; }
     const { data } = await supabase.rpc("aladj_my_guests");
     setHouseholdGuests(data || []);
   }, []);
@@ -2428,6 +2500,22 @@ function AppProvider({ children }) {
     const n = (name || "").trim();
     if (!n) return { error: "Indiquez un nom." };
     const { error } = await supabase.rpc("aladj_rename_guest", { p_id: id, p_name: n });
+    if (error) return { error: error.message };
+    await reloadGuests();
+    return {};
+  }, [reloadGuests]);
+
+  // Photo d'un invité régulier : envoyée sur Cloudflare R2 comme toutes les
+  // autres images du site, puis rangée dans le carnet. Une valeur vide efface
+  // la photo et l'invité retrouve son initiale colorée.
+  const setHouseholdGuestAvatar = useCallback(async (id, image) => {
+    if (!id) return { error: "Invité introuvable." };
+    let url = "";
+    if (image) {
+      url = await uploadImageToStorage(image, "guests");
+      if (!url) return { error: "L'envoi de l'image a échoué." };
+    }
+    const { error } = await supabase.rpc("aladj_guest_set_avatar", { p_id: id, p_url: url });
     if (error) return { error: error.message };
     await reloadGuests();
     return {};
@@ -2781,18 +2869,19 @@ function AppProvider({ children }) {
     await supabase.from("profiles").update({ moments_seen_at: ts }).eq("id", currentUser.id);
   }, [currentUser]);
 
-  // Pastille rouge sur l'icône de l'app installée (PWA) = nb de notifications non lues.
-  // Note : se met à jour quand l'app est ouverte ; un vrai temps réel "app fermée"
-  // demanderait des notifications push (service worker).
+  // Pastille rouge sur l'icône de l'app installée (PWA) : notifications non lues
+  // ET discussions comportant un message non lu. Se met à jour tant que l'app
+  // est ouverte (la veille ci-dessus s'en charge) ; un vrai temps réel « app
+  // fermée » demanderait des notifications push (service worker).
   useEffect(() => {
-    const count = (notifications || []).filter((n) => !n.read).length;
+    const count = (notifications || []).filter((n) => !n.read).length + (messagesUnread || 0);
     try {
       if ("setAppBadge" in navigator) {
         if (count > 0) navigator.setAppBadge(count).catch(() => {});
         else if ("clearAppBadge" in navigator) navigator.clearAppBadge().catch(() => {});
       }
     } catch (e) { /* API non supportée : on ignore */ }
-  }, [notifications]);
+  }, [notifications, messagesUnread]);
 
   // ---- Notifications push (abonnement de cet appareil) ----
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -2879,7 +2968,7 @@ function AppProvider({ children }) {
     pushSupported, pushEnabled, enablePush, disablePush,
     dismissedRecos, dismissReco, restoreReco,
     setRetroEmails,
-    household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
+    household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, setHouseholdGuestAvatar, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
     addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     loanRequests, loanAlerts, createLoanRequest, acceptLoanRequest, declineLoanRequest, cancelLoanRequest,
@@ -4725,6 +4814,7 @@ function GuidePage() {
               <li><b>Locations</b> — demande de location reçue, engagement d'un propriétaire, refus nominatif, annulation, prêt enregistré, et les rappels de retour (la veille, le jour J, puis chaque semaine de retard).</li>
             </ul>
             <p style={{ margin: "0 0 8px" }}>En revanche, la <b>messagerie n'alimente pas cette liste</b> : un échange un peu vif la remplirait à lui seul. Les nouveaux messages se signalent par une <b>pastille rouge</b> sur « Ma messagerie » et sur le compteur de Mon espace.</p>
+            <p style={{ margin: "0 0 8px" }}>Cette pastille apparaît désormais <b>sans avoir à recharger la page</b> : le site vérifie l'arrivée de nouveaux messages toutes les 40 secondes, et immédiatement quand vous revenez sur l'onglet. Sur l'application installée (PWA), les messages non lus s'ajoutent aussi à la <b>pastille de l'icône</b>, aux côtés des notifications.</p>
             <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
           </>,
         },
@@ -4905,6 +4995,14 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur la page <b>Ludothèque</b>, le bouton « Composer ma tablée » vous aide à trouver le bon jeu pour les personnes présentes. Sélectionnez les participants : les propositions sont automatiquement limitées aux jeux <b>jouables par toute la tablée</b> (vous pouvez toujours forcer un autre nombre de joueurs), la durée se filtre par <b>tranches</b> (entre 0 et 30 min, entre 31 min et 1 h… jusqu'à « 3 h et plus »), et <b>aucun jeu comportant une mécanique détestée</b> par un participant n'est proposé.</p>
             <p style={{ margin: 0 }}>Trois sections, affichées 15 jeux à la fois (« Afficher 15 jeux de plus » en bas de chacune) : <b>Envies de découverte</b> (les jeux que la tablée rêve d'essayer), <b>Mieux notés par la tablée</b> (à partir de 3 participants, un jeu doit être noté par au moins 2 d'entre eux) et <b>Exploration ludique</b> — des suggestions qui mélangent les mécaniques favorites des participants, leurs coups de coeur individuels et les goûts des membres au profil proche de la tablée.</p>
+          </>,
+        },
+        {
+          q: "Ma messagerie : la pastille de nouveaux messages",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dès qu'un message arrive dans une de vos discussions, un <b>point rouge</b> se pose sur l'icône « Ma messagerie » dans Mon espace, le compteur passe au rouge (« 2 non lus »), et la section <b>s'ouvre d'elle-même</b> à votre arrivée sur la page. L'onglet <b>Mon espace</b> de la navigation porte lui aussi le compteur.</p>
+            <p style={{ margin: "0 0 8px" }}>Si vous avez installé le site comme application sur votre téléphone, la <b>pastille de l'icône</b> compte vos notifications <i>et</i> vos messages non lus.</p>
+            <p style={{ margin: 0 }}>La pastille s'éteint dès que vous ouvrez la discussion. Vos propres messages ne l'allument jamais.</p>
           </>,
         },
         {
@@ -5156,6 +5254,14 @@ function GuidePage() {
         {
           q: "Retirer une partie de mon historique",
           a: <p style={{ margin: 0 }}>Dans <b>Mon espace</b> → <b>🎲 Mes parties</b>, ouvrez un jeu puis la corbeille à côté d'une partie : elle quitte votre historique et vos statistiques (les autres joueurs ne sont pas affectés). Le site <b>retient votre décision</b> : la partie ne reviendra plus vous demander « as-tu joué à ce jeu ? » dans « Parties à confirmer ». Auparavant, une partie retirée à la main réapparaîssait aussitôt en suggestion — ce n'est plus le cas.</p>,
+        },
+        {
+          q: "Invités réguliers : photo et compteur de parties",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace → Ma famille → Nos invités réguliers</b>, chaque invité porte une vignette. Un clic dessus permet d'<b>ajouter une photo</b> (import depuis l'appareil ou adresse web) — pratique quand deux prénoms se ressemblent. La photo suit l'invité partout : pastilles du carnet, préparation du chronomètre, et <b>écran de jeu du chronomètre sur tous les téléphones connectés</b>, pas seulement celui de l'hôte.</p>
+            <p style={{ margin: "0 0 8px" }}>À côté du nom, une pastille <b>🎲 4</b> indique le nombre de parties que <b>vous</b> avez jouées avec cet invité. Un clic ouvre le détail : le classement des jeux (Clank 2, Time Bomb 1, Mots Malins 1…), puis, en cliquant sur un jeu, chaque partie avec sa <b>date</b>, sa <b>durée</b> si elle a été chronométrée, ses <b>vainqueurs</b> et ses <b>scores</b> s'ils ont été renseignés.</p>
+            <p style={{ margin: 0 }}>Le rapprochement se fait sur le <b>prénom</b> : un invité n'a pas de compte, c'est la seule clé disponible. Deux personnes portant exactement le même prénom seraient donc comptées ensemble — raison de plus pour leur donner des noms distincts (« Julie K. », « Julie M. ») et une photo.</p>
+          </>,
         },
         {
           q: "« Mes parties » : ouvrir la fiche d'un jeu",
@@ -13058,19 +13164,190 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
 /* =============================================================================
    PAGE — MA LUDOTHÈQUE (membres connectés) + export Excel
    ============================================================================= */
+/* ---- Invités réguliers : photo et compteur de parties ----
+   Un invité n'a pas de compte : le seul point commun entre le carnet du foyer
+   et les participants d'une partie est le prénom. On le compare donc sans tenir
+   compte de la casse ni des espaces. Conséquence assumée : deux « Julie »
+   différentes seraient confondues — c'est précisément pour cela que la photo
+   est utile. */
+const keyOfGuest = (n) => String(n || "").trim().toLowerCase();
+
+// Parties confirmées où le membre connecté ET cet invité étaient tous deux à
+// table. « Vous avez joué avec X » : les parties enregistrées par d'autres
+// membres du foyer ne comptent donc pas ici.
+function playsWithGuest(plays, uid, guestName) {
+  const key = keyOfGuest(guestName);
+  if (!uid || !key) return [];
+  return (plays || [])
+    .filter((pl) => {
+      const parts = pl.participants || [];
+      if (!parts.some((pt) => pt.userId === uid && pt.confirmed !== false)) return false;
+      return parts.some((pt) => !pt.userId && keyOfGuest(pt.guestName || pt.name) === key);
+    })
+    .sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt));
+}
+
+// Fenêtre « Vous avez joué N parties avec X » : d'abord le classement des jeux,
+// puis, en cliquant sur un jeu, le détail de chaque partie (date, durée, scores).
+function GuestPlaysModal({ guest, onClose }) {
+  const { plays, games, currentUser } = useApp();
+  const [gameId, setGameId] = useState(null);
+  const [openPlayId, setOpenPlayId] = useState(null);
+  const gameById = useMemo(() => { const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m; }, [games]);
+  const list = useMemo(
+    () => playsWithGuest(plays, currentUser?.id, guest?.name),
+    [plays, currentUser, guest],
+  );
+  const ranking = useMemo(() => {
+    const by = {};
+    list.forEach((pl) => { (by[pl.gameId] ||= { gameId: pl.gameId, count: 0 }).count++; });
+    return Object.values(by).sort((a, b) => b.count - a.count
+      || (gameById[a.gameId]?.name || "").localeCompare(gameById[b.gameId]?.name || "", "fr"));
+  }, [list, gameById]);
+  const detailPlays = gameId ? list.filter((pl) => pl.gameId === gameId) : [];
+  const detailGame = gameId ? gameById[gameId] : null;
+
+  return (
+    <Modal open onClose={onClose} width={520}
+      title={<span style={{ display: "inline-flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+        {guest?.avatar_url
+          ? <img src={guest.avatar_url} alt="" style={{ width: 30, height: 30, borderRadius: 9, objectFit: "cover", flexShrink: 0 }} />
+          : <span style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: `${C.purple}1f`, display: "grid", placeItems: "center", color: C.purple, fontSize: 14 }}>{(guest?.name || "?")[0].toUpperCase()}</span>}
+        <span style={{ overflowWrap: "anywhere" }}>{guest?.name}</span>
+      </span>}>
+      <p style={{ margin: "0 0 14px", fontSize: 14.5, color: "#5e5346", lineHeight: 1.55 }}>
+        Vous avez joué <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.teal, fontSize: 17 }}>{list.length}</b> partie{list.length > 1 ? "s" : ""} avec <b>{guest?.name}</b>
+        {ranking.length > 1 ? <> · {ranking.length} jeux différents</> : null}
+      </p>
+
+      {list.length === 0 ? (
+        <div style={{ color: "#9c8d79", fontSize: 14 }}>
+          Aucune partie enregistrée avec cet invité pour l'instant.
+        </div>
+      ) : gameId == null ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
+          {ranking.map((r) => (
+            <button key={r.gameId} type="button" onClick={() => { setGameId(r.gameId); setOpenPlayId(null); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "10px 12px", cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0 }}>
+              {gameById[r.gameId]?.img && (
+                <span style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: `center/cover url("${gameById[r.gameId].img}")` }} />
+              )}
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {gameById[r.gameId]?.name || "Jeu supprimé"}
+              </span>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, flexShrink: 0 }}>{r.count}</span>
+              <ChevronRight size={16} style={{ color: "#c3b49b", flexShrink: 0 }} />
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <button type="button" onClick={() => { setGameId(null); setOpenPlayId(null); }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(26,58,92,.06)", border: "none", borderRadius: 999, padding: "6px 13px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, color: C.navy, marginBottom: 12 }}>
+            <ArrowRight size={14} style={{ transform: "rotate(180deg)" }} /> Retour aux jeux
+          </button>
+          <div style={{ fontSize: 13.5, color: "#6b5d49", marginBottom: 10 }}>
+            <b style={{ color: C.navy, fontFamily: "'Fredoka',sans-serif", fontSize: 16 }}>{detailPlays.length}</b> partie{detailPlays.length > 1 ? "s" : ""} de <b>{detailGame?.name || "ce jeu"}</b> avec {guest?.name}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+            {detailPlays.map((pl) => {
+              const hasScores = (pl.participants || []).some((pt) => pt.score != null && pt.confirmed !== false);
+              const winners = (pl.participants || []).filter((pt) => pt.isWinner && pt.confirmed !== false);
+              const isOpen = openPlayId === pl.id;
+              return (
+                <div key={pl.id} style={{ background: "#FBF7EF", border: "1px solid #ece2d0", borderRadius: 10, padding: "9px 12px" }}>
+                  <button type="button" onClick={() => hasScores && setOpenPlayId(isOpen ? null : pl.id)} disabled={!hasScores}
+                    style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: hasScores ? "pointer" : "default", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, color: "#6b5d49" }}>
+                    <span style={{ fontWeight: 700, color: C.navy }}>
+                      {new Date(pl.playedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                    </span>
+                    {pl.durationSeconds ? <> · ⏱️ {fmtDuration(pl.durationSeconds)}</> : null}
+                    {pl.sessionId ? " · chronométrée" : ""}
+                    {hasScores && <span style={{ color: C.teal, fontWeight: 700 }}> · scores {isOpen ? "▾" : "▸"}</span>}
+                  </button>
+                  {winners.length > 0 && (
+                    <div style={{ fontSize: 12.5, color: "#8a7c6a", marginTop: 3, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                      <Trophy size={12} color={C.amber} /> {winners.map((w) => w.name).join(", ")}
+                    </div>
+                  )}
+                  {!hasScores && !pl.durationSeconds && (
+                    <div style={{ fontSize: 12, color: "#b6a78f", marginTop: 3 }}>Ni score ni durée n'ont été renseignés.</div>
+                  )}
+                  {isOpen && <PlayScoreBoard play={pl} game={gameById[pl.gameId]} compact />}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Fenêtre d'ajout / remplacement / retrait de la photo d'un invité régulier.
+function GuestPhotoModal({ guest, onClose, setToast }) {
+  const { setHouseholdGuestAvatar } = useApp();
+  const [img, setImg] = useState(guest?.avatar_url || "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async (value) => {
+    setBusy(true);
+    const r = await setHouseholdGuestAvatar(guest.id, value);
+    setBusy(false);
+    if (r?.error) { setToast(r.error); return; }
+    setToast(value ? `Photo de ${guest.name} enregistrée.` : `Photo de ${guest.name} retirée.`);
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} width={440} title={`Photo de ${guest?.name}`}>
+      <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "#6e6256", lineHeight: 1.55 }}>
+        Une photo — ou n'importe quelle image qui l'identifie — rend les tablées bien
+        plus lisibles, surtout dans le chronomètre où deux prénoms proches se confondent
+        vite. Elle est visible par tout votre foyer et par les joueurs de vos parties
+        chronométrées.
+      </p>
+      <ImageField value={img} onChange={setImg} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 16 }}>
+        {guest?.avatar_url && (
+          <Btn variant="ghost" disabled={busy} onClick={() => save("")} style={{ marginRight: "auto", color: C.red }}>
+            <Trash2 size={15} /> Retirer la photo
+          </Btn>
+        )}
+        <Btn variant="ghost" disabled={busy} onClick={onClose}>Annuler</Btn>
+        <Btn variant="teal" disabled={busy || !img} onClick={() => save(img)}>
+          {busy ? <Loader2 size={15} className="aladj-spin" /> : <Check size={15} />} Enregistrer
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
 // Section "Ma famille" : foyer partageant une ludothèque commune
 function FamilySection({ setToast }) {
   const { household, users, currentUser, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
-    householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, askConfirm } = useApp();
+    householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, askConfirm, plays } = useApp();
   const [guestDraft, setGuestDraft] = useState("");
   const [guestEditId, setGuestEditId] = useState(null);
   const [guestEditName, setGuestEditName] = useState("");
   const [guestBusy, setGuestBusy] = useState(false);
+  const [photoGuest, setPhotoGuest] = useState(null);   // invité dont on règle la photo
+  const [statsGuest, setStatsGuest] = useState(null);   // invité dont on regarde les parties
   const [showPicker, setShowPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
 
   const nameById = useMemo(() => Object.fromEntries((users || []).map((u) => [u.id, u.name])), [users]);
+  // Nombre de parties jouées avec chaque invité du carnet. On ne calcule ici que
+  // le total : le détail par jeu attend qu'on ouvre la fenêtre.
+  const guestPlayCounts = useMemo(() => {
+    const out = {};
+    if (!currentUser) return out;
+    (householdGuests || []).forEach((g) => {
+      out[keyOfGuest(g.name)] = playsWithGuest(plays, currentUser.id, g.name).length;
+    });
+    return out;
+  }, [plays, householdGuests, currentUser]);
   const memberIds = household?.memberIds || [];
   const otherMembers = memberIds.filter((id) => id !== currentUser?.id);
   const received = household?.invitesReceived || [];
@@ -13163,7 +13440,10 @@ function FamilySection({ setToast }) {
           quand vous enregistrez une partie ou lancez un chronomètre — plus besoin de retaper leur nom.
           {memberIds.length > 1 ? " Ce carnet est commun à toute la famille." : ""}
           <span style={{ display: "block", marginTop: 4, color: "#9c8d79" }}>
-            Ce ne sont que des noms : aucune statistique ne leur est rattachée. Pour cela, mieux vaut devenir membre du site.
+            Ajoutez-leur une <b>photo</b> (clic sur la vignette) : c'est bien plus lisible autour de la table,
+            surtout dans le chronomètre. Le compteur 🎲 indique le nombre de parties que <b>vous</b> avez jouées
+            avec chacun — cliquez-le pour le détail. Un invité reste un simple prénom : il n'a ni compte, ni
+            profil, ni classement. Pour cela, mieux vaut devenir membre du site.
           </span>
         </p>
 
@@ -13184,10 +13464,24 @@ function FamilySection({ setToast }) {
                   </>
                 ) : (
                   <>
-                    <span style={{ width: 32, height: 32, borderRadius: 10, flexShrink: 0, background: `${C.purple}1f`, display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.purple, fontSize: 14 }}>
-                      {g.name[0].toUpperCase()}
-                    </span>
+                    <button type="button" onClick={() => setPhotoGuest(g)}
+                      title={g.avatar_url ? `Changer la photo de ${g.name}` : `Ajouter une photo à ${g.name}`}
+                      style={{ position: "relative", width: 38, height: 38, borderRadius: 11, flexShrink: 0, padding: 0, cursor: "pointer",
+                        border: `1.5px solid ${C.purple}33`, display: "grid", placeItems: "center",
+                        background: g.avatar_url ? `center/cover url("${g.avatar_url}")` : `${C.purple}1f`,
+                        fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.purple, fontSize: 15 }}>
+                      {g.avatar_url ? "" : g.name[0].toUpperCase()}
+                      <span style={{ position: "absolute", right: -3, bottom: -3, background: C.purple, borderRadius: "50%", padding: 2, display: "grid", placeItems: "center", border: "1.5px solid #fff" }}>
+                        <Camera size={9} color="#fff" />
+                      </span>
+                    </button>
                     <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    {(guestPlayCounts[keyOfGuest(g.name)] || 0) > 0 && (
+                      <button type="button" onClick={() => setStatsGuest(g)} title={`Voir les parties jouées avec ${g.name}`}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0, background: `${C.teal}14`, border: `1.5px solid ${C.teal}55`, color: C.teal, borderRadius: 999, padding: "3px 10px", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>
+                        🎲 {guestPlayCounts[keyOfGuest(g.name)]}
+                      </button>
+                    )}
                     <button onClick={() => { setGuestEditId(g.id); setGuestEditName(g.name); }} title="Renommer"
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, flexShrink: 0 }}><Edit3 size={15} /></button>
                     <button title="Retirer du carnet" style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, flexShrink: 0 }}
@@ -13212,6 +13506,9 @@ function FamilySection({ setToast }) {
           </Btn>
         </div>
       </div>
+
+      {photoGuest && <GuestPhotoModal guest={photoGuest} onClose={() => setPhotoGuest(null)} setToast={setToast} />}
+      {statsGuest && <GuestPlaysModal guest={statsGuest} onClose={() => setStatsGuest(null)} />}
 
       {showPicker && (
         <Modal open onClose={() => setShowPicker(false)} title="Inviter un membre dans la famille" width={460}>
@@ -13431,6 +13728,7 @@ const BACKUP_TABLES = [
   ["households", [["id"]]],
   ["household_members", [["id"], ["household_id"]]],
   ["household_invites", [["id"], ["created_at"]]],
+  ["household_guests", [["id"], ["name"]]],
   // Ludothèque
   ["games", [["id"]]],
   ["game_owners", [["game_id", "owner_id"]]],
@@ -14493,15 +14791,26 @@ function MyMessagesSection({ setToast }) {
   const [open, setOpen] = useState(false);
   const [openConv, setOpenConv] = useState(null);
   const [composing, setComposing] = useState(false);
-  if (!currentUser) return null;
+  // Un message non lu déplie la section d'office, une seule fois : la pastille
+  // ne sert pas à grand-chose s'il faut encore chercher où cliquer.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (messagesUnread > 0 && !autoOpened.current) { autoOpened.current = true; setOpen(true); }
+  }, [messagesUnread]);
   const list = conversations || [];
+  if (!currentUser) return null;
 
   return (
     <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
       <button type="button" onClick={() => setOpen((v) => !v)}
         style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", font: "inherit", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
-          <MessageCircle size={19} color={C.teal} /> Ma messagerie
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            <MessageCircle size={19} color={C.teal} />
+            {messagesUnread > 0 && (
+              <span aria-hidden style={{ position: "absolute", top: -3, right: -3, width: 10, height: 10, borderRadius: "50%", background: C.red, border: "2px solid #FBF7EF" }} />
+            )}
+          </span> Ma messagerie
           <span style={{ background: messagesUnread > 0 ? C.red : C.teal, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>
             {messagesUnread > 0 ? `${messagesUnread} non lu${messagesUnread > 1 ? "s" : ""}` : list.length}
           </span>
@@ -15377,8 +15686,11 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {guestBookFree.map((g) => (
                   <button key={g.id} type="button" onClick={() => addGuestNamed(g.name)} title={`Ajouter ${g.name} à la partie`}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999, padding: "5px 12px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, fontWeight: 600 }}>
-                    <Plus size={13} color={C.purple} /> {g.name}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: `1.5px solid ${C.purple}44`, color: C.navy, borderRadius: 999, padding: g.avatar_url ? "3px 12px 3px 4px" : "5px 12px", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontSize: 13.5, fontWeight: 600 }}>
+                    {g.avatar_url
+                      ? <img src={g.avatar_url} alt="" style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                      : <Plus size={13} color={C.purple} />}
+                    {g.name}
                   </button>
                 ))}
               </div>
