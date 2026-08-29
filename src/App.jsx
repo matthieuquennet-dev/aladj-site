@@ -1592,6 +1592,33 @@ function AppProvider({ children }) {
     return {};
   }, [currentUser, loadData]);
 
+  /* ---- Notifications ----
+     Défini ICI, avant tout usage : ce callback est cité dans les tableaux
+     de dépendances de createLoan et des actions de demande de location,
+     lesquels sont évalués pendant le rendu. Le déclarer plus bas ferait
+     lire une const en zone morte temporelle (écran blanc au chargement).
+     Ne pas le redescendre. */
+  // Insère des notifications pour une liste de destinataires (en excluant l'acteur lui-même).
+  // recipients : tableau d'IDs. On ne notifie jamais l'auteur de l'action.
+  const notifyUsers = useCallback(async (recipients, { type, message, linkKind = null, linkId = null }) => {
+    if (!currentUser) return;
+    const unique = [...new Set(recipients)].filter((id) => id && id !== currentUser.id);
+    if (unique.length === 0) return;
+    // La RLS de la table notifications bloque silencieusement certaines
+    // insertions pour autrui : on passe d'abord par la fonction
+    // SECURITY DEFINER, avec repli sur l'insertion directe si elle manque.
+    const { error: rpcErr } = await supabase.rpc("aladj_notify", {
+      p_recipients: unique, p_type: type, p_message: message,
+      p_link_kind: linkKind, p_link_id: linkId,
+    });
+    if (!rpcErr) return;
+    const rows = unique.map((rid) => ({
+      recipient_id: rid, actor_id: currentUser.id, type, message,
+      link_kind: linkKind, link_id: linkId,
+    }));
+    await supabase.from("notifications").insert(rows); // best-effort, on n'interrompt pas en cas d'échec
+  }, [currentUser]);
+
   // Créer une location (le prêteur = utilisateur connecté). Durée fixe : 2 semaines.
   // priceEur : tarif retenu (pré-rempli par le calcul, mais modifiable).
   // requestId : demande de location que ce prêt vient concrétiser, le cas échéant.
@@ -2144,27 +2171,6 @@ function AppProvider({ children }) {
   }, [loadData]);
 
   // ---- Commentaires de soirée ----
-  // Insère des notifications pour une liste de destinataires (en excluant l'acteur lui-même).
-  // recipients : tableau d'IDs. On ne notifie jamais l'auteur de l'action.
-  const notifyUsers = useCallback(async (recipients, { type, message, linkKind = null, linkId = null }) => {
-    if (!currentUser) return;
-    const unique = [...new Set(recipients)].filter((id) => id && id !== currentUser.id);
-    if (unique.length === 0) return;
-    // La RLS de la table notifications bloque silencieusement certaines
-    // insertions pour autrui : on passe d'abord par la fonction
-    // SECURITY DEFINER, avec repli sur l'insertion directe si elle manque.
-    const { error: rpcErr } = await supabase.rpc("aladj_notify", {
-      p_recipients: unique, p_type: type, p_message: message,
-      p_link_kind: linkKind, p_link_id: linkId,
-    });
-    if (!rpcErr) return;
-    const rows = unique.map((rid) => ({
-      recipient_id: rid, actor_id: currentUser.id, type, message,
-      link_kind: linkKind, link_id: linkId,
-    }));
-    await supabase.from("notifications").insert(rows); // best-effort, on n'interrompt pas en cas d'échec
-  }, [currentUser]);
-
   const addComment = useCallback(async (eventId, content) => {
     if (!currentUser) return { error: "Connectez-vous." };
     const { error } = await supabase.from("event_comments").insert({
