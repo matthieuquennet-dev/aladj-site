@@ -12634,9 +12634,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         </div>
 
         {/* COLONNE LATÉRALE : classements */}
-        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 6 }} className="aladj-ludo-aside">
+        <aside style={{ position: "sticky", top: 88, display: "flex", flexDirection: "column", gap: 18, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 6 }} className="aladj-ludo-aside">
           {/* CLASSEMENT PERSONNALISÉ (placé en premier pour remonter en haut sur mobile) */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}` }} className="aladj-ludo-custom">
+          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}`, flexShrink: 0 }} className="aladj-ludo-custom">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Award size={20} color={C.teal} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Classement sur-mesure</h3>
@@ -12648,13 +12648,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           </div>
 
           {/* TOP 20 */}
-          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff" }}>
+          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }} className="aladj-ludo-rank">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <Trophy size={20} color={C.amber} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 170, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
                 return (
@@ -12674,20 +12674,20 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           </div>
 
           {/* (lot V) TOP 20 DES JEUX DU MOMENT — les arrivées récentes */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}` }}>
+          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}`, display: "flex", flexDirection: "column", minHeight: 0 }} className="aladj-ludo-rank">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <Sparkles size={20} color={C.purple} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Top 20 du moment</h3>
             </div>
             <p style={{ fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, margin: "0 0 14px" }}>
-              Les jeux <b>parus en {new Date().getFullYear() - 1} ou {new Date().getFullYear()}</b> et entrés dans la ludothèque depuis moins de {MOMENT_MONTHS} mois. Ceux qui réunissent au moins 4 votes d'abord ; la liste se complète ensuite par les mieux notés d'entre les nouveaux venus.
+              Parus en <b>{new Date().getFullYear() - 1}</b> ou <b>{new Date().getFullYear()}</b>, et arrivés ici depuis moins de {MOMENT_MONTHS} mois. Les mieux notés d'abord.
             </p>
             {momentTop.length === 0 && (
               <p style={{ color: "#a89a86", fontSize: 13.5, lineHeight: 1.5, margin: 0 }}>
                 Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
               </p>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 170, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
               {momentTop.map((g, i) => (
                 <button key={g.id} onClick={() => setSelected(g.id)}
                   style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
@@ -17442,7 +17442,8 @@ export default function App() {
         @media (min-width: 861px) { .aladj-mobile-menu { display: none !important; } }
         @media (max-width: 920px) {
           .aladj-ludo-grid { display: flex !important; flex-direction: column !important; }
-          .aladj-ludo-aside { position: static !important; order: -1; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
+          .aladj-ludo-aside { position: static !important; order: -1; display: block !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
+          .aladj-ludo-aside .aladj-ludo-rank { margin-top: 18px; }
           .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
         }
         @media (max-width: 600px) {
