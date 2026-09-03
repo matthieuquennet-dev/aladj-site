@@ -1286,6 +1286,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Passe a true des que l'on coche/decoche un vainqueur : on cesse alors
   // de recalculer automatiquement le vainqueur a partir des scores.
   const [winnersTouched, setWinnersTouched] = useState(false);
+  // (lot V) Cooperatif : toute la table marque le meme score et gagne ou perd
+  // ensemble. coopTarget est le seuil de victoire, lu dans le sens de scoreDir.
+  const [coopScore, setCoopScore] = useState('');
+  const [coopWon, setCoopWon] = useState(null);        // true | false | null
+  const [coopTouched, setCoopTouched] = useState(false);
+  const [coopTarget, setCoopTarget] = useState('');
+  const [phrases, setPhrases] = useState([]);          // bareme de fin de partie
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
@@ -1624,7 +1631,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     let go = true;
     const q = nextQuery.trim();
     const tid = setTimeout(async () => {
-      const base = supabase.from('games').select('id,name,play_time,image_url,score_direction');
+      const base = supabase.from('games').select('id,name,play_time,image_url,score_direction,is_coop,coop_target');
       const { data } = q
         ? await base.ilike('name', `%${q}%`).order('name').limit(12)
         : await base.order('name').limit(12);
@@ -1715,7 +1722,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           let gamesData = [];
           if (gIds.length) {
             const { data } = await supabase.from('games')
-              .select('id,name,play_time,image_url,score_direction').in('id', gIds);
+              .select('id,name,play_time,image_url,score_direction,is_coop,coop_target').in('id', gIds);
             const byId = {};
             (data || []).forEach((g) => { byId[g.id] = g; });
             gamesData = gIds.map((id) => byId[id]).filter(Boolean);   // on garde l'ordre du moment
@@ -1756,7 +1763,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           setDraft(pre);
         } else if (gameId) {
           const { data: g } = await supabase.from('games')
-            .select('id,name,play_time,image_url,score_direction').eq('id', gameId).single();
+            .select('id,name,play_time,image_url,score_direction,is_coop,coop_target').eq('id', gameId).single();
           setGame(g);
           setBoxMin(g?.play_time ? String(g.play_time) : '');
           setDraft([]);
@@ -1778,7 +1785,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     let go = true;
     (async () => {
       const { data } = await supabase.from('games')
-        .select('id,name,play_time,image_url,score_direction').order('name');
+        .select('id,name,play_time,image_url,score_direction,is_coop,coop_target').order('name');
       if (go) setFallbackCatalog(data || []);
     })();
     return () => { go = false; };
@@ -1912,7 +1919,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from('games')
-        .select('id,name,play_time,image_url,score_direction').eq('id', gid).single();
+        .select('id,name,play_time,image_url,score_direction,is_coop,coop_target').eq('id', gid).single();
       // La session a pu changer encore pendant la requete : on verifie.
       if (!cancelled && data && data.id === (sessionRef.current?.game_id || gid)) setGame(data);
     })();
@@ -1924,6 +1931,43 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setScoreDir(game?.score_direction === 'low' ? 'low' : 'high');
     setWinnersTouched(false);
   }, [game?.id, game?.score_direction]);
+
+  // (lot V) Reglages cooperatifs et bareme, repris de la fiche du jeu.
+  const isCoop = game?.is_coop === true;
+  useEffect(() => {
+    setCoopTarget(game?.coop_target == null ? '' : String(game.coop_target));
+    setCoopScore(''); setCoopWon(null); setCoopTouched(false);
+  }, [game?.id, game?.coop_target]);
+
+  useEffect(() => {
+    let go = true;
+    const gid = game?.id;
+    if (!gid) { setPhrases([]); return undefined; }
+    (async () => {
+      const { data } = await supabase.from('game_score_phrases')
+        .select('id,min_score,max_score,content').eq('game_id', gid);
+      if (go) setPhrases(data || []);
+    })();
+    return () => { go = false; };
+  }, [game?.id]); // eslint-disable-line
+
+  // Verdict deduit du score et du seuil, tant qu'on ne l'a pas force a la main.
+  const coopAuto = coopWinFromScore(coopTarget, scoreDir, coopScore);
+  useEffect(() => {
+    if (!isCoop || coopTouched) return;
+    setCoopWon(coopAuto);
+  }, [coopAuto, isCoop, coopTouched]);
+  const coopPhrase = phraseForScore(phrases, coopScore);
+
+  // Le score commun est ecrit sur chaque siege : l'historique du jeu reste
+  // exploitable (moyennes, records) exactement comme en competitif.
+  const applyCoopScoreToAll = async (v) => {
+    const n = v === '' || v == null || !Number.isFinite(Number(v)) ? 0 : Number(v);
+    setPlayers((ps) => ps.map((p) => ({ ...p, score: n })));
+    for (const p of players) {
+      await rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: n });
+    }
+  };
 
   // Cle stable des scores : evite de recalculer a chaque synchro Realtime.
   const scoreKey = players.map((p) => `${p.id}:${p.score || 0}`).join('|');
@@ -2028,7 +2072,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const toggleWinner = (pid) => { setWinnersTouched(true); setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid])); };
   const saveResultAndExit = async () => {
     setSavingResult(true); setError(null);
-    const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
+    // (lot V) En cooperatif, la table gagne ou perd d'un bloc : tous vainqueurs,
+    // ou aucun. Le score commun a deja ete reporte sur chaque siege.
+    const ids = isCoop ? (coopWon === true ? players.map((p) => p.id) : []) : winnerIds;
+    if (isCoop && game?.id && currentUser) {
+      const savedTarget = game.coop_target == null ? '' : String(game.coop_target);
+      if (savedTarget !== String(coopTarget || '') || game.score_direction !== scoreDir) {
+        try {
+          await supabase.rpc('aladj_set_game_coop', {
+            p_game_id: game.id, p_is_coop: true,
+            p_target: coopTarget === '' ? null : Number(coopTarget),
+            p_direction: scoreDir,
+          });
+        } catch (err) { /* le chrono ne doit jamais bloquer sur ce point */ }
+      }
+    }
+    const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: ids });
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
     await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
@@ -2043,6 +2102,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setSummary(null); setWinnerIds([]); setWinnersTouched(false);
     setTotals({}); setOpenSegs({}); setNewGamePrompt(false); setNewGameWinners([]);
     setScoreFor(null); setResultSaved(false); setGame(null); setError(null);
+    setCoopScore(''); setCoopWon(null); setCoopTouched(false); setPhrases([]);
     const s2 = await refetchSession(nid);
     await refetchPlayers(nid);
     await refetchTotals(nid);
@@ -3201,6 +3261,59 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <Stat label="Ratio" value={summary?.ratio_vs_box ? `×${summary.ratio_vs_box}` : '—'} color={summary?.ratio_vs_box >= 1.5 ? C.red : C.teal} />
           </div>
         </Card>
+        {isCoop ? (
+          <Card>
+            <Label>Le sort de la table</Label>
+            <div style={{ fontSize: 12.5, color: `${C.navy}99`, margin: '4px 0 12px', lineHeight: 1.5 }}>
+              Partie cooperative : tout le monde marque le meme score et gagne ou perd ensemble.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'grid', gap: 5 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>Score de la table</span>
+                <input type="number" step="0.5" value={coopScore}
+                  onChange={(ev) => { setCoopScore(ev.target.value); setCoopTouched(false); }}
+                  onBlur={(ev) => applyCoopScoreToAll(ev.target.value)}
+                  placeholder="facultatif"
+                  style={{ width: '100%', padding: '9px 11px', borderRadius: 10, border: '1.5px solid #e6dcc9', fontFamily: BODY, fontSize: 15, background: '#fff', color: C.navy, boxSizing: 'border-box' }} />
+              </label>
+              <label style={{ display: 'grid', gap: 5 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>
+                  {scoreDir === 'low' ? 'On gagne en dessous de' : 'On gagne a partir de'}
+                </span>
+                <input type="number" step="0.5" value={coopTarget}
+                  onChange={(ev) => { setCoopTarget(ev.target.value); setCoopTouched(false); }}
+                  placeholder="ex. 9"
+                  style={{ width: '100%', padding: '9px 11px', borderRadius: 10, border: '1.5px solid #e6dcc9', fontFamily: BODY, fontSize: 15, background: '#fff', color: C.navy, boxSizing: 'border-box' }} />
+              </label>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); setCoopTouched(false); }} saved={game?.score_direction} compact />
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+              {[{ v: true, t: '🎉 Gagne' }, { v: false, t: '😖 Perdu' }, { v: null, t: 'Je ne sais pas' }].map((o) => {
+                const on = coopWon === o.v;
+                const col = o.v === true ? '#2F8F4E' : o.v === false ? C.red : `${C.navy}88`;
+                return (
+                  <button key={String(o.v)} onClick={() => { setCoopTouched(true); setCoopWon(o.v); }}
+                    style={{ flex: '1 1 100px', padding: '10px 10px', borderRadius: 12, cursor: 'pointer',
+                      fontFamily: TITLE, fontWeight: 700, fontSize: 14,
+                      border: on ? `2px solid ${col}` : '1px solid #e6dcc9',
+                      background: on ? col : '#fff', color: on ? C.white : `${C.navy}aa` }}>
+                    {o.t}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <CoopOutcome won={coopWon} score={coopScore} phrase={coopPhrase} />
+            </div>
+            {phrases.length === 0 && (
+              <div style={{ fontSize: 11.5, color: `${C.navy}88`, marginTop: 8, lineHeight: 1.45 }}>
+                Aucune phrase de score pour ce jeu. Elles se saisissent sur la fiche du jeu, section « Phrases de score ».
+              </div>
+            )}
+          </Card>
+        ) : (
         <Card>
           <Label>Qui a remporté la partie ?</Label>
           {anyScore && (
@@ -3229,6 +3342,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               : <>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</>}
           </div>
         </Card>
+        )}
         <Card>
           <Label>Temps par joueur</Label>
           {ranked.map((p, i) => {
@@ -3269,6 +3383,75 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }
 
   return null;
+}
+
+/* (lot V) Verdict d'une partie cooperative.
+   true = gagne, false = perdu, null = on ne tranche pas (pas de seuil chiffre,
+   ou pas de score saisi) : le choix reste alors a la main. */
+function coopWinFromScore(target, dir, score) {
+  const t = target === '' || target == null || !Number.isFinite(Number(target)) ? null : Number(target);
+  const s = score === '' || score == null || !Number.isFinite(Number(score)) ? null : Number(score);
+  if (t == null || s == null) return null;
+  return dir === 'low' ? s <= t : s >= t;
+}
+
+/* Phrase du bareme correspondant a un score. Bornes inclusives, une borne vide
+   valant « pas de limite de ce cote ». A egalite, la tranche la plus etroite
+   l'emporte : une phrase ecrite pour un score precis prime sur une phrase large. */
+function phraseForScore(phrases, score) {
+  const s = score === '' || score == null || !Number.isFinite(Number(score)) ? null : Number(score);
+  if (s == null) return null;
+  const lo = (p) => (p.min_score == null ? -Infinity : Number(p.min_score));
+  const hi = (p) => (p.max_score == null ? Infinity : Number(p.max_score));
+  const hits = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  if (!hits.length) return null;
+  const width = (p) => {
+    const w = hi(p) - lo(p);
+    return Number.isFinite(w) ? w : Number.MAX_SAFE_INTEGER;
+  };
+  return [...hits].sort((a, b) => width(a) - width(b))[0];
+}
+
+/* Cadre vert et feu d'artifice quand c'est gagne, cadre rouge quand c'est
+   perdu. La phrase du bareme s'affiche a l'interieur si elle existe. */
+function CoopOutcome({ won, score, phrase }) {
+  const win = won === true;
+  const lose = won === false;
+  const color = win ? '#2F8F4E' : lose ? C.red : `${C.navy}66`;
+  const bg = win ? 'rgba(47,143,78,.10)' : lose ? 'rgba(181,40,58,.09)' : 'rgba(26,58,92,.04)';
+  const sparks = Array.from({ length: 12 }, (_, i) => {
+    const a = (i / 12) * Math.PI * 2;
+    return { i, x: Math.round(Math.cos(a) * 46), y: Math.round(Math.sin(a) * 46), c: ACCENTS[i % ACCENTS.length], d: (i % 4) * 0.13 };
+  });
+  return (
+    <div style={{ position: 'relative', overflow: 'hidden', background: bg, border: `2.5px solid ${color}`, borderRadius: 14, padding: '14px 16px', textAlign: 'center' }}>
+      <style>{'@keyframes aladjSpark{0%{opacity:0;transform:translate(0,0) scale(.4)}15%{opacity:1}100%{opacity:0;transform:translate(var(--sx),var(--sy)) scale(.9)}}.aladj-spark{animation:aladjSpark 1.5s ease-out infinite}@media (prefers-reduced-motion:reduce){.aladj-spark{animation:none;opacity:.5}}'}</style>
+      {win && (
+        <span aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          {[['30%', '36%'], ['70%', '30%'], ['50%', '66%']].map(([left, top], b) => (
+            <span key={b} style={{ position: 'absolute', left, top, width: 0, height: 0 }}>
+              {sparks.map((sp) => (
+                <span key={sp.i} className="aladj-spark"
+                  style={{ position: 'absolute', width: 6, height: 6, borderRadius: '50%', background: sp.c,
+                    '--sx': `${sp.x}px`, '--sy': `${sp.y}px`, animationDelay: `${sp.d + b * 0.35}s` }} />
+              ))}
+            </span>
+          ))}
+        </span>
+      )}
+      <div style={{ position: 'relative' }}>
+        <div style={{ fontFamily: TITLE, fontWeight: 700, color, fontSize: 20 }}>
+          {win ? '🎉 Victoire !' : lose ? '😖 Defaite' : 'Resultat non tranche'}
+          {score !== '' && score != null && <span style={{ fontSize: 15, opacity: .8 }}> · {String(score).replace('.', ',')} pts</span>}
+        </div>
+        {phrase && (
+          <div style={{ fontSize: 15, color: C.navy, lineHeight: 1.55, marginTop: 8, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
+            « {phrase.content} »
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
