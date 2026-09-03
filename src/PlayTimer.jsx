@@ -1293,6 +1293,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [coopTouched, setCoopTouched] = useState(false);
   const [coopTarget, setCoopTarget] = useState('');
   const [phrases, setPhrases] = useState([]);          // bareme de fin de partie
+  const [coopDeclaring, setCoopDeclaring] = useState(false);
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
@@ -1961,6 +1962,24 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // Le score commun est ecrit sur chaque siege : l'historique du jeu reste
   // exploitable (moyennes, records) exactement comme en competitif.
+  // Declarer le jeu cooperatif sans quitter le chrono : la fiche est mise a jour
+  // pour tout le monde, et l'ecran de fin bascule sur le verdict commun.
+  const declareCoop = async () => {
+    if (!game?.id) return;
+    setCoopDeclaring(true);
+    try {
+      await supabase.rpc('aladj_set_game_coop', {
+        p_game_id: game.id, p_is_coop: true,
+        p_target: null, p_direction: scoreDir,
+      });
+      setGame((prev) => (prev ? { ...prev, is_coop: true } : prev));
+    } catch (e) {
+      setError("Impossible d'enregistrer le mode coopératif : " + (e?.message || e));
+    } finally {
+      setCoopDeclaring(false);
+    }
+  };
+
   const applyCoopScoreToAll = async (v) => {
     const n = v === '' || v == null || !Number.isFinite(Number(v)) ? 0 : Number(v);
     setPlayers((ps) => ps.map((p) => ({ ...p, score: n })));
@@ -3265,7 +3284,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <Card>
             <Label>Le sort de la table</Label>
             <div style={{ fontSize: 12.5, color: `${C.navy}99`, margin: '4px 0 12px', lineHeight: 1.5 }}>
-              Partie cooperative : tout le monde marque le meme score et gagne ou perd ensemble.
+              Partie coopérative : tout le monde marque le même score et gagne ou perd ensemble.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <label style={{ display: 'grid', gap: 5 }}>
@@ -3278,7 +3297,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               </label>
               <label style={{ display: 'grid', gap: 5 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>
-                  {scoreDir === 'low' ? 'On gagne en dessous de' : 'On gagne a partir de'}
+                  {scoreDir === 'low' ? 'On gagne en dessous de' : 'On gagne à partir de'}
                 </span>
                 <input type="number" step="0.5" value={coopTarget}
                   onChange={(ev) => { setCoopTarget(ev.target.value); setCoopTouched(false); }}
@@ -3290,7 +3309,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); setCoopTouched(false); }} saved={game?.score_direction} compact />
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-              {[{ v: true, t: '🎉 Gagne' }, { v: false, t: '😖 Perdu' }, { v: null, t: 'Je ne sais pas' }].map((o) => {
+              {[{ v: true, t: '🎉 Gagné' }, { v: false, t: '😖 Perdu' }, { v: null, t: 'Je ne sais pas' }].map((o) => {
                 const on = coopWon === o.v;
                 const col = o.v === true ? '#2F8F4E' : o.v === false ? C.red : `${C.navy}88`;
                 return (
@@ -3341,6 +3360,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               ? <>Le vainqueur est déduit des scores ({scoreDir === 'low' ? 'le plus petit' : 'le plus grand'} l'emporte) — tu peux le corriger à la main.{winnersTouched ? ' (choix manuel en cours)' : ''}</>
               : <>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</>}
           </div>
+          {/* (lot V) On s'aperçoit souvent ICI que le jeu n'a jamais été déclaré
+              coopératif. Un bouton, et l'écran bascule aussitôt. */}
+          {game?.id && currentUser && (
+            <button onClick={declareCoop} disabled={coopDeclaring}
+              style={{ marginTop: 12, width: '100%', padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
+                border: `1.5px dashed ${C.purple}`, background: 'rgba(107,58,122,.06)', color: C.purple,
+                fontFamily: TITLE, fontWeight: 700, fontSize: 14 }}>
+              {coopDeclaring ? 'Enregistrement…' : '🤝 En fait, ce jeu est coopératif'}
+            </button>
+          )}
         </Card>
         )}
         <Card>
@@ -3441,7 +3470,7 @@ function CoopOutcome({ won, score, phrase }) {
       )}
       <div style={{ position: 'relative' }}>
         <div style={{ fontFamily: TITLE, fontWeight: 700, color, fontSize: 20 }}>
-          {win ? '🎉 Victoire !' : lose ? '😖 Defaite' : 'Resultat non tranche'}
+          {win ? '🎉 Victoire !' : lose ? '😖 Défaite' : 'Résultat non tranché'}
           {score !== '' && score != null && <span style={{ fontSize: 15, opacity: .8 }}> · {String(score).replace('.', ',')} pts</span>}
         </div>
         {phrase && (
