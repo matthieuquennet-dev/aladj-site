@@ -12654,7 +12654,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 170, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 350, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
                 return (
@@ -12687,7 +12687,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                 Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
               </p>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 170, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 350, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
               {momentTop.map((g, i) => (
                 <button key={g.id} onClick={() => setSelected(g.id)}
                   style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
