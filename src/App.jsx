@@ -230,6 +230,49 @@ const isOneShotGame = (g) => (g?.mechanics || []).some((m) => ONE_SHOT_SET.has(n
 /* ---------- Scores des parties ---------- */
 // Sens du score d'un jeu : "high" = le plus grand l'emporte, "low" = le plus petit.
 const scoreDirOf = (g) => (g?.scoreDirection === "low" ? "low" : "high");
+
+/* (lot V) MODE COOPERATIF
+   Un jeu cooperatif se solde par une victoire ou une defaite commune : toute la
+   table marque le meme score. Le seuil de victoire est memorise sur la fiche du
+   jeu (coopTarget) et se lit dans le sens du score (scoreDirection) :
+     "high" -> on gagne a partir du seuil (Just One : 9 points ou plus)
+     "low"  -> on gagne en dessous ou a hauteur du seuil (compteur de degats). */
+const coopTargetOf = (g) => (g && g.coopTarget != null && g.coopTarget !== "" && Number.isFinite(Number(g.coopTarget)) ? Number(g.coopTarget) : null);
+/* true = gagne, false = perdu, null = on ne peut pas trancher (pas de seuil
+   ou pas de score saisi). Dans ce dernier cas on laisse le choix a la main. */
+function coopWinFromScore(g, score) {
+  const t = coopTargetOf(g);
+  const s = Number(score);
+  if (t == null || score === "" || score == null || !Number.isFinite(s)) return null;
+  return scoreDirOf(g) === "low" ? s <= t : s >= t;
+}
+/* Phrase associee a un score, parmi les tranches saisies sur la fiche du jeu.
+   Les bornes sont inclusives ; une borne vide signifie "pas de limite de ce
+   cote". Si plusieurs tranches conviennent, la plus etroite l'emporte : une
+   phrase ecrite pour un score precis prime sur une phrase de portee large. */
+function phraseForScore(phrases, score) {
+  const s = Number(score);
+  if (score === "" || score == null || !Number.isFinite(s)) return null;
+  const lo = (p) => (p.min_score == null ? -Infinity : Number(p.min_score));
+  const hi = (p) => (p.max_score == null ? Infinity : Number(p.max_score));
+  const hits = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  if (!hits.length) return null;
+  const width = (p) => {
+    const w = hi(p) - lo(p);
+    return Number.isFinite(w) ? w : Number.MAX_SAFE_INTEGER;
+  };
+  return [...hits].sort((a, b) => width(a) - width(b))[0];
+}
+/* Libelle lisible d'une tranche : "9 et plus", "0 a 3", "jusqu'a 5", "exactement 7". */
+function phraseRangeLabel(p) {
+  const mn = p.min_score == null ? null : Number(p.min_score);
+  const mx = p.max_score == null ? null : Number(p.max_score);
+  const n = (v) => String(v).replace(".", ",");
+  if (mn != null && mx != null) return mn === mx ? `exactement ${n(mn)}` : `${n(mn)} a ${n(mx)}`;
+  if (mn != null) return `${n(mn)} et plus`;
+  if (mx != null) return `jusqu'a ${n(mx)}`;
+  return "tous les scores";
+}
 const SCORE_DIR_LABEL = { high: "le plus grand score l'emporte", low: "le plus petit score l'emporte" };
 // Moyenne arrondie au dixieme, formatee a la francaise.
 const fmtPts = (n) => (Math.round(n * 10) / 10).toLocaleString("fr-FR");
@@ -579,7 +622,7 @@ function ScoreDirectionField({ value, onChange }) {
   const opts = [
     { v: "high", t: "Le plus grand score l'emporte", ico: TrendingUp },
     { v: "low", t: "Le plus petit score l'emporte", ico: TrendingDown },
-    { v: "", t: "Non applicable (coopératif...)", ico: EyeOffIcon },
+    { v: "", t: "Non applicable (pas de points)", ico: EyeOffIcon },
   ];
   return (
     <Field label="Sens du score" hint="Sert au chrono : le vainqueur est déduit automatiquement des points saisis. Modifiable à tout moment, y compris depuis le chrono.">
@@ -597,6 +640,116 @@ function ScoreDirectionField({ value, onChange }) {
         })}
       </div>
     </Field>
+  );
+}
+
+/* (lot V) Reglages cooperatifs d'une fiche de jeu.
+   Un seul champ a retenir : le score a partir duquel (ou en dessous duquel) la
+   table l'emporte. Le sens reutilise la colonne existante score_direction, ce
+   qui evite d'inventer un second reglage qui dirait la meme chose. */
+function CoopFields({ isCoop, target, direction, onChange }) {
+  const dir = direction === "low" ? "low" : "high";
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, cursor: "pointer",
+        background: isCoop ? "rgba(107,58,122,.09)" : "rgba(120,110,95,.06)", border: `1.5px solid ${isCoop ? C.purple : "transparent"}` }}>
+        <input type="checkbox" checked={!!isCoop} onChange={(e) => onChange({ isCoop: e.target.checked })}
+          style={{ width: 18, height: 18, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
+        <span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14 }}>🤝 Jeu coopératif</span>
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, marginTop: 2 }}>
+            Toute la table marque le <b>même score</b> et gagne ou perd <b>ensemble</b>. Le chronomètre et l'enregistrement d'une partie s'adaptent automatiquement.
+          </span>
+        </span>
+      </label>
+      {isCoop && (
+        <div style={{ marginTop: 10, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.05)", border: `1px solid ${C.purple}22` }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Le seuil de victoire</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 9, flexWrap: "wrap" }}>
+            {[{ v: "high", t: "On gagne à partir de", ico: TrendingUp }, { v: "low", t: "On gagne en dessous de", ico: TrendingDown }].map((o) => {
+              const on = dir === o.v;
+              const Ico = o.ico;
+              return (
+                <button key={o.v} type="button" onClick={() => onChange({ direction: o.v })} style={{
+                  flex: "1 1 150px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 10px", borderRadius: 10, cursor: "pointer",
+                  fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+                  border: `2px solid ${on ? C.purple : "#e6dcc9"}`, background: on ? C.purple : "#fff", color: on ? "#fff" : "#8a7c6a",
+                }}><Ico size={14} /> {o.t}</button>
+              );
+            })}
+          </div>
+          <TextInput type="number" step="0.5" value={target == null ? "" : String(target)}
+            onChange={(e) => onChange({ target: e.target.value })} placeholder="ex. 9" />
+          <div style={{ fontSize: 12, color: "#8a7c6a", marginTop: 7, lineHeight: 1.5 }}>
+            Laissez vide si le jeu n'a pas de seuil chiffré : vous déclarerez alors la victoire à la main.
+            {" "}Exemple : à <b>Just One</b>, la table l'emporte <b>à partir de 9</b> points.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* (lot V) Petit feu d'artifice, purement decoratif, pose derriere une victoire
+   cooperative. Aucune dependance : quelques etincelles animees en CSS. */
+function Fireworks({ count = 14 }) {
+  const sparks = Array.from({ length: count }, (_, i) => {
+    const angle = (i / count) * Math.PI * 2;
+    const dist = 42 + (i % 4) * 14;
+    const colors = [C.amber, C.teal, C.purple, "#ffd166", "#ff8fab"];
+    return {
+      i,
+      x: Math.round(Math.cos(angle) * dist),
+      y: Math.round(Math.sin(angle) * dist),
+      color: colors[i % colors.length],
+      delay: (i % 5) * 0.12,
+    };
+  });
+  return (
+    <span aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", borderRadius: "inherit" }}>
+      {[["28%", "38%"], ["72%", "30%"], ["50%", "62%"]].map(([left, top], b) => (
+        <span key={b} style={{ position: "absolute", left, top, width: 0, height: 0 }}>
+          {sparks.map((sp) => (
+            <span key={sp.i} className="aladj-spark"
+              style={{
+                position: "absolute", width: 6, height: 6, borderRadius: "50%", background: sp.color,
+                "--sx": `${sp.x}px`, "--sy": `${sp.y}px`,
+                animationDelay: `${sp.delay + b * 0.35}s`,
+              }} />
+          ))}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/* (lot V) Verdict d'une partie cooperative : cadre vert et feu d'artifice quand
+   c'est gagne, cadre rouge quand c'est perdu, et la phrase du jeu correspondant
+   au score realise quand elle a ete saisie sur la fiche. */
+function CoopOutcomeBox({ won, score, phrase, target, direction }) {
+  const win = won === true;
+  const lose = won === false;
+  const color = win ? "#2F8F4E" : lose ? C.red : "#8a7c6a";
+  const bg = win ? "rgba(47,143,78,.10)" : lose ? "rgba(181,40,58,.09)" : "rgba(120,110,95,.07)";
+  const seuil = target == null ? null : `${direction === "low" ? "en dessous de" : "à partir de"} ${String(target).replace(".", ",")}`;
+  return (
+    <div style={{ position: "relative", overflow: "hidden", background: bg, border: `2.5px solid ${color}`, borderRadius: 16, padding: "16px 18px", marginBottom: 14, textAlign: "center" }}>
+      {win && <Fireworks />}
+      <div style={{ position: "relative" }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          {win ? <><Sparkles size={20} /> Victoire !</> : lose ? <><AlertTriangle size={19} /> Défaite</> : <>Résultat non tranché</>}
+          {score !== "" && score != null && <span style={{ fontSize: 15, opacity: .8 }}>· {String(score).replace(".", ",")} pts</span>}
+        </div>
+        {phrase && (
+          <div style={{ fontSize: 15, color: "#4e463b", lineHeight: 1.55, marginTop: 9, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+            « {phrase.content} »
+          </div>
+        )}
+        {seuil && (
+          <div style={{ fontSize: 12, color: "#8a7c6a", marginTop: 8 }}>Seuil de victoire du jeu : {seuil}.</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -750,6 +903,11 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
     // "high" = le plus grand score l'emporte, "low" = le plus petit, null = non renseigne
     scoreDirection: row.score_direction || null,
+    // (lot V) Jeu cooperatif : toute la table marque le meme score et gagne ou
+    // perd ensemble. coopTarget est le seuil de victoire, lu dans le sens de
+    // scoreDirection ("high" = on gagne a partir du seuil, "low" = en dessous).
+    isCoop: row.is_coop === true,
+    coopTarget: row.coop_target == null ? null : Number(row.coop_target),
   };
 }
 function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commentsByEvent = {}, eventGamesByEvent = {}, gamesIndexById = {}, suggestionsByEvent = {}, votesBySuggestion = {}) {
@@ -871,7 +1029,7 @@ function AppProvider({ children }) {
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }, { data: convRows }, { data: convMemberRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
-        fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction", ["id"]),
+        fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction,is_coop,coop_target", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
         fetchAllRows("event_players", "*", ["event_id", "user_id"]),
@@ -1419,6 +1577,8 @@ function AppProvider({ children }) {
       source: d.source || "manuel", owner_id: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
       score_direction: d.scoreDirection || null,
+      is_coop: d.isCoop === true,
+      coop_target: d.coopTarget === "" || d.coopTarget == null ? null : Number(d.coopTarget),
     }).select().single();
     if (error) return { error: error.message };
 
@@ -1607,6 +1767,8 @@ function AppProvider({ children }) {
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
     if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
     if (patch.scoreDirection !== undefined) fields.score_direction = patch.scoreDirection || null;
+    if (patch.isCoop !== undefined) fields.is_coop = patch.isCoop === true;
+    if (patch.coopTarget !== undefined) fields.coop_target = patch.coopTarget === "" || patch.coopTarget == null ? null : Number(patch.coopTarget);
     await supabase.from("games").update(fields).eq("id", id);
     await loadData();
   }, [loadData]);
@@ -3547,6 +3709,175 @@ function GameRulesModal({ gameId, gameName, onClose, onCount }) {
   );
 }
 
+/* -----------------------------------------------------------------------------
+   (lot V) PHRASES DE SCORE
+   Beaucoup de jeux, cooperatifs en tete, terminent par un petit bareme : « 7 a
+   8 : pas mal », « 9 et plus : bravo ». Ces phrases se saisissent ici comme les
+   points de regle, avec la tranche de score qu'elles concernent, et s'affichent
+   ensuite a l'enregistrement de la partie.
+   Chargement a la demande (table game_score_phrases), jamais au demarrage.
+   ----------------------------------------------------------------------------- */
+function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
+  const { currentUser, users, askConfirm } = useApp();
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ min: "", max: "", content: "" });
+  const [editId, setEditId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ min: "", max: "", content: "" });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from("game_score_phrases")
+      .select("id,game_id,author_id,min_score,max_score,content,created_at,updated_at")
+      .eq("game_id", gameId).order("min_score", { ascending: true, nullsFirst: true });
+    if (error) { setErr(error.message); setRows([]); return; }
+    setRows(data || []);
+    if (onCount) onCount((data || []).length);
+  }, [gameId, onCount]);
+  useEffect(() => { load(); }, [load]);
+
+  const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
+  const canTouch = (r) => !!currentUser && (r.author_id === currentUser.id || currentUser.admin === true);
+  const numOrNull = (v) => (v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
+  const submitNew = async () => {
+    const txt = draft.content.trim();
+    if (!txt || !currentUser) return;
+    const mn = numOrNull(draft.min), mx = numOrNull(draft.max);
+    if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("game_score_phrases").insert({
+      game_id: gameId, author_id: currentUser.id, min_score: mn, max_score: mx, content: txt.slice(0, 400),
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setDraft({ min: "", max: "", content: "" }); setAdding(false);
+    await load();
+  };
+
+  const saveEdit = async () => {
+    const txt = editDraft.content.trim();
+    if (!txt) return;
+    const mn = numOrNull(editDraft.min), mx = numOrNull(editDraft.max);
+    if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("game_score_phrases")
+      .update({ min_score: mn, max_score: mx, content: txt.slice(0, 400), updated_at: new Date().toISOString() })
+      .eq("id", editId);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null);
+    await load();
+  };
+
+  const removeRow = async (r) => {
+    const ok = await askConfirm({
+      title: "Supprimer cette phrase ?",
+      message: "Elle ne s'affichera plus à la fin des parties de ce jeu.",
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    setErr("");
+    const { error } = await supabase.from("game_score_phrases").delete().eq("id", r.id);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  const rangeInputs = (v, set) => (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 9 }}>
+      <Field label="Score minimum" hint="Vide = pas de limite basse">
+        <TextInput type="number" step="0.5" value={v.min} onChange={(e) => set({ ...v, min: e.target.value })} placeholder="ex. 9" />
+      </Field>
+      <Field label="Score maximum" hint="Vide = pas de limite haute">
+        <TextInput type="number" step="0.5" value={v.max} onChange={(e) => set({ ...v, max: e.target.value })} placeholder="ex. 12" />
+      </Field>
+    </div>
+  );
+
+  return (
+    <Modal open onClose={onClose} title={`🏁 Phrases de score · ${gameName}`} width={580}>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        Le barème imprimé dans la règle du jeu, recopié une fois pour toutes. À la fin d'une partie, la phrase correspondant au score obtenu s'affiche automatiquement.
+        {currentUser ? " Chacun peut en ajouter, et corriger ou supprimer les siennes." : ""}
+      </p>
+
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+
+      {rows === null ? (
+        <div style={{ color: "#a89a86", fontSize: 14, padding: "12px 0", display: "flex", alignItems: "center", gap: 8 }}>
+          <Loader2 size={16} className="aladj-spin" /> Chargement…
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "26px 16px", color: "#a89a86" }}>
+          <Trophy size={34} style={{ opacity: .4, marginBottom: 10 }} />
+          <p style={{ fontSize: 14, margin: 0 }}>Aucune phrase pour ce jeu.{currentUser ? " Recopiez le barème de la règle !" : ""}</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 16 }}>
+          {rows.map((r) => {
+            const mine = !!currentUser && r.author_id === currentUser.id;
+            return (
+              <div key={r.id} style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.18)", borderRadius: 13, padding: "11px 14px" }}>
+                {editId === r.id ? (
+                  <div>
+                    {rangeInputs(editDraft, setEditDraft)}
+                    <textarea value={editDraft.content} onChange={(ev) => setEditDraft({ ...editDraft, content: ev.target.value })} rows={2} maxLength={400}
+                      style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editDraft.content.trim()}><Check size={14} /> Enregistrer</Btn>
+                      <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+                    <span style={{ flexShrink: 0, background: C.purple, color: "#fff", borderRadius: 999, padding: "3px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, whiteSpace: "nowrap" }}>
+                      {phraseRangeLabel(r)}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, color: "#4e463b", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{r.content}</div>
+                      <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 5 }}>par {mine ? "vous" : nameOf(r.author_id)}</div>
+                    </div>
+                    {canTouch(r) && (
+                      <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
+                        <button onClick={() => { setEditId(r.id); setEditDraft({ min: r.min_score == null ? "" : String(r.min_score), max: r.max_score == null ? "" : String(r.max_score), content: r.content }); }} title="Modifier cette phrase"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, height: 20 }}><Edit3 size={15} /></button>
+                        <button onClick={() => removeRow(r)} title="Supprimer cette phrase"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 20 }}><Trash2 size={15} /></button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!currentUser ? (
+        <span style={{ fontSize: 13, color: "#a89a86" }}>Connectez-vous pour ajouter une phrase.</span>
+      ) : !adding ? (
+        <Btn full variant="soft" onClick={() => setAdding(true)}><Plus size={16} /> Ajouter une phrase</Btn>
+      ) : (
+        <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: 12 }}>
+          {rangeInputs(draft, setDraft)}
+          <Field label="La phrase" hint="Celle du livret de règles, telle quelle.">
+            <textarea value={draft.content} onChange={(ev) => setDraft({ ...draft, content: ev.target.value })} rows={2} maxLength={400} autoFocus
+              placeholder="Ex. : 9 à 12 — Excellent ! Vous vous comprenez à demi-mot."
+              style={{ ...inputStyle, resize: "vertical" }} />
+          </Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" onClick={submitNew} disabled={busy || !draft.content.trim()}>
+              {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Ajouter</>}
+            </Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setDraft({ min: "", max: "", content: "" }); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 /* Fenetre « Statut » — ce que permet (ou non) chacun des 3 statuts. */
 function StatusInfoModal({ onClose, role, isChild }) {
   const blocks = [
@@ -3571,7 +3902,10 @@ function StatusInfoModal({ onClose, role, isChild }) {
       can: [
         "Tout ce que fait un membre, sans exception.",
         "Voix délibérative en assemblée générale : c'est lui qui décide de l'avenir de l'asso.",
-        "Accès à l'onglet <b>Décisionnaire</b>, invisible pour les autres membres : <b>boîte à idées</b> (proposer, soutenir, commenter) et <b>votes en ligne</b> (lancer un scrutin, voter, en discuter dans la zone de commentaires, lire les résultats).",
+        "Accès à l'<b>espace décisionnaire</b>, un onglet invisible pour les autres membres : c'est là que se décide la vie de l'association <b>entre deux assemblées générales</b>, sans attendre d'être tous réunis.",
+        "<b>Voter en ligne</b> : chacun lance un scrutin quand une question se pose, y vote à son rythme, en discute dans la zone de commentaires et en lit les résultats.",
+        "<b>Partager idées et informations</b> : la boîte à idées accueille aussi bien une proposition (« et si on organisait un tournoi ? ») qu'une information utile à tous. Chacun soutient et commente celles des autres.",
+        "<b>Aucun filtre à l'entrée</b> : n'importe quel membre décisionnaire propose ce qu'il veut — une idée, une information, une votation. Rien ne passe par le bureau au préalable.",
         "Prévenu par notification à chaque nouveau vote et à chaque commentaire déposé sous un vote.",
         "Pass Ludovore (Ludum.fr) offert pendant un an — valeur 29,99 €.",
         "Dispensé de caution lors d'une location de jeu.",
@@ -4748,6 +5082,12 @@ function GuidePage() {
               <li><b>Membre non décisionnaire</b> : l'onglet n'existe pas. Il ne voit ni les idées, ni les votes, ni les commentaires qui s'y échangent — c'est verrouillé côté serveur, pas seulement masqué à l'écran.</li>
               <li><b>Membre décisionnaire</b> : il ouvre l'onglet, propose et soutient des idées, lance des votes, y vote, en discute dans la zone de commentaires, et reçoit une notification à chaque nouveau vote comme à chaque nouveau commentaire.</li>
             </ul>
+            <p style={{ margin: "0 0 8px" }}><b>À quoi sert concrètement cet onglet ?</b> À faire vivre l'association <b>entre deux assemblées générales</b>, sans attendre d'être tous réunis. Trois usages, tous ouverts à chaque décisionnaire sans passer par le bureau :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Voter en ligne</b> — lancer un scrutin dès qu'une question se pose, y voter à son rythme, en débattre dans la zone de commentaires, en lire les résultats.</li>
+              <li><b>Partager une idée</b> — « et si on organisait un tournoi ? ». Les autres la soutiennent et la commentent.</li>
+              <li><b>Partager une information</b> — la boîte à idées accueille aussi ce qui est simplement utile à tous.</li>
+            </ul>
             <p style={{ margin: 0 }}>S'y ajoutent les avantages hors site : <b>voix délibérative en assemblée générale</b>, <b>pass Ludovore</b> offert un an (valeur 29,99 €) et <b>dispense de caution</b> lors d'une location. Si le statut expire, l'onglet disparaît simplement : rien n'est perdu, tout revient au renouvellement.</p>
           </>,
         },
@@ -4881,6 +5221,16 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Les deux classements de la ludothèque : « de l'asso » et « du moment »",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>La colonne de droite de la <b>Ludothèque</b> porte désormais <b>deux</b> classements, l'un sous l'autre.</p>
+            <p style={{ margin: "0 0 8px" }}><b style={{ color: C.amber }}>🏆 Top 20 de l'asso</b> — le palmarès de fond. Tous les jeux partagés y concourent, à condition d'avoir réuni <b>au moins 4 votes</b> : ce seuil évite qu'un ou deux avis isolés propulsent un jeu en tête. Classement par note moyenne, départagé par le nombre de votants.</p>
+            <p style={{ margin: "0 0 8px" }}><b style={{ color: C.purple }}>✨ Top 20 du moment</b> — l'actualité de l'association. Deux conditions <b>cumulées</b> : le jeu est <b>paru cette année ou l'an dernier</b>, et il est <b>entré dans la ludothèque du site depuis moins de {MOMENT_MONTHS} mois</b>. Une vieille boîte ressortie d'un placard n'y figure donc pas, et une nouveauté ajoutée il y a un an non plus.</p>
+            <p style={{ margin: "0 0 8px" }}>Ce second classement sert d'abord les jeux à <b>4 votes et plus</b>, comme le Top 20 de l'asso. S'il n'est pas plein, il se complète par les <b>mieux notés d'entre les autres nouveautés</b> — celles-ci portent alors la mention <b>« peu de votes »</b>, pour que la lecture reste honnête. Un jeu récent que personne n'a encore noté n'y apparaît pas.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : une fiche dont l'<b>année de sortie n'est pas renseignée</b> ne peut pas être datée — elle reste hors du Top du moment, mais concourt normalement au Top 20 de l'asso. Complétez l'année sur la fiche pour l'y faire entrer.</p>
+          </>,
+        },
+        {
           q: "Les mécaniques de jeu",
           a: <p style={{ margin: 0 }}>Chaque fiche porte des <b>mécaniques</b> (coopératif, jeu de plis, deck-building…) qui alimentent les filtres de la ludothèque et les recommandations. À la création d'une fiche, une liste de suggestions est proposée — et vous pouvez toujours saisir une mécanique personnalisée. Cette liste est entretenue par les administrateurs (depuis <b>Mon espace</b>) : ils peuvent ajouter, renommer, fusionner ou supprimer des mécaniques, et ces changements s'appliquent automatiquement à toutes les fiches — y compris les noms anglais issus des imports BoardGameGeek.</p>,
         },
@@ -4920,6 +5270,15 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}><b>Tout membre peut en ajouter</b> : ouvrez l'encadré, cliquez sur « Ajouter un point de règle », écrivez, validez. Les points s'affichent numérotés (1, 2, 3…) dans l'ordre où ils ont été écrits, avec le nom de leur auteur.</p>
             <p style={{ margin: "0 0 8px" }}>Chacun peut <b>modifier</b> (✏️) ou <b>supprimer</b> (🗑️) les points qu'il a écrits ; les administrateurs peuvent intervenir sur tous, pour corriger une coquille ou retirer un doublon.</p>
             <p style={{ margin: 0 }}>Et surtout : les points de règle sont aussi accessibles <b>depuis le chronomètre</b>, via le bouton 📖 en haut de l'écran — c'est justement en pleine partie que la question se pose. Consultation, ajout, correction et suppression y fonctionnent à l'identique, sans quitter la partie en cours.</p>
+          </>,
+        },
+        {
+          q: "Les phrases de score : le barème de fin de partie",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Beaucoup de jeux — les coopératifs en tête — se terminent par un petit barème imprimé dans la règle : « 7 à 8 : pas mal », « 9 et plus : bravo ». Sur chaque fiche de jeu, sous les points de règle, un encadré <b style={{ color: C.purple }}>🏁 Phrases de score</b> permet de le recopier <b>une fois pour toutes</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Une phrase se compose d'une <b>tranche de score</b> et d'un <b>texte</b>. Les deux bornes sont facultatives et <b>inclusives</b> : « minimum 9, maximum vide » signifie <b>9 et plus</b> ; « minimum vide, maximum 3 » signifie <b>jusqu'à 3</b> ; « minimum 7, maximum 7 » vise <b>exactement 7</b>. Si deux tranches conviennent au même score, c'est <b>la plus étroite</b> qui s'affiche.</p>
+            <p style={{ margin: "0 0 8px" }}>Comme pour les points de règle, <b>tout membre peut en ajouter</b>, et chacun modifie ou supprime les siennes ; les administrateurs peuvent intervenir sur toutes.</p>
+            <p style={{ margin: 0 }}>À quoi ça sert ? À la fin d'une partie — au chronomètre comme dans « Enregistrer une partie jouée » — la phrase correspondant au score obtenu <b>s'affiche automatiquement</b>, dans un cadre vert avec un feu d'artifice en cas de victoire, dans un cadre rouge en cas de défaite.</p>
           </>,
         },
         {
@@ -4965,7 +5324,18 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>À la fin de la partie, si des points ont été saisis, le chrono demande <b>quel score l'emporte</b> : « le plus grand » ou « le plus petit ». Le <b>vainqueur est alors déduit automatiquement</b> — et vous pouvez toujours le corriger à la main, par exemple en cas d'égalité départagée autrement.</p>
             <p style={{ margin: "0 0 8px" }}>Ce réglage est <b>mémorisé sur la fiche du jeu</b> : la prochaine partie le retrouvera déjà pré-sélectionné. Le modifier depuis le chrono met la fiche à jour, et inversement — vous pouvez aussi le définir directement à la <b>création ou la modification d'une fiche de jeu</b> (« Sens du score »), y compris « Non applicable » pour un jeu coopératif.</p>
             <p style={{ margin: "0 0 8px" }}>Les scores sont <b>conservés</b>, y compris pour les parties enchaînées avec « Nouvelle partie ». On les retrouve ensuite en cliquant sur une partie : dans <b>Mon espace → Mes parties</b>, et sur la fiche du jeu via « Voir le détail des parties ». Le classement s'affiche avec le nom de chaque joueur, ses points et le trophée du vainqueur.</p>
+            <p style={{ margin: "0 0 8px" }}>Pour un jeu déclaré <b>coopératif</b>, tout ceci est remplacé par un <b>score unique de table</b> et un résultat commun — voir « Les parties coopératives ».</p>
             <p style={{ margin: 0 }}>Vous pouvez aussi noter les points d'une partie <b>jouée sans le chrono</b> : dans <b>« Enregistrer une partie jouée »</b>, une case «&nbsp;pts&nbsp;» est proposée à côté de chaque joueur. Elle est <b>facultative</b> — laissez-la vide si vous n'avez pas les scores. Dès qu'un point est saisi, le même choix «&nbsp;le plus grand / le plus petit&nbsp;» apparaît, le vainqueur se coche tout seul et le réglage est mémorisé sur la fiche du jeu.</p>
+          </>,
+        },
+        {
+          q: "Les parties coopératives : un score, un sort commun",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Un jeu peut être déclaré <b style={{ color: C.purple }}>🤝 coopératif</b> à la création de sa fiche ou dans « Modifier le jeu ». Deux réglages seulement : la case <b>Jeu coopératif</b>, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Le sens de lecture réutilise le réglage existant « quel score l'emporte » : <b>le plus grand</b> signifie « on gagne à partir du seuil », <b>le plus petit</b> signifie « on gagne en dessous ». Laissez le seuil vide si le jeu n'en a pas de chiffré : vous déclarerez alors la victoire à la main.</p>
+            <p style={{ margin: "0 0 8px" }}>Une fois le jeu marqué coopératif, <b>le chronomètre et « Enregistrer une partie jouée » s'adaptent tout seuls</b> : plus de score ni de trophée joueur par joueur, mais <b>un seul score pour la table</b> et un seul résultat — <b>Gagné</b>, <b>Perdu</b> ou <b>Je ne sais pas</b>. Le résultat se déduit du score et du seuil, et reste corrigeable d'un clic. Tous les joueurs sont enregistrés avec le même score, et tous vainqueurs (ou aucun).</p>
+            <p style={{ margin: "0 0 8px" }}>Le verdict s'affiche aussitôt : <b>cadre vert et feu d'artifice</b> pour une victoire, <b>cadre rouge</b> pour une défaite, avec la <b>phrase du barème</b> correspondant au score s'il en existe une (voir « Les phrases de score »).</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : ce que vous renseignez à table (seuil, sens du score) est <b>mémorisé sur la fiche du jeu</b> — la partie suivante le retrouvera pré-rempli. La case coopérative peut aussi être cochée ou décochée <b>pour une seule partie</b> depuis la fenêtre d'enregistrement, sans toucher à la fiche… tant que vous ne modifiez pas le seuil.</p>
           </>,
         },
         {
@@ -5239,7 +5609,7 @@ function GuidePage() {
               <li><b style={{ color: C.teal }}>✓ Jeu disponible</b> dès que la date est passée, ou si la case <b>« déjà sorti »</b> est cochée — pratique quand on ne connaît pas la date exacte.</li>
               <li><b style={{ color: C.purple }}>🌐 Sorti en VO</b> pour un jeu disponible à l'étranger mais pas encore traduit, tant qu'aucune date française n'est annoncée.</li>
             </ul>
-            <p style={{ margin: "0 0 8px" }}>Le <b>classement par défaut</b> suit cette logique : d'abord les sorties à venir (la plus proche en tête), puis les jeux déjà disponibles, puis les VO. La <b>hype</b> reste accessible dans le menu de tri, aux côtés d'un classement par <b>intention d'achat</b> : chaque réponse vaut des points — précommandé 8, à la sortie 6, certainement 4, en promotion 3, pour compléter une commande 2, peu probable 1, jamais 0 — et <b>chaque membre qui possède déjà le jeu vaut 10 points</b>. Les fiches les plus convoitées remontent ainsi d'elles-mêmes.</p>
+            <p style={{ margin: "0 0 8px" }}>Le <b>classement par défaut</b> suit cette logique : d'abord les sorties à venir (la plus proche en tête), puis les jeux déjà disponibles, puis les VO. <b>Nouveau :</b> une fois le jeu sorti — en VF comme en VO — la date n'apprend plus rien ; ces deux groupes sont donc classés par <b>hype moyenne décroissante</b> (départagée par le nombre de votants, puis par ordre alphabétique), et non plus par ordre alphabétique. Ce que l'association attend le plus remonte ainsi de lui-même en tête de chaque groupe. La <b>hype</b> reste accessible dans le menu de tri, aux côtés d'un classement par <b>intention d'achat</b> : chaque réponse vaut des points — précommandé 8, à la sortie 6, certainement 4, en promotion 3, pour compléter une commande 2, peu probable 1, jamais 0 — et <b>chaque membre qui possède déjà le jeu vaut 10 points</b>. Les fiches les plus convoitées remontent ainsi d'elles-mêmes.</p>
             <p style={{ margin: 0 }}>Enfin, deux encarts se repèrent d'un coup d'œil : <b style={{ color: C.teal }}>📦 déjà dans leur ludothèque</b> (lu directement dans la ludothèque de l'association : rien à déclarer, le bouton « Je l'ai ! » suffit — et vous savez à qui l'emprunter) et <b style={{ color: "#8a6a1f" }}>🎯 intéressés par l'achat</b> (tous sauf « peu probable » et « jamais »), de quoi grouper une commande. Les compteurs figurent aussi sur les vignettes.</p>
           </>,
         },
@@ -6009,7 +6379,7 @@ function HomePage({ setPage, onAuth }) {
         </div>
 
         {/* Les 2 vraies différences */}
-        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 18, textAlign: "center", margin: "0 0 18px" }}>Les deux seules différences entre les formules</h3>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 18, textAlign: "center", margin: "0 0 18px" }}>Les différences entre les deux formules</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginBottom: 24 }}>
           {/* Décisionnaire */}
           <div style={{ background: "#fff", borderRadius: 20, padding: "26px 26px 22px", border: `2px solid ${C.amber}`, position: "relative" }}>
@@ -6022,6 +6392,16 @@ function HomePage({ setPage, onAuth }) {
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Award size={15} color={C.amber} /></span>
                 <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}><b style={{ color: C.navy }}>Voix délibérative</b> en assemblée générale — vous participez aux décisions de l'association.</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Crown size={15} color={C.amber} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>
+                  <b style={{ color: C.navy }}>L'espace décisionnaire</b>, un onglet du site réservé : on y fait vivre l'association <b>entre deux AG</b>.
+                  <span style={{ display: "block", marginTop: 4, fontSize: 13.5, color: "#6e6256" }}>
+                    <b>Votes en ligne</b> — lancer un scrutin, y voter, en débattre, en lire les résultats.
+                    {" "}<b>Idées et informations</b> — chacun propose <i>ce qu'il veut</i>, soutient et commente celles des autres. Rien ne passe par le bureau au préalable.
+                  </span>
+                </span>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(232,163,23,.18)", display: "grid", placeItems: "center" }}><Check size={15} color={C.amber} /></span>
@@ -6045,6 +6425,10 @@ function HomePage({ setPage, onAuth }) {
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
                 <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>Pas de voix délibérative en AG (présence possible à titre consultatif).</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
+                <span style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.5 }}>Pas d'espace décisionnaire : ni idées, ni informations partagées, ni votes en ligne. Tout le reste du site est identique.</span>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, background: "rgba(30,138,138,.15)", display: "grid", placeItems: "center" }}><Info size={15} color={C.teal} /></span>
@@ -9468,6 +9852,8 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [showScale, setShowScale] = useState(false); // rappel de l'echelle de notation ALADJ
   const [showRules, setShowRules] = useState(false); // points de regle du jeu
   const [ruleCount, setRuleCount] = useState(null);  // null = pas encore compte
+  const [showPhrases, setShowPhrases] = useState(false); // (lot V) phrases de score
+  const [phraseCount, setPhraseCount] = useState(null);
   const [showSessions, setShowSessions] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [sessions, setSessions] = useState(null);
@@ -9556,6 +9942,17 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
     return () => { go = false; };
   }, [g.id, currentUser]);
 
+  // (lot V) Idem pour les phrases de score, comptees sans charger la liste.
+  useEffect(() => {
+    if (!currentUser) { setPhraseCount(null); return undefined; }
+    let go = true;
+    (async () => {
+      const { count } = await supabase.from("game_score_phrases").select("id", { count: "exact", head: true }).eq("game_id", g.id);
+      if (go) setPhraseCount(count || 0);
+    })();
+    return () => { go = false; };
+  }, [g.id, currentUser]);
+
   // Durée moyenne ventilée par nombre de joueurs (calculée à partir des parties).
   const byCount = useMemo(() => {
     if (!sessions || !sessions.length) return [];
@@ -9587,6 +9984,11 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         {g.time && <Badge color={C.amber}><Clock size={12} /> {g.time} min</Badge>}
         {g.source && g.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {g.source}</Badge>}
         {(g.playCount || 0) > 0 && <Badge color="#6e6256">🎲 joué {g.playCount} fois</Badge>}
+        {g.isCoop && (
+          <Badge color={C.purple}>
+            🤝 Coopératif{coopTargetOf(g) != null ? ` · on gagne ${scoreDirOf(g) === "low" ? "en dessous de" : "à partir de"} ${String(coopTargetOf(g)).replace(".", ",")}` : ""}
+          </Badge>
+        )}
       </div>
 
       <a href={ludumLink(g.name, g.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
@@ -9616,6 +10018,26 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             <span style={{ flexShrink: 0, background: C.teal, color: "#fff", borderRadius: 999, padding: "2px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{ruleCount}</span>
           )}
           <ChevronRight size={17} color={C.teal} style={{ flexShrink: 0 }} />
+        </button>
+      )}
+
+      {/* (lot V) Phrases de score : le bareme de fin de partie, recopie du livret */}
+      {currentUser && (
+        <button type="button" onClick={() => setShowPhrases(true)} title="Voir et compléter le barème de fin de partie"
+          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "12px 16px", marginBottom: 18, cursor: "pointer", textAlign: "left", font: "inherit" }}
+          onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(107,58,122,.13)"; }}
+          onMouseLeave={(ev) => { ev.currentTarget.style.background = "rgba(107,58,122,.07)"; }}>
+          <Trophy size={21} color={C.purple} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>Phrases de score</span>
+            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
+              {phraseCount === null ? "…" : phraseCount === 0 ? "Aucune pour l'instant — recopiez le barème de la règle" : `${phraseCount} phrase${phraseCount > 1 ? "s" : ""} affichée${phraseCount > 1 ? "s" : ""} en fin de partie`}
+            </span>
+          </span>
+          {phraseCount > 0 && (
+            <span style={{ flexShrink: 0, background: C.purple, color: "#fff", borderRadius: 999, padding: "2px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{phraseCount}</span>
+          )}
+          <ChevronRight size={17} color={C.purple} style={{ flexShrink: 0 }} />
         </button>
       )}
 
@@ -9963,6 +10385,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       {showVoters && <VotersModal g={g} onClose={() => setShowVoters(false)} />}
       {showScale && <RatingScaleModal onClose={() => setShowScale(false)} />}
       {showRules && <GameRulesModal gameId={g.id} gameName={g.name} onClose={() => setShowRules(false)} onCount={setRuleCount} />}
+      {showPhrases && <GameScorePhrasesModal gameId={g.id} gameName={g.name} onClose={() => setShowPhrases(false)} onCount={setPhraseCount} />}
       {showSessions && <SessionsModal sessions={sessions} gameName={g.name} game={g} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
@@ -10749,12 +11172,30 @@ function formatReleaseDate(d) {
 /* Ordre d'affichage par defaut : ce qui arrive d'abord (du plus proche au plus
    lointain), puis ce qui est disponible, puis les VO, puis le reste. */
 const RELEASE_RANK = { soon: 0, available: 1, vo: 2, unknown: 3 };
+/* (lot V) Hype moyenne d'une fiche, et nombre de votants. Definis ici, au-dessus
+   de leur premier emploi, pour rester lisibles depuis compareByRelease. */
+const hypeAvgOf = (u) => {
+  const vals = Object.values(u.hypes || {});
+  return vals.length ? vals.reduce((a, b) => a + (Number(b) || 0), 0) / vals.length : 0;
+};
+const hypeCountOf = (u) => Object.keys(u.hypes || {}).length;
+
 function compareByRelease(a, b) {
   const ra = releaseState(a), rb = releaseState(b);
   const dr = RELEASE_RANK[ra.kind] - RELEASE_RANK[rb.kind];
   if (dr !== 0) return dr;
   if (ra.kind === "soon") return ra.days - rb.days;                       // le plus proche d'abord
-  if (ra.kind === "available" && ra.date && rb.date) return rb.date - ra.date; // le plus recemment sorti
+  // (lot V) Une fois le jeu sorti (VF ou VO), la date n'apprend plus rien : ce
+  // qu'on veut voir en tete, c'est ce que l'association attend le plus. On
+  // classe donc par hype moyenne decroissante, puis par nombre de votants
+  // (une moyenne portee par cinq membres pese plus qu'un vote isole), et
+  // seulement ensuite par ordre alphabetique.
+  if (ra.kind === "available" || ra.kind === "vo") {
+    const dh = hypeAvgOf(b) - hypeAvgOf(a);
+    if (dh !== 0) return dh;
+    const dc = hypeCountOf(b) - hypeCountOf(a);
+    if (dc !== 0) return dc;
+  }
   return a.name.localeCompare(b.name, "fr");
 }
 
@@ -11834,7 +12275,7 @@ function LocationsPage({ setToast }) {
 
 function EditGameModal({ g, onClose, onSave }) {
   const { currentUser, toggleGameShared } = useApp();
-  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "", scoreDirection: g.scoreDirection || "" });
+  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "", scoreDirection: g.scoreDirection || "", isCoop: g.isCoop === true, coopTarget: g.coopTarget == null ? "" : String(g.coopTarget) });
   const [shared, setShared] = useState(g.shared !== false);
   const isOwner = currentUser && currentUser.id === g.ownerId;
   const previewRental = rentalPrice(Number(f.newPrice));
@@ -11852,6 +12293,13 @@ function EditGameModal({ g, onClose, onSave }) {
       </Field>
       <Field label="Mécaniques (séparées par des virgules)"><TextInput value={f.mechanics} onChange={(e) => setF({ ...f, mechanics: e.target.value })} /></Field>
       <ScoreDirectionField value={f.scoreDirection} onChange={(v) => setF({ ...f, scoreDirection: v })} />
+      <CoopFields isCoop={f.isCoop} target={f.coopTarget} direction={f.scoreDirection}
+        onChange={(p) => setF((cur) => ({
+          ...cur,
+          ...(p.isCoop !== undefined ? { isCoop: p.isCoop, scoreDirection: p.isCoop && !cur.scoreDirection ? "high" : cur.scoreDirection } : {}),
+          ...(p.target !== undefined ? { coopTarget: p.target } : {}),
+          ...(p.direction !== undefined ? { scoreDirection: p.direction } : {}),
+        }))} />
       <Field label="Image" hint="Adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
       <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
@@ -11878,6 +12326,34 @@ function EditGameModal({ g, onClose, onSave }) {
    PAGE — LUDOTHÈQUE GÉNÉRALE
    ============================================================================= */
 // classement avec départage : note moyenne desc, puis nb votants desc, puis alpha
+/* (lot V) Fenetre du « Top 20 des jeux du moment » : un jeu y figure s'il est
+   entre dans la ludotheque du site depuis moins de MOMENT_MONTHS mois. */
+const MOMENT_MONTHS = 4;
+
+/* (lot V) Selection du « Top 20 des jeux du moment ».
+   Deux conditions cumulees :
+     - le jeu est ENTRE sur le site depuis moins de MOMENT_MONTHS mois ;
+     - le jeu EST lui-meme recent : paru l'annee en cours ou la precedente.
+   Sans la seconde, une vieille boite ressortie d'un placard remonterait dans
+   « le moment ». Une fiche sans annee ne peut pas etre datee : elle reste hors
+   de ce classement (elle demeure eligible au Top 20 de l'asso).
+   Les jeux a 4 votes et plus sont servis d'abord ; la liste se complete ensuite
+   par les mieux notes d'entre les autres, marques _thin pour l'affichage. */
+function momentTopGames(games, now = Date.now(), limit = 20) {
+  const since = new Date(now);
+  since.setMonth(since.getMonth() - MOMENT_MONTHS);
+  const floor = since.getTime();
+  const thisYear = new Date(now).getFullYear();
+  const recentEnough = (g) => {
+    const y = Number(g.year);
+    return Number.isFinite(y) && y >= thisYear - 1 && y <= thisYear;
+  };
+  const ranked = rankGames((games || []).filter((g) => (g.addedAt || 0) >= floor && recentEnough(g)));
+  const solid = ranked.filter((g) => g._count >= 4);
+  const thin = ranked.filter((g) => g._count > 0 && g._count < 4);
+  return [...solid, ...thin].slice(0, limit).map((g) => ({ ...g, _thin: g._count < 4 }));
+}
+
 function rankGames(games, restrictUserIds = null, preferLessPlayed = false) {
   return [...games].map((g) => {
     let ratings = g.ratings || {};
@@ -12018,6 +12494,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   // Top 20 : un jeu doit avoir au moins 4 votes pour entrer dans le classement
   // (évite que quelques avis isolés propulsent un jeu en tête).
   const top = useMemo(() => rankGames(communGames).filter((g) => g._count >= 4).slice(0, 20), [communGames]);
+
+  // (lot V) Top 20 des jeux du moment : les jeux entrés dans la ludothèque au
+  // cours des MOMENT_MONTHS derniers mois. On sert d'abord ceux qui ont au
+  // moins 4 votes (le même seuil que le Top 20 de l'asso), puis, si la liste
+  // n'est pas pleine, on la complète par les mieux notés d'entre les autres —
+  // repérés par une pastille « peu de votes » pour que la lecture reste honnête.
+  const momentTop = useMemo(() => momentTopGames(communGames), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
   return (
@@ -12186,6 +12669,40 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* (lot V) TOP 20 DES JEUX DU MOMENT — les arrivées récentes */}
+          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <Sparkles size={20} color={C.purple} />
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Top 20 du moment</h3>
+            </div>
+            <p style={{ fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, margin: "0 0 14px" }}>
+              Les jeux <b>parus en {new Date().getFullYear() - 1} ou {new Date().getFullYear()}</b> et entrés dans la ludothèque depuis moins de {MOMENT_MONTHS} mois. Ceux qui réunissent au moins 4 votes d'abord ; la liste se complète ensuite par les mieux notés d'entre les nouveaux venus.
+            </p>
+            {momentTop.length === 0 && (
+              <p style={{ color: "#a89a86", fontSize: 13.5, lineHeight: 1.5, margin: 0 }}>
+                Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
+              </p>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
+              {momentTop.map((g, i) => (
+                <button key={g.id} onClick={() => setSelected(g.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 17 : 14.5, color: i < 3 ? C.purple : "#a89a86", width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                    <span style={{ fontSize: 11.5, color: "#9c8d79" }}>
+                      {g._count} vote{g._count > 1 ? "s" : ""}
+                      {g._thin && <span style={{ color: C.purple, fontWeight: 700 }}> · peu de votes</span>}
+                    </span>
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
+                    <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         </aside>
@@ -12976,7 +13493,7 @@ const backLinkStyle = { background: "none", border: "none", color: C.teal, fontF
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
   const { games, upcoming, users, currentUser, addOwner } = useApp();
-  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "", scoreDirection: "" });
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "", scoreDirection: "", isCoop: false, coopTarget: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const [busy, setBusy] = useState(false); // anti double-clic : verrouille le bouton pendant la création
@@ -13104,6 +13621,13 @@ function ManualForm({ onBack, onDone, prefillName = "" }) {
         </div>
       </Field>
       <ScoreDirectionField value={f.scoreDirection} onChange={(v) => setF({ ...f, scoreDirection: v })} />
+      <CoopFields isCoop={f.isCoop} target={f.coopTarget} direction={f.scoreDirection}
+        onChange={(p) => setF((cur) => ({
+          ...cur,
+          ...(p.isCoop !== undefined ? { isCoop: p.isCoop, scoreDirection: p.isCoop && !cur.scoreDirection ? "high" : cur.scoreDirection } : {}),
+          ...(p.target !== undefined ? { coopTarget: p.target } : {}),
+          ...(p.direction !== undefined ? { scoreDirection: p.direction } : {}),
+        }))} />
       <Field label="Image" hint="Facultatif — adresse web ou import depuis votre appareil"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <Field label="Présentation & mécaniques"><textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} placeholder="Décrivez le jeu, son thème, ses mécaniques..." style={{ ...inputStyle, resize: "vertical" }} /></Field>
       <Field label="Lien Ludum (facultatif)" hint="Collez l'adresse de la fiche du jeu sur Ludum. Laissez vide : un bouton de recherche par nom sera proposé automatiquement.">
@@ -13739,6 +14263,7 @@ const BACKUP_TABLES = [
   ["game_discoveries", [["game_id", "user_id"]]],
   ["game_comments", [["created_at", "id"]]],
   ["game_rules", [["created_at", "id"]]],
+  ["game_score_phrases", [["min_score", "id"], ["created_at", "id"]]],   // (lot V) bareme de fin de partie
   ["loans", [["id"], ["created_at"]]],
   ["mechanic_suggestions", [["id"], ["name"]]],
   // Moments jeux
@@ -14302,7 +14827,7 @@ function MembershipModal({ onClose, setToast }) {
   return (
     <Modal open onClose={onClose} title="👑 Cotisation — membre décisionnaire" width={540}>
       <p style={{ fontSize: 14, color: "#5e5346", lineHeight: 1.6, margin: "0 0 6px" }}>
-        La cotisation de <b>{COTISATION_EUR} €</b> vous donne le statut de <b>membre décisionnaire</b> pour <b>365 jours</b> : voix délibérative en assemblée générale, pass Ludovore (Ludum.fr) offert pendant un an <b style={{ color: C.amber }}>(valeur 29,99 €)</b>, et les fonctionnalités du site qui y seront réservées.
+        La cotisation de <b>{COTISATION_EUR} €</b> vous donne le statut de <b>membre décisionnaire</b> pour <b>365 jours</b> : voix délibérative en assemblée générale, accès à l'<b>espace décisionnaire</b> du site — votes en ligne, idées et informations que <b>chacun</b> peut proposer librement — et pass Ludovore (Ludum.fr) offert pendant un an <b style={{ color: C.amber }}>(valeur 29,99 €)</b>.
       </p>
       {daysLeft > 0 && (
         <p style={{ fontSize: 13.5, color: C.teal, fontWeight: 700, margin: "0 0 6px" }}>
@@ -14415,7 +14940,7 @@ function MembershipBanner({ setToast }) {
       <span style={{ fontSize: 24 }}>👑</span>
       <div style={{ flex: 1, minWidth: 220 }}>
         <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>Devenir membre décisionnaire</div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Cotisation {COTISATION_EUR} €/an — voix en AG, pass Ludovore offert (valeur 29,99 €), et plus encore.</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,.9)" }}>Cotisation {COTISATION_EUR} €/an — voix en AG, espace décisionnaire (idées et votes en ligne), pass Ludovore offert (valeur 29,99 €).</div>
       </div>
       <Btn variant="ghost" onClick={() => setOpen(true)} style={{ background: "#fff" }}>Adhérer</Btn>
     </>;
@@ -15397,6 +15922,14 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const [scorePadFor, setScorePadFor] = useState(null); // joueur dont on saisit le score
   // Mode equipe : le score saisi pour un joueur vaut pour tous ses coequipiers.
   const [teamsOn, setTeamsOn] = useState(false);
+  // (lot V) Mode cooperatif : un seul score pour toute la table, et une victoire
+  // ou une defaite commune. Pre-coche d'apres la fiche du jeu choisi.
+  const [coopOn, setCoopOn] = useState(false);
+  const [coopScore, setCoopScore] = useState("");
+  const [coopWon, setCoopWon] = useState(null);      // true | false | null (non tranche)
+  const [coopTouched, setCoopTouched] = useState(false); // verdict force a la main
+  const [coopTarget, setCoopTarget] = useState("");  // seuil de victoire, modifiable ici
+  const [phrases, setPhrases] = useState([]);        // bareme de fin de partie du jeu
   // Ecran affiche apres l'enregistrement : { gameName, count } -- il permet
   // d'enchainer sans tout ressaisir. `count` compte les parties de la serie.
   const [justSaved, setJustSaved] = useState(null);
@@ -15409,6 +15942,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
     if (open && !wasOpenRef.current) {
       setGameId(defaultGameId || ""); setGuestName(""); setDate(new Date().toISOString().slice(0, 10)); setGameSearch(""); setGameListOpen(false);
       setWinnersTouched(false); setScorePadFor(null); setTeamsOn(false); setJustSaved(null);
+      setCoopOn(false); setCoopScore(""); setCoopWon(null); setCoopTouched(false); setCoopTarget("");
       // L'auteur est pré-ajouté aux participants (retirable d'une croix s'il note la partie pour d'autres).
       setParts(currentUser ? [{ key: currentUser.id, userId: currentUser.id, guestName: null, name: currentUser.name, isWinner: false, score: "" }] : []);
     }
@@ -15464,7 +15998,23 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   useEffect(() => {
     setScoreDir(selectedGame?.scoreDirection === "low" ? "low" : "high");
     setWinnersTouched(false);
-  }, [selectedGame?.id, selectedGame?.scoreDirection]); // eslint-disable-line
+    // (lot V) Les reglages cooperatifs suivent eux aussi la fiche du jeu.
+    setCoopOn(selectedGame?.isCoop === true);
+    setCoopTarget(selectedGame && selectedGame.coopTarget != null ? String(selectedGame.coopTarget) : "");
+    setCoopScore(""); setCoopWon(null); setCoopTouched(false);
+  }, [selectedGame?.id, selectedGame?.scoreDirection, selectedGame?.isCoop, selectedGame?.coopTarget]); // eslint-disable-line
+
+  // (lot V) Bareme de fin de partie, charge a la demande pour le seul jeu choisi.
+  useEffect(() => {
+    let go = true;
+    if (!gameId) { setPhrases([]); return undefined; }
+    (async () => {
+      const { data } = await supabase.from("game_score_phrases")
+        .select("id,min_score,max_score,content").eq("game_id", gameId);
+      if (go) setPhrases(data || []);
+    })();
+    return () => { go = false; };
+  }, [gameId]);
 
   const hasScore = (p) => String(p.score ?? "").trim() !== "" && Number.isFinite(Number(p.score));
   const anyScore = parts.some(hasScore);
@@ -15489,23 +16039,63 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
 
   const changeScoreDir = (d) => { setScoreDir(d); setWinnersTouched(false); };
 
+  // (lot V) Verdict deduit du score et du seuil, tant qu'on ne l'a pas force.
+  const coopRef = useMemo(
+    () => ({ coopTarget: coopTarget === "" ? null : Number(coopTarget), scoreDirection: scoreDir }),
+    [coopTarget, scoreDir]
+  );
+  const coopAuto = coopWinFromScore(coopRef, coopScore);
+  useEffect(() => {
+    if (!coopOn || coopTouched) return;
+    setCoopWon(coopAuto);
+  }, [coopAuto, coopOn, coopTouched]);
+  const coopPhrase = useMemo(() => phraseForScore(phrases, coopScore), [phrases, coopScore]);
+  const setCoopVerdict = (v) => { setCoopTouched(true); setCoopWon(v); };
+
   const save = async () => {
     if (!gameId) return setToast("Choisissez un jeu.");
     if (!parts.length) return setToast("Ajoutez au moins un joueur.");
     setBusy(true);
     // Le sens du score est mémorisé sur la fiche du jeu, comme depuis le chrono.
-    const dirChanged = anyScore && selectedGame && (selectedGame.scoreDirection || null) !== scoreDir;
+    const dirChanged = anyScore && !coopOn && selectedGame && (selectedGame.scoreDirection || null) !== scoreDir;
     if (dirChanged) {
       try { await supabase.rpc("set_game_score_direction", { p_game_id: gameId, p_direction: scoreDir }); } catch (e) { /* non bloquant */ }
     }
-    const res = await recordManualPlay(gameId, new Date(date + "T12:00:00").toISOString(), parts);
-    if (dirChanged) await reload();
+    // (lot V) Les réglages coopératifs se mémorisent eux aussi sur la fiche :
+    // ce qu'on renseigne une fois à table n'est plus à ressaisir ensuite.
+    const savedTarget = selectedGame && selectedGame.coopTarget != null ? String(selectedGame.coopTarget) : "";
+    const coopChanged = coopOn && selectedGame && (
+      selectedGame.isCoop !== true
+      || savedTarget !== String(coopTarget || "")
+      || (selectedGame.scoreDirection || null) !== scoreDir
+    );
+    if (coopChanged) {
+      try {
+        await supabase.rpc("aladj_set_game_coop", {
+          p_game_id: gameId, p_is_coop: true,
+          p_target: coopTarget === "" ? null : Number(coopTarget),
+          p_direction: scoreDir,
+        });
+      } catch (e) { /* non bloquant : l'enregistrement de la partie prime */ }
+    }
+    // En coopératif, tout le monde marque le même score et partage le sort commun.
+    const payload = coopOn
+      ? parts.map((p) => ({ ...p, score: coopScore, isWinner: coopWon === true }))
+      : parts;
+    const res = await recordManualPlay(gameId, new Date(date + "T12:00:00").toISOString(), payload);
+    if (dirChanged || coopChanged) await reload();
     setBusy(false);
     if (res?.error) return setToast(res.error);
     setToast("Partie enregistrée !");
     // On ne referme plus tout de suite : bien souvent une partie en appelle une
     // autre, et tout ressaisir (joueurs, équipes, jeu) était fastidieux.
-    setJustSaved({ gameName: selectedGame?.name || "cette partie", count: (justSaved?.count || 0) + 1 });
+    setJustSaved({
+      gameName: selectedGame?.name || "cette partie",
+      count: (justSaved?.count || 0) + 1,
+      coop: coopOn
+        ? { won: coopWon, score: coopScore, phrase: coopPhrase, target: coopTarget === "" ? null : Number(coopTarget), dir: scoreDir }
+        : null,
+    });
   };
 
   // Repartir pour une partie, avec les mêmes joueurs et les mêmes équipes.
@@ -15514,6 +16104,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
   const again = (keepGame) => {
     setParts((pr) => pr.map((p) => ({ ...p, isWinner: false, score: "" })));
     setWinnersTouched(false);
+    setCoopScore(""); setCoopWon(null); setCoopTouched(false);
     setScorePadFor(null);
     setJustSaved(null);
     if (!keepGame) { setGameId(""); setGameSearch(""); setGameListOpen(true); }
@@ -15531,12 +16122,20 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
             {justSaved.gameName} · c'est enregistré
           </div>
           <div style={{ fontSize: 13.5, color: "#8a7c6a", marginTop: 5, lineHeight: 1.55 }}>
-            {winners.length > 0
-              ? <>Bravo à <b style={{ color: C.amber }}>{winners.map((w) => w.name).join(", ")}</b>.</>
-              : "Aucun vainqueur déclaré — partie coopérative ou match nul."}
+            {justSaved.coop
+              ? <>Partie coopérative — {parts.length} joueur{parts.length > 1 ? "s" : ""} au même sort.</>
+              : winners.length > 0
+                ? <>Bravo à <b style={{ color: C.amber }}>{winners.map((w) => w.name).join(", ")}</b>.</>
+                : "Aucun vainqueur déclaré — partie coopérative ou match nul."}
             {justSaved.count > 1 && <span style={{ display: "block", marginTop: 3 }}>{justSaved.count} parties enregistrées d'affilée.</span>}
           </div>
         </div>
+
+        {/* (lot V) Le verdict coopératif, avec la phrase du barème du jeu. */}
+        {justSaved.coop && (
+          <CoopOutcomeBox won={justSaved.coop.won} score={justSaved.coop.score}
+            phrase={justSaved.coop.phrase} target={justSaved.coop.target} direction={justSaved.coop.dir} />
+        )}
 
         <div style={{ background: "rgba(30,138,138,.06)", border: `1px solid ${C.teal}33`, borderRadius: 14, padding: "13px 15px", marginBottom: 14 }}>
           <div style={{ fontSize: 13, color: "#6e6256", marginBottom: 11, lineHeight: 1.5 }}>
@@ -15606,8 +16205,91 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
           <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Date de la partie</span>
           <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
         </label>
+
+        {/* (lot V) Partie coopérative : un seul score, un seul sort. */}
+        {gameId && (
+          <div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 11, cursor: "pointer",
+              background: coopOn ? "rgba(107,58,122,.09)" : "rgba(26,58,92,.04)", border: `1.5px solid ${coopOn ? C.purple : "transparent"}` }}>
+              <input type="checkbox" checked={coopOn}
+                onChange={(ev) => { setCoopOn(ev.target.checked); if (ev.target.checked) setTeamsOn(false); }}
+                style={{ width: 17, height: 17, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>
+                🤝 Partie coopérative
+                <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", fontWeight: 400, lineHeight: 1.5, marginTop: 2 }}>
+                  Toute la table marque le <b>même score</b> et gagne ou perd <b>ensemble</b>.
+                </span>
+              </span>
+            </label>
+
+            {coopOn && (
+              <div style={{ marginTop: 9, background: "rgba(107,58,122,.06)", border: `1.5px solid ${C.purple}33`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>Score de la table</span>
+                    <input type="number" step="0.5" value={coopScore} onChange={(ev) => { setCoopScore(ev.target.value); setCoopTouched(false); }}
+                      placeholder="facultatif" style={fieldStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>
+                      {scoreDir === "low" ? "On gagne en dessous de" : "On gagne à partir de"}
+                    </span>
+                    <input type="number" step="0.5" value={coopTarget} onChange={(ev) => { setCoopTarget(ev.target.value); setCoopTouched(false); }}
+                      placeholder="ex. 9" style={fieldStyle} />
+                  </label>
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+                  {[{ v: "high", t: "Le plus grand", ico: TrendingUp }, { v: "low", t: "Le plus petit", ico: TrendingDown }].map((o) => {
+                    const on = scoreDir === o.v;
+                    const Ico = o.ico;
+                    return (
+                      <button key={o.v} type="button" onClick={() => { setScoreDir(o.v); setCoopTouched(false); }} style={{
+                        flex: "1 1 120px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "7px 10px", borderRadius: 9, cursor: "pointer",
+                        fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5,
+                        border: `2px solid ${on ? C.purple : "#e6dcc9"}`, background: on ? C.purple : "#fff", color: on ? "#fff" : "#8a7c6a",
+                      }}><Ico size={13} /> {o.t} l'emporte</button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13, margin: "12px 0 7px" }}>Résultat de la table</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[{ v: true, t: "🎉 Gagné" }, { v: false, t: "😖 Perdu" }, { v: null, t: "Je ne sais pas" }].map((o) => {
+                    const on = coopWon === o.v;
+                    const col = o.v === true ? "#2F8F4E" : o.v === false ? C.red : "#8a7c6a";
+                    return (
+                      <button key={String(o.v)} type="button" onClick={() => setCoopVerdict(o.v)} style={{
+                        flex: "1 1 100px", padding: "8px 10px", borderRadius: 10, cursor: "pointer",
+                        fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13,
+                        border: `2px solid ${on ? col : "#e6dcc9"}`, background: on ? col : "#fff", color: on ? "#fff" : "#8a7c6a",
+                      }}>{o.t}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12, color: "#8a7c6a", marginTop: 8, lineHeight: 1.45 }}>
+                  Le résultat se déduit du score et du seuil ; vous pouvez le corriger.{coopTouched ? " (choix manuel en cours)" : ""}
+                  {selectedGame && (selectedGame.isCoop !== true || (selectedGame.coopTarget == null ? "" : String(selectedGame.coopTarget)) !== String(coopTarget || "")) && <> Ces réglages seront enregistrés sur la fiche du jeu.</>}
+                </div>
+                {coopPhrase && (
+                  <div style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.purple}33`, borderRadius: 10, padding: "9px 12px", fontSize: 13.5, color: "#4e463b", lineHeight: 1.5 }}>
+                    <b style={{ color: C.purple }}>{phraseRangeLabel(coopPhrase)}</b> — {coopPhrase.content}
+                  </div>
+                )}
+                {!coopPhrase && phrases.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#a89a86", marginTop: 8, lineHeight: 1.45 }}>
+                    Aucune phrase de score n'est encore saisie pour ce jeu. Elles se recopient depuis la fiche du jeu, section « Phrases de score ».
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
-          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs <span style={{ fontWeight: 400, color: "#9c8d79" }}>— touche «&nbsp;pts&nbsp;» pour le pavé de score, sinon appuie sur 🏆</span></span>
+          <span style={{ fontWeight: 700, fontSize: 13.5, color: C.navy }}>Joueurs {coopOn
+            ? <span style={{ fontWeight: 400, color: "#9c8d79" }}>— tous au même score, tous au même sort</span>
+            : <span style={{ fontWeight: 400, color: "#9c8d79" }}>— touche «&nbsp;pts&nbsp;» pour le pavé de score, sinon appuie sur 🏆</span>}</span>
           {parts.length === 0 && <span style={{ fontSize: 13, color: "#9c8d79" }}>Aucun joueur pour l'instant.</span>}
           {parts.map((p) => (
             <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", background: p.isWinner ? "rgba(232,163,23,.12)" : "#FBF7EF", border: `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderLeft: teamsOn && p.team != null ? `5px solid ${TEAM_HEX[p.team % TEAM_HEX.length]}` : `1px solid ${p.isWinner ? C.amber : "#ece2d0"}`, borderRadius: 10, padding: "7px 10px" }}>
@@ -15629,21 +16311,25 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
                   ))}
                 </span>
               )}
-              <span style={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${hasScore(p) ? C.amber : "#e6dcc9"}`, background: hasScore(p) ? "#FDF4E0" : "#fff" }}>
-                <button type="button" onClick={() => setScorePadFor(p.key)} title={`Noter le score de ${p.name} (facultatif)`}
-                  style={{ border: "none", background: "transparent", padding: "6px 9px", minWidth: 44, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: hasScore(p) ? "#8a6a1f" : "#b6a78f" }}>
-                  {hasScore(p) ? Number(p.score) : "pts"}
-                </button>
-                {hasScore(p) && (
-                  <button type="button" onClick={() => setScore(p.key, "")} title="Effacer le score"
-                    style={{ border: "none", background: "transparent", padding: "0 6px 0 0", cursor: "pointer", color: "#b08a3a", display: "grid", placeItems: "center" }}><X size={12} /></button>
-                )}
-              </span>
-              <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, flexShrink: 0, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
+              {!coopOn && (
+                <span style={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${hasScore(p) ? C.amber : "#e6dcc9"}`, background: hasScore(p) ? "#FDF4E0" : "#fff" }}>
+                  <button type="button" onClick={() => setScorePadFor(p.key)} title={`Noter le score de ${p.name} (facultatif)`}
+                    style={{ border: "none", background: "transparent", padding: "6px 9px", minWidth: 44, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: hasScore(p) ? "#8a6a1f" : "#b6a78f" }}>
+                    {hasScore(p) ? Number(p.score) : "pts"}
+                  </button>
+                  {hasScore(p) && (
+                    <button type="button" onClick={() => setScore(p.key, "")} title="Effacer le score"
+                      style={{ border: "none", background: "transparent", padding: "0 6px 0 0", cursor: "pointer", color: "#b08a3a", display: "grid", placeItems: "center" }}><X size={12} /></button>
+                  )}
+                </span>
+              )}
+              {!coopOn && (
+                <button onClick={() => toggleWin(p.key)} title="Vainqueur" style={{ border: "none", background: p.isWinner ? C.amber : "#eee2cf", borderRadius: 8, width: 30, height: 30, flexShrink: 0, cursor: "pointer", fontSize: 15, opacity: p.isWinner ? 1 : 0.5 }}>🏆</button>
+              )}
               <button onClick={() => removeP(p.key)} title="Retirer" style={{ border: "none", background: "transparent", color: C.red, cursor: "pointer", display: "grid", placeItems: "center" }}><X size={16} /></button>
             </div>
           ))}
-          {anyScore && (
+          {anyScore && !coopOn && (
             <div style={{ background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}33`, borderRadius: 12, padding: "11px 13px" }}>
               <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Quel score l'emporte ?</div>
               <div style={{ display: "flex", gap: 8 }}>
@@ -15665,7 +16351,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
               </div>
             </div>
           )}
-          {parts.length > 1 && (
+          {!coopOn && parts.length > 1 && (
             <label style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 11, cursor: "pointer",
               background: teamsOn ? "rgba(30,138,138,.09)" : "rgba(26,58,92,.04)", border: `1.5px solid ${teamsOn ? C.teal : "transparent"}` }}>
               <input type="checkbox" checked={teamsOn} onChange={(ev) => { setTeamsOn(ev.target.checked); if (!ev.target.checked) setParts((pr) => pr.map((p) => ({ ...p, team: null }))); }}
@@ -16605,6 +17291,7 @@ function Shell() {
   const chronoCatalog = useMemo(() => (games || []).map((g) => ({
     id: g.id, name: g.name, play_time: g.time || null, image_url: g.img || null,
     score_direction: g.scoreDirection || null, playCount: g.playCount || 0,
+    is_coop: g.isCoop === true, coop_target: g.coopTarget == null ? null : g.coopTarget,
   })), [games]);
   // Retour du paiement en ligne : message + nettoyage de l'URL.
   useEffect(() => {
@@ -16737,6 +17424,14 @@ export default function App() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
         .aladj-spin { animation: spin 1s linear infinite; }
+        /* (lot V) Etincelles du feu d'artifice des victoires cooperatives. */
+        @keyframes aladjSpark {
+          0%   { opacity: 0; transform: translate(0,0) scale(.4); }
+          15%  { opacity: 1; }
+          100% { opacity: 0; transform: translate(var(--sx), var(--sy)) scale(.9); }
+        }
+        .aladj-spark { animation: aladjSpark 1.5s ease-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .aladj-spark { animation: none; opacity: .5; } }
         .aladj-bounce { animation: bounce 1s ease-in-out infinite; }
         .aladj-burger { display: none !important; }
         @media (max-width: 860px) {
