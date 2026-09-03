@@ -139,7 +139,7 @@ const SIGNAL_GROUPS = [
     desc: "Pour nos discussions informelles, papoter et partager entre membres.",
     url: "https://signal.group/#CjQKIOeZ5C6Pezkiq6idGK_KNZDTsLvRYQbQeO9kg3CNrilxEhCiajWWCRHgI-Fe19To7xOj" },
   { name: "Jeux en ligne", color: "#6B3A7A", icon: Globe,
-    desc: "Pour nos soirées jeux en ligne sur Board Game Arena.",
+    desc: "Pour nos moments jeux en ligne sur Board Game Arena.",
     url: "https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" },
 ];
 
@@ -6305,24 +6305,32 @@ function HomePage({ setPage, onAuth }) {
         <svg viewBox="0 0 1440 60" style={{ display: "block", width: "100%", height: 50 }} preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 24 T1440 20 L1440 60 Z" fill={C.cream} /></svg>
       </section>
 
-      {/* ---- Nouveauté : soirées jeux en ligne (BGA) ---- */}
-      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "28px 24px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", background: `linear-gradient(135deg, ${C.purple}, #4a2856)`, borderRadius: 22, padding: "24px 26px", color: "#fff", boxShadow: "0 14px 36px rgba(107,58,122,.28)" }}>
-          <div style={{ display: "grid", placeItems: "center", width: 56, height: 56, borderRadius: 16, background: "rgba(255,255,255,.16)", flexShrink: 0 }}>
-            <Globe size={30} />
+      {/* SOUTENIR L'ASSO — PARTENAIRE LUDUM */}
+      <section style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 0" }}>
+        <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navyDeep} 100%)`, borderRadius: 24, padding: "clamp(28px,4vw,44px)", boxShadow: "0 10px 30px rgba(18,41,63,.14)" }}>
+          <Dice color={C.amber} n={6} style={{ position: "absolute", width: 96, top: -16, right: 28, opacity: .22, transform: "rotate(12deg)" }} />
+          <Dice color={C.teal} n={4} style={{ position: "absolute", width: 64, bottom: -10, right: 132, opacity: .18, transform: "rotate(-10deg)" }} />
+          <div style={{ position: "relative", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 28 }}>
+            <div style={{ flex: "1 1 340px" }}>
+              <Badge color={C.amber} soft={false}><Heart size={13} /> Notre partenaire</Badge>
+              <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: "#fff", fontSize: "clamp(24px,3.6vw,32px)", margin: "16px 0 10px", lineHeight: 1.1 }}>
+                Achetez chez Ludum, soutenez l'asso
+              </h2>
+              <p style={{ color: "rgba(255,255,255,.82)", fontSize: 15.5, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 540 }}>
+                Pour soutenir l'association, pensez à acheter vos jeux chez <b style={{ color: "#fff" }}>Ludum</b> via notre lien partenaire. Une partie de votre achat revient à l'ALADJ, sans aucun surcoût pour vous.
+              </p>
+              <p style={{ color: "rgba(255,255,255,.6)", fontSize: 13.5, lineHeight: 1.55, margin: 0 }}>
+                <Ticket size={13} style={{ verticalAlign: "-2px" }} /> Les membres cotisants profitent en plus du <b style={{ color: C.amber }}>pass Ludovore annuel</b> (valeur 29,99 €).
+              </p>
+            </div>
+            <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
+              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, padding: "15px 28px", borderRadius: 14, textDecoration: "none", boxShadow: "0 8px 22px rgba(232,163,23,.45)", whiteSpace: "nowrap", flexShrink: 0 }}>
+              <ShoppingBag size={19} /> Acheter chez Ludum
+            </a>
           </div>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(20px,3vw,26px)", fontWeight: 700, lineHeight: 1.1, marginBottom: 6 }}>Nouveau : nos soirées jeux en ligne&nbsp;!</div>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, opacity: .92 }}>
-              En plus de nos rendez-vous au local, l'association organise désormais des parties <b>en ligne sur Board&nbsp;Game&nbsp;Arena</b>. <b>Les jeux y sont gratuits pour vous</b> : l'association dispose d'un compte premium qui permet de lancer tous les jeux et d'inviter les participants à la table. Repérez les moments « en ligne » (en violet) dans le calendrier, et rejoignez la conversation Signal dédiée pour nous retrouver à l'heure du rendez-vous.
-            </p>
-          </div>
-          <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: C.purple, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "12px 18px", borderRadius: 13, textDecoration: "none", whiteSpace: "nowrap" }}>
-            <Globe size={17} /> Conversation « Jeux en ligne »
-          </a>
         </div>
       </section>
+
 
       {/* POINTS FORTS */}
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "64px 24px 20px" }}>
@@ -6352,6 +6360,25 @@ function HomePage({ setPage, onAuth }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginTop: 32 }}>
           {upcoming.length === 0 && <EmptyHint icon={Calendar} text="Aucun moment jeux programmé pour l'instant." />}
           {upcoming.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setPage("soirees")} />)}
+        </div>
+      </section>
+
+      {/* ---- Nouveauté : moments jeux en ligne (BGA) ---- */}
+      <section style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", background: `linear-gradient(135deg, ${C.purple}, #4a2856)`, borderRadius: 22, padding: "24px 26px", color: "#fff", boxShadow: "0 14px 36px rgba(107,58,122,.28)" }}>
+          <div style={{ display: "grid", placeItems: "center", width: 56, height: 56, borderRadius: 16, background: "rgba(255,255,255,.16)", flexShrink: 0 }}>
+            <Globe size={30} />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(20px,3vw,26px)", fontWeight: 700, lineHeight: 1.1, marginBottom: 6 }}>Nouveau : nos moments jeux en ligne&nbsp;!</div>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, opacity: .92 }}>
+              En plus de nos rendez-vous au local, l'association organise désormais des <b>moments jeux en ligne, sur Board&nbsp;Game&nbsp;Arena</b>. <b>Les jeux y sont gratuits pour vous</b> : l'association dispose d'un compte premium qui permet de lancer tous les jeux et d'inviter les participants à la table. Repérez les moments « en ligne » (en violet) dans le calendrier ci-dessus, et rejoignez la conversation Signal dédiée pour nous retrouver à l'heure du rendez-vous.
+            </p>
+          </div>
+          <a href="https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: C.purple, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "12px 18px", borderRadius: 13, textDecoration: "none", whiteSpace: "nowrap" }}>
+            <Globe size={17} /> Conversation « Jeux en ligne »
+          </a>
         </div>
       </section>
 
@@ -6443,32 +6470,6 @@ function HomePage({ setPage, onAuth }) {
           <Info size={15} style={{ verticalAlign: "-2px" }} /> Association loi 1901 fondée le 13 octobre 2010 à Coutances. La cotisation est fixée chaque année par l'assemblée générale. L'association est ouverte aux adultes de 18 ans et plus ; les jeunes de 14 ans et plus sont les bienvenus s'ils sont joueurs et accompagnés d'un adulte. Une pièce d'identité peut être demandée à l'entrée des moments jeux.
           <br /><span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "-2px" }}><PacifierIcon size={13} /></span> Les <b>enfants de moins de 14 ans peuvent tout à fait avoir un compte</b> sur le site (une tétine signale alors leur profil) et participer aux <b>moments jeux privés</b>. En revanche, ils ne peuvent pas participer aux moments jeux de l'association ouverts à tous, en présentiel comme sur Board Game Arena.
         </p>
-      </section>
-
-      {/* SOUTENIR L'ASSO — PARTENAIRE LUDUM */}
-      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 40px" }}>
-        <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navyDeep} 100%)`, borderRadius: 24, padding: "clamp(28px,4vw,44px)", boxShadow: "0 10px 30px rgba(18,41,63,.14)" }}>
-          <Dice color={C.amber} n={6} style={{ position: "absolute", width: 96, top: -16, right: 28, opacity: .22, transform: "rotate(12deg)" }} />
-          <Dice color={C.teal} n={4} style={{ position: "absolute", width: 64, bottom: -10, right: 132, opacity: .18, transform: "rotate(-10deg)" }} />
-          <div style={{ position: "relative", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 28 }}>
-            <div style={{ flex: "1 1 340px" }}>
-              <Badge color={C.amber} soft={false}><Heart size={13} /> Notre partenaire</Badge>
-              <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: "#fff", fontSize: "clamp(24px,3.6vw,32px)", margin: "16px 0 10px", lineHeight: 1.1 }}>
-                Achetez chez Ludum, soutenez l'asso
-              </h2>
-              <p style={{ color: "rgba(255,255,255,.82)", fontSize: 15.5, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 540 }}>
-                Pour soutenir l'association, pensez à acheter vos jeux chez <b style={{ color: "#fff" }}>Ludum</b> via notre lien partenaire. Une partie de votre achat revient à l'ALADJ, sans aucun surcoût pour vous.
-              </p>
-              <p style={{ color: "rgba(255,255,255,.6)", fontSize: 13.5, lineHeight: 1.55, margin: 0 }}>
-                <Ticket size={13} style={{ verticalAlign: "-2px" }} /> Les membres cotisants profitent en plus du <b style={{ color: C.amber }}>pass Ludovore annuel</b> (valeur 29,99 €).
-              </p>
-            </div>
-            <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
-              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, padding: "15px 28px", borderRadius: 14, textDecoration: "none", boxShadow: "0 8px 22px rgba(232,163,23,.45)", whiteSpace: "nowrap", flexShrink: 0 }}>
-              <ShoppingBag size={19} /> Acheter chez Ludum
-            </a>
-          </div>
-        </div>
       </section>
 
       {/* ---- Location de jeux : règles ---- */}
@@ -12633,7 +12634,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         </div>
 
         {/* COLONNE LATÉRALE : classements */}
-        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18 }} className="aladj-ludo-aside">
+        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 6 }} className="aladj-ludo-aside">
           {/* CLASSEMENT PERSONNALISÉ (placé en premier pour remonter en haut sur mobile) */}
           <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}` }} className="aladj-ludo-custom">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -12653,7 +12654,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
                 return (
@@ -12686,7 +12687,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                 Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
               </p>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {momentTop.map((g, i) => (
                 <button key={g.id} onClick={() => setSelected(g.id)}
                   style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
@@ -17441,7 +17442,7 @@ export default function App() {
         @media (min-width: 861px) { .aladj-mobile-menu { display: none !important; } }
         @media (max-width: 920px) {
           .aladj-ludo-grid { display: flex !important; flex-direction: column !important; }
-          .aladj-ludo-aside { position: static !important; order: -1; }
+          .aladj-ludo-aside { position: static !important; order: -1; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
           .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
         }
         @media (max-width: 600px) {
