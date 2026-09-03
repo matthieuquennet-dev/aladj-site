@@ -263,14 +263,16 @@ function phraseForScore(phrases, score) {
   };
   return [...hits].sort((a, b) => width(a) - width(b))[0];
 }
-/* Libelle lisible d'une tranche : "9 et plus", "0 a 3", "jusqu'a 5", "exactement 7". */
+/* Libelle lisible d'une tranche : « de 1 a 3 », « 9 et plus », « jusqu'a 5 »,
+   « exactement 7 ». Le « de » devant la borne basse evite de lire « 1 a 3 »
+   comme une seule valeur. */
 function phraseRangeLabel(p) {
   const mn = p.min_score == null ? null : Number(p.min_score);
   const mx = p.max_score == null ? null : Number(p.max_score);
   const n = (v) => String(v).replace(".", ",");
-  if (mn != null && mx != null) return mn === mx ? `exactement ${n(mn)}` : `${n(mn)} a ${n(mx)}`;
+  if (mn != null && mx != null) return mn === mx ? `exactement ${n(mn)}` : `de ${n(mn)} \u00e0 ${n(mx)}`;
   if (mn != null) return `${n(mn)} et plus`;
-  if (mx != null) return `jusqu'a ${n(mx)}`;
+  if (mx != null) return `jusqu'\u00e0 ${n(mx)}`;
   return "tous les scores";
 }
 const SCORE_DIR_LABEL = { high: "le plus grand score l'emporte", low: "le plus petit score l'emporte" };
@@ -3115,8 +3117,18 @@ function AppProvider({ children }) {
     if (r) r(result);
   }, []);
 
+  // (lot V+) Declarations de possession faites a mon nom par un autre membre,
+  // jeux ET extensions confondus, tant que je n'ai ni confirme ni refuse.
+  // Ce compte ne se vide PAS a la lecture des notifications : il alimente la
+  // pastille jusqu'a ce que je tranche.
+  const myOwnershipPending = useMemo(
+    () => countPendingOwnership(games, currentUser?.id),
+    [games, currentUser]
+  );
+
   const value = {
     ready, fatalError, users, games, events, places, loans, myWeights, upcoming, currentUser,
+    myOwnershipPending,
     register, login, logout, addGame, updateGame, removeGame, rateGame, clearRating,
     loginWithGoogle,
     toggleGameShared, setShareLibrary, addOwner, removeOwner, declareOwners, updateProfile,
@@ -3705,6 +3717,61 @@ function GameRulesModal({ gameId, gameName, onClose, onCount }) {
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+/* -----------------------------------------------------------------------------
+   (lot V) REGLAGES COOPERATIFS D'UNE FICHE
+   Accessible a tout membre connecte depuis la fiche du jeu : c'est la qu'on se
+   pose la question, et l'ecriture passe par une RPC SECURITY DEFINER puisque la
+   RLS de "games" reserve l'ecriture au proprietaire de la fiche.
+   ----------------------------------------------------------------------------- */
+function GameCoopModal({ g, onClose, setToast }) {
+  const { reload } = useApp();
+  const [isCoop, setIsCoop] = useState(g.isCoop === true);
+  const [target, setTarget] = useState(g.coopTarget == null ? "" : String(g.coopTarget));
+  const [dir, setDir] = useState(scoreDirOf(g));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    const { error } = await supabase.rpc("aladj_set_game_coop", {
+      p_game_id: g.id,
+      p_is_coop: isCoop,
+      p_target: !isCoop || target === "" ? null : Number(target),
+      p_direction: dir,
+    });
+    if (error) { setBusy(false); setErr(error.message); return; }
+    await reload();
+    setBusy(false);
+    if (setToast) setToast(isCoop ? "Jeu déclaré coopératif." : "Mode coopératif retiré.");   // setToast arrive en prop
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`🤝 Mode coopératif · ${g.name}`} width={520}>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+        Un jeu coopératif se solde par une victoire ou une défaite commune : toute la table marque le même score.
+        Le chronomètre et l'enregistrement d'une partie s'adaptent alors automatiquement.
+      </p>
+      {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
+      <CoopFields isCoop={isCoop} target={target} direction={dir}
+        onChange={(p) => {
+          if (p.isCoop !== undefined) setIsCoop(p.isCoop);
+          if (p.target !== undefined) setTarget(p.target);
+          if (p.direction !== undefined) setDir(p.direction);
+        }} />
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn full variant="teal" onClick={save} disabled={busy}>
+          {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Check size={15} /> Enregistrer</>}
+        </Btn>
+        <Btn variant="soft" onClick={onClose}>Annuler</Btn>
+      </div>
+      <p style={{ margin: "14px 0 0", fontSize: 12.5, color: "#a89a86", lineHeight: 1.5 }}>
+        Ce réglage vaut pour tous les membres : il décrit le jeu, pas votre façon d'y jouer.
+      </p>
     </Modal>
   );
 }
@@ -4366,14 +4433,16 @@ function isDecideur(u) {
 }
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, reload, personalReady } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, myOwnershipPending, reload, personalReady } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
-  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length + (messagesUnread || 0) : 0;
+  // La part « possession declaree a mon nom » reste comptee tant que le membre
+  // n'a pas repondu, meme s'il a deja lu la notification correspondante.
+  const ludoBadge = personalReady ? unreadNotifs + (eventPlaySuggestions || []).length + (myPendingPlays || []).length + (messagesUnread || 0) + (myOwnershipPending || 0) : 0;
   // Pastille de « Mes locations » : demandes à traiter, locations à venir
   // et jeux empruntés en retard. Jamais les retards côté propriétaire.
   const loanBadge = personalReady ? ((loanAlerts || {}).count || 0) : 0;
@@ -5308,6 +5377,7 @@ function GuidePage() {
               <MockBtn color={C.teal}><Check size={14} /> Confirmer</MockBtn>
               <MockBtn color={C.red}><X size={14} /> Supprimer</MockBtn>
             </Illu>
+            <p style={{ margin: 0 }}>La <b style={{ color: C.red }}>pastille rouge</b> de « Mon espace » reste allumée <b>tant que vous n'avez pas répondu</b> — confirmé ou supprimé. Lire la notification ne l'éteint pas : une déclaration en attente ne doit pas pouvoir se perdre dans le flux. Les extensions déclarées à votre nom comptent de la même façon.</p>
           </>,
         },
         {
@@ -5331,7 +5401,9 @@ function GuidePage() {
         {
           q: "Les parties coopératives : un score, un sort commun",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Un jeu peut être déclaré <b style={{ color: C.purple }}>🤝 coopératif</b> à la création de sa fiche ou dans « Modifier le jeu ». Deux réglages seulement : la case <b>Jeu coopératif</b>, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Un jeu se déclare <b style={{ color: C.purple }}>🤝 coopératif</b> depuis <b>sa fiche</b> : ouvrez le jeu dans la ludothèque et cliquez sur l'encart <b>« Mode coopératif »</b>, juste au-dessus des phrases de score. <b>Tout membre peut le faire</b> — le réglage décrit le jeu, pas votre façon d'y jouer, exactement comme le sens du score.</p>
+            <p style={{ margin: "0 0 8px" }}>Deux réglages seulement : la case <b>Jeu coopératif</b>, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>. Les mêmes champs figurent aussi dans « Modifier le jeu » et dans le formulaire d'ajout d'un jeu.</p>
+            <p style={{ margin: "0 0 8px" }}>Et si vous vous en apercevez trop tard ? À la fin d'une partie au chronomètre, un bouton <b>« En fait, ce jeu est coopératif »</b> bascule l'écran aussitôt, sans quitter le chrono.</p>
             <p style={{ margin: "0 0 8px" }}>Le sens de lecture réutilise le réglage existant « quel score l'emporte » : <b>le plus grand</b> signifie « on gagne à partir du seuil », <b>le plus petit</b> signifie « on gagne en dessous ». Laissez le seuil vide si le jeu n'en a pas de chiffré : vous déclarerez alors la victoire à la main.</p>
             <p style={{ margin: "0 0 8px" }}>Une fois le jeu marqué coopératif, <b>le chronomètre et « Enregistrer une partie jouée » s'adaptent tout seuls</b> : plus de score ni de trophée joueur par joueur, mais <b>un seul score pour la table</b> et un seul résultat — <b>Gagné</b>, <b>Perdu</b> ou <b>Je ne sais pas</b>. Le résultat se déduit du score et du seuil, et reste corrigeable d'un clic. Tous les joueurs sont enregistrés avec le même score, et tous vainqueurs (ou aucun).</p>
             <p style={{ margin: "0 0 8px" }}>Le verdict s'affiche aussitôt : <b>cadre vert et feu d'artifice</b> pour une victoire, <b>cadre rouge</b> pour une défaite, avec la <b>phrase du barème</b> correspondant au score s'il en existe une (voir « Les phrases de score »).</p>
@@ -9855,6 +9927,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const [ruleCount, setRuleCount] = useState(null);  // null = pas encore compte
   const [showPhrases, setShowPhrases] = useState(false); // (lot V) phrases de score
   const [phraseCount, setPhraseCount] = useState(null);
+  const [showCoop, setShowCoop] = useState(false);       // (lot V) reglages cooperatifs
   const [showSessions, setShowSessions] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [sessions, setSessions] = useState(null);
@@ -10019,6 +10092,23 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
             <span style={{ flexShrink: 0, background: C.teal, color: "#fff", borderRadius: 999, padding: "2px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{ruleCount}</span>
           )}
           <ChevronRight size={17} color={C.teal} style={{ flexShrink: 0 }} />
+        </button>
+      )}
+
+      {/* (lot V) Mode cooperatif : reglable par tout membre, depuis la fiche */}
+      {currentUser && (
+        <button type="button" onClick={() => setShowCoop(true)} title="Déclarer ce jeu coopératif et fixer son seuil de victoire"
+          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", background: g.isCoop ? "rgba(107,58,122,.13)" : "rgba(26,58,92,.05)", border: `1.5px solid ${g.isCoop ? C.purple : "#e6dcc9"}`, borderRadius: 13, padding: "12px 16px", marginBottom: 12, cursor: "pointer", textAlign: "left", font: "inherit" }}>
+          <span style={{ fontSize: 21, flexShrink: 0, lineHeight: 1 }}>🤝</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>Mode coopératif</span>
+            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
+              {!g.isCoop ? "Non — ce jeu se joue chacun pour soi" : coopTargetOf(g) == null
+                ? "Oui, sans seuil chiffré — la victoire se déclare à la main"
+                : `Oui — on gagne ${scoreDirOf(g) === "low" ? "en dessous de" : "à partir de"} ${String(coopTargetOf(g)).replace(".", ",")}`}
+            </span>
+          </span>
+          <ChevronRight size={17} color={g.isCoop ? C.purple : "#b6a78f"} style={{ flexShrink: 0 }} />
         </button>
       )}
 
@@ -10387,6 +10477,7 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
       {showScale && <RatingScaleModal onClose={() => setShowScale(false)} />}
       {showRules && <GameRulesModal gameId={g.id} gameName={g.name} onClose={() => setShowRules(false)} onCount={setRuleCount} />}
       {showPhrases && <GameScorePhrasesModal gameId={g.id} gameName={g.name} onClose={() => setShowPhrases(false)} onCount={setPhraseCount} />}
+      {showCoop && <GameCoopModal g={g} onClose={() => setShowCoop(false)} setToast={setToast} />}
       {showSessions && <SessionsModal sessions={sessions} gameName={g.name} game={g} canDelete={!!currentUser?.admin} onClose={() => setShowSessions(false)} onDeleted={loadStats} />}
     </Modal>
   );
@@ -12330,6 +12421,22 @@ function EditGameModal({ g, onClose, onSave }) {
 /* (lot V) Fenetre du « Top 20 des jeux du moment » : un jeu y figure s'il est
    entre dans la ludotheque du site depuis moins de MOMENT_MONTHS mois. */
 const MOMENT_MONTHS = 4;
+
+/* (lot V+) Nombre de declarations de possession faites a mon nom et encore en
+   attente de ma reponse, jeux ET extensions confondus. Extraite comme fonction
+   pure pour etre testable : c'est elle qui maintient la pastille rouge allumee
+   tant que le membre n'a pas confirme ou refuse. */
+function countPendingOwnership(games, uid) {
+  if (!uid) return 0;
+  let n = 0;
+  (games || []).forEach((g) => {
+    if ((g.pendingOwners || []).some((o) => o.id === uid)) n += 1;
+    (g.extensions || []).forEach((x) => {
+      if ((x.pendingOwners || []).some((o) => o.id === uid)) n += 1;
+    });
+  });
+  return n;
+}
 
 /* (lot V) Selection du « Top 20 des jeux du moment ».
    Deux conditions cumulees :
