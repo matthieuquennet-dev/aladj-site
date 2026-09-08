@@ -249,13 +249,28 @@ function coopWinFromScore(g, score) {
 /* Phrase associee a un score, parmi les tranches saisies sur la fiche du jeu.
    Les bornes sont inclusives ; une borne vide signifie "pas de limite de ce
    cote". Si plusieurs tranches conviennent, la plus etroite l'emporte : une
-   phrase ecrite pour un score precis prime sur une phrase de portee large. */
-function phraseForScore(phrases, score) {
+   phrase ecrite pour un score precis prime sur une phrase de portee large.
+
+   (lot W) Beaucoup de jeux changent de bareme selon la tablee : 25 points a 2
+   joueurs et 25 points a 5 ne veulent pas dire la meme chose. Une phrase peut
+   donc viser un nombre de joueurs precis (player_count) ou rester valable pour
+   toutes les tablees (player_count vide). Arbitrage : la tranche ecrite POUR
+   CETTE TABLEE prime sur une tranche generale, quelle que soit sa largeur ;
+   ce n'est qu'a l'interieur d'un meme groupe qu'on departage par la largeur. */
+function phraseForScore(phrases, score, playerCount) {
   const s = Number(score);
   if (score === "" || score == null || !Number.isFinite(s)) return null;
+  const n = Number(playerCount);
+  const pc = Number.isFinite(n) && n > 0 ? n : null;
   const lo = (p) => (p.min_score == null ? -Infinity : Number(p.min_score));
   const hi = (p) => (p.max_score == null ? Infinity : Number(p.max_score));
-  const hits = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  const inRange = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  if (!inRange.length) return null;
+  const generic = inRange.filter((p) => p.player_count == null);
+  // Nombre de joueurs inconnu : on ne retient que les phrases generales, sinon
+  // on afficherait un bareme ecrit pour une autre tablee que celle de la partie.
+  const exact = pc == null ? [] : inRange.filter((p) => Number(p.player_count) === pc);
+  const hits = exact.length ? exact : generic;
   if (!hits.length) return null;
   const width = (p) => {
     const w = hi(p) - lo(p);
@@ -274,6 +289,46 @@ function phraseRangeLabel(p) {
   if (mn != null) return `${n(mn)} et plus`;
   if (mx != null) return `jusqu'\u00e0 ${n(mx)}`;
   return "tous les scores";
+}
+/* (lot W) Tablee visee par une phrase de score : « a 3 joueurs », ou bien
+   « toutes les tablees » quand la phrase vaut quel que soit le nombre. */
+function phrasePlayersLabel(p) {
+  const n = p && p.player_count == null ? null : Number(p.player_count);
+  if (n == null || !Number.isFinite(n) || n <= 0) return "toutes les tabl\u00e9es";
+  return `\u00e0 ${n} joueur${n > 1 ? "s" : ""}`;
+}
+/* (lot W) Ligne « 2-4 joueurs . 45 min . reel 52 min » posee sur les vignettes
+   de suggestion : de quoi juger si le jeu entre dans le creneau sans ouvrir la
+   fiche. La duree reelle ne s'affiche que si des parties ont ete chronometrees,
+   et seulement a partir de 2 parties : une seule mesure ne fait pas une moyenne. */
+function GameQuickFacts({ g, size = 11 }) {
+  if (!g) return null;
+  const hasMin = g.min !== "" && g.min != null;
+  const hasMax = g.max !== "" && g.max != null;
+  const players = hasMin || hasMax
+    ? (hasMin && hasMax && String(g.min) !== String(g.max) ? `${g.min}\u2013${g.max}` : String(hasMin ? g.min : g.max))
+    : null;
+  const time = g.time !== "" && g.time != null ? `${g.time} min` : null;
+  const real = (g.avgPlays || 0) >= 2 && g.avgSeconds ? `r\u00e9el ${Math.round(g.avgSeconds / 60)} min` : null;
+  const bits = [players ? `${players} j.` : null, time, real].filter(Boolean);
+  if (!bits.length) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", fontSize: size, color: "#9c8d79", lineHeight: 1.3 }}>
+      {players && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Users size={size} /> {players}</span>}
+      {time && <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Clock size={size} /> {time}</span>}
+      {real && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: C.teal, fontWeight: 700 }} title={`Moyenne mesuree au chronometre sur ${g.avgPlays} parties`}>{real}</span>}
+    </div>
+  );
+}
+
+/* (lot W) Entier positif issu d'un champ de saisie, ou null si vide/invalide.
+   Sert aux champs « joueurs » et « duree » des extensions. */
+function intOrNull(v) {
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.round(n);
+  return i > 0 ? i : null;
 }
 const SCORE_DIR_LABEL = { high: "le plus grand score l'emporte", low: "le plus petit score l'emporte" };
 // Moyenne arrondie au dixieme, formatee a la francaise.
@@ -649,22 +704,39 @@ function ScoreDirectionField({ value, onChange }) {
    Un seul champ a retenir : le score a partir duquel (ou en dessous duquel) la
    table l'emporte. Le sens reutilise la colonne existante score_direction, ce
    qui evite d'inventer un second reglage qui dirait la meme chose. */
+/* (lot W) Trois etats au lieu d'une case a cocher : tant que personne n'a
+   tranche, la fiche doit pouvoir dire « en attente » plutot que d'affirmer un
+   « Non » que personne n'a saisi. */
 function CoopFields({ isCoop, target, direction, onChange }) {
   const dir = direction === "low" ? "low" : "high";
+  const state = isCoop === true ? "yes" : isCoop === false ? "no" : "unknown";
+  const COOP_STATES = [
+    { v: "yes",     b: true,  t: "Oui, coopératif", col: C.purple },
+    { v: "no",      b: false, t: "Non, chacun pour soi", col: C.navy },
+    { v: "unknown", b: null,  t: "À renseigner", col: C.amber },
+  ];
   return (
     <div style={{ marginBottom: 18 }}>
-      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 14px", borderRadius: 12, cursor: "pointer",
-        background: isCoop ? "rgba(107,58,122,.09)" : "rgba(120,110,95,.06)", border: `1.5px solid ${isCoop ? C.purple : "transparent"}` }}>
-        <input type="checkbox" checked={!!isCoop} onChange={(e) => onChange({ isCoop: e.target.checked })}
-          style={{ width: 18, height: 18, accentColor: C.purple, marginTop: 2, flexShrink: 0 }} />
-        <span>
-          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14 }}>🤝 Jeu coopératif</span>
-          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, marginTop: 2 }}>
-            Toute la table marque le <b>même score</b> et gagne ou perd <b>ensemble</b>. Le chronomètre et l'enregistrement d'une partie s'adaptent automatiquement.
-          </span>
+      <div style={{ padding: "11px 14px", borderRadius: 12,
+        background: isCoop === true ? "rgba(107,58,122,.09)" : "rgba(120,110,95,.06)", border: `1.5px solid ${isCoop === true ? C.purple : "transparent"}` }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14 }}>🤝 Jeu coopératif</span>
+        <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, margin: "2px 0 9px" }}>
+          Toute la table marque le <b>même score</b> et gagne ou perd <b>ensemble</b>. Le chronomètre et l'enregistrement d'une partie s'adaptent automatiquement.
         </span>
-      </label>
-      {isCoop && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {COOP_STATES.map((o) => {
+            const on = state === o.v;
+            return (
+              <button key={o.v} type="button" onClick={() => onChange({ isCoop: o.b })} style={{
+                flex: "1 1 130px", padding: "8px 10px", borderRadius: 10, cursor: "pointer",
+                fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+                border: `2px solid ${on ? o.col : "#e6dcc9"}`, background: on ? o.col : "#fff", color: on ? "#fff" : "#8a7c6a",
+              }}>{o.t}</button>
+            );
+          })}
+        </div>
+      </div>
+      {isCoop === true && (
         <div style={{ marginTop: 10, padding: "12px 14px", borderRadius: 12, background: "rgba(107,58,122,.05)", border: `1px solid ${C.purple}22` }}>
           <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Le seuil de victoire</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 9, flexWrap: "wrap" }}>
@@ -835,7 +907,7 @@ async function fetchAllRows(table, columns, orderCols) {
 }
 
 // transforme une ligne "games" + ses notes en objet utilisé par l'interface
-function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}, discoveriesByGame = {}) {
+function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersByGame = {}, extsByGame = {}, roleById = {}, playCountByGame = {}, discoveriesByGame = {}, avgDurByGame = {}) {
   const ratings = {};
   (ratingsByGame[row.id] || []).forEach((r) => { ratings[r.user_id] = Number(r.value); });
 
@@ -901,6 +973,10 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     newPrice: row.new_price != null ? Number(row.new_price) : null,
     shared: row.shared !== false,
     playCount: playCountByGame[row.id] || 0,
+    // (lot W) Duree reelle moyenne d'une partie, en secondes, telle que le
+    // chronometre l'a mesuree. null tant qu'aucune partie n'a ete chronometree.
+    avgSeconds: (avgDurByGame[row.id] && avgDurByGame[row.id].seconds) || null,
+    avgPlays: (avgDurByGame[row.id] && avgDurByGame[row.id].plays) || 0,
     comments: (commentsByGame[row.id] || []).map((c) => ({ id: c.id, authorId: c.author_id, authorName: nameById[c.author_id] || "Membre", content: c.content, createdAt: c.created_at, updatedAt: c.updated_at })),
     ratings, addedAt: row.created_at ? new Date(row.created_at).getTime() : 0,
     // "high" = le plus grand score l'emporte, "low" = le plus petit, null = non renseigne
@@ -908,7 +984,9 @@ function mapGame(row, ratingsByGame, nameById = {}, commentsByGame = {}, ownersB
     // (lot V) Jeu cooperatif : toute la table marque le meme score et gagne ou
     // perd ensemble. coopTarget est le seuil de victoire, lu dans le sens de
     // scoreDirection ("high" = on gagne a partir du seuil, "low" = en dessous).
-    isCoop: row.is_coop === true,
+    // (lot W) Trois etats : true = coop, false = chacun pour soi,
+    // null = personne ne l'a encore renseigne (la fiche l'affiche « en attente »).
+    isCoop: row.is_coop === true ? true : (row.is_coop === false ? false : null),
     coopTarget: row.coop_target == null ? null : Number(row.coop_target),
   };
 }
@@ -1029,7 +1107,7 @@ function AppProvider({ children }) {
       // On charge chaque table séparément, SANS jointure automatique (profiles(name)),
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
-      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }, { data: convRows }, { data: convMemberRows }] = await Promise.all([
+      const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }, { data: convRows }, { data: convMemberRows }, { data: avgDurRows }] = await Promise.all([
         supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction,is_coop,coop_target", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
@@ -1040,7 +1118,7 @@ function AppProvider({ children }) {
         fetchAllRows("game_comments", "*", ["created_at", "id"]),
         supabase.from("places").select("*").order("name"),
         fetchAllRows("game_owners", "*", ["game_id", "owner_id"]),
-        fetchAllRows("extensions", "id,game_id,name,image_url,created_by", ["name", "id"]),
+        fetchAllRows("extensions", "id,game_id,name,image_url,created_by,min_players,max_players,play_time,description", ["name", "id"]),
         fetchAllRows("extension_owners", "*", ["id"]),
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
         fetchAllRows("game_weights", "*", ["game_id", "owner_id"]),
@@ -1065,6 +1143,10 @@ function AppProvider({ children }) {
         currentUserIdRef.current ? supabase.from("loan_request_owners").select("*") : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("conversations").select("*").order("last_message_at", { ascending: false }) : Promise.resolve({ data: [] }),
         currentUserIdRef.current ? supabase.from("conversation_members").select("*") : Promise.resolve({ data: [] }),
+        // (lot W) Duree reellement constatee, une ligne par jeu chronometre au
+        // moins une fois. Table minuscule ; si la vue n'existe pas encore
+        // (migration non jouee), data vaut null et tout continue sans elle.
+        supabase.from("v_game_avg_duration").select("game_id,avg_seconds,play_count"),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -1113,6 +1195,12 @@ function AppProvider({ children }) {
       // Une partie chronometree pendant un moment produit a la fois une ligne de
       // game_plays et une occurrence declaree dans event_games : on retient le
       // maximum des deux par couple (moment, jeu) pour ne jamais compter double.
+      // (lot W) Index de la duree reelle moyenne, lue par les vignettes de
+      // suggestion a cote de la duree annoncee sur la boite.
+      const avgDurByGame = {};
+      (avgDurRows || []).forEach((r) => {
+        if (r && r.game_id != null) avgDurByGame[r.game_id] = { seconds: Number(r.avg_seconds) || 0, plays: Number(r.play_count) || 0 };
+      });
       const playCountByGame = {};
       const declaredByPair = {};
       (eventGamesRows || []).forEach((eg) => {
@@ -1170,13 +1258,19 @@ function AppProvider({ children }) {
         const cIds = confirmed.map((o) => o.id);
         (extsByGame[x.game_id] ||= []).push({
           id: x.id, name: x.name, img: x.image_url || "", createdBy: x.created_by,
+          // (lot W) Une extension peut changer le nombre de joueurs ou la duree
+          // du jeu de base. Champ vide = « comme le jeu de base ».
+          min: x.min_players == null ? "" : x.min_players,
+          max: x.max_players == null ? "" : x.max_players,
+          time: x.play_time == null ? "" : x.play_time,
+          desc: x.description || "",
           ownerIds: cIds, owners: cIds.map((id) => ({ id, name: nameById[id] || "Membre" })),
           pendingOwners: pending.map((o) => ({ id: o.id, name: nameById[o.id] || "Membre" })),
         });
       });
 
       setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, shareWishlist: p.share_wishlist !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true })));
-      const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame));
+      const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame, avgDurByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
       mappedGames.forEach((g) => { gamesIndexById[g.id] = g; });
@@ -1579,7 +1673,7 @@ function AppProvider({ children }) {
       source: d.source || "manuel", owner_id: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
       score_direction: d.scoreDirection || null,
-      is_coop: d.isCoop === true,
+      is_coop: d.isCoop === true ? true : (d.isCoop === false ? false : null),
       coop_target: d.coopTarget === "" || d.coopTarget == null ? null : Number(d.coopTarget),
     }).select().single();
     if (error) return { error: error.message };
@@ -1706,15 +1800,58 @@ function AppProvider({ children }) {
   }, [currentUser, games, reloadGameSignals]);
 
   // ---- Extensions ----
-  // Ajouter une extension à un jeu (le créateur en devient premier propriétaire)
+  // (lot W) Ajouter une extension à un jeu. Le créateur n'en devient plus
+  // propriétaire d'office : il déclare qui la possède, exactement comme à la
+  // création d'une fiche de jeu. Tout passe par une RPC SECURITY DEFINER, la
+  // RLS d'extension_owners n'autorisant pas à inscrire quelqu'un d'autre.
+  // data = { name, img, min, max, time, desc, selfOwns, forUserIds }
   const addExtension = useCallback(async (gameId, data) => {
     if (!currentUser) return { error: "Connectez-vous." };
+    const name = String(data.name || "").trim();
+    if (!name) return { error: "Le nom de l'extension est obligatoire." };
     const imgUrl = await uploadImageToStorage(data.img || "", "extensions");
-    const { data: row, error } = await supabase.from("extensions").insert({
-      game_id: gameId, name: data.name.trim(), image_url: imgUrl, created_by: currentUser.id,
-    }).select().single();
+    const { error } = await supabase.rpc("aladj_create_extension", {
+      p_game_id: gameId,
+      p_name: name,
+      p_image_url: imgUrl || null,
+      p_min: intOrNull(data.min),
+      p_max: intOrNull(data.max),
+      p_time: intOrNull(data.time),
+      p_description: String(data.desc || "").trim() || null,
+      p_self_owns: data.selfOwns !== false,
+      p_user_ids: (data.forUserIds || []).filter((id) => id && id !== currentUser.id),
+    });
     if (error) return { error: error.message };
-    await supabase.from("extension_owners").insert({ extension_id: row.id, owner_id: currentUser.id, confirmed: true, declared_by: currentUser.id });
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // (lot W) Corriger une extension : nom, image, joueurs, durée, description.
+  // Ouvert aux propriétaires, au créateur de la fiche et aux administrateurs.
+  const updateExtension = useCallback(async (extId, data) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const name = String(data.name || "").trim();
+    if (!name) return { error: "Le nom de l'extension est obligatoire." };
+    const imgUrl = await uploadImageToStorage(data.img || "", "extensions");
+    const { error } = await supabase.rpc("aladj_update_extension", {
+      p_ext_id: extId,
+      p_name: name,
+      p_image_url: imgUrl || null,
+      p_min: intOrNull(data.min),
+      p_max: intOrNull(data.max),
+      p_time: intOrNull(data.time),
+      p_description: String(data.desc || "").trim() || null,
+    });
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // (lot W) Suppression franche d'une extension, avec ses possessions.
+  const deleteExtension = useCallback(async (extId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.rpc("aladj_delete_extension", { p_ext_id: extId });
+    if (error) return { error: error.message };
     await loadData();
     return {};
   }, [currentUser, loadData]);
@@ -1734,7 +1871,9 @@ function AppProvider({ children }) {
     if (!currentUser) return { error: "Connectez-vous." };
     const ids = (userIds || []).filter((id) => id && id !== currentUser.id);
     if (ids.length === 0) return { error: "Sélectionnez au moins un membre." };
-    const { error } = await supabase.rpc("declare_extension_owners", { p_ext_id: extId, p_user_ids: ids });
+    // (lot W) RPC élargie au créateur de la fiche : sans elle, créer une
+    // extension pour quelqu'un d'autre puis en ajouter un second serait bloqué.
+    const { error } = await supabase.rpc("aladj_declare_extension_owners", { p_ext_id: extId, p_user_ids: ids });
     if (error) return { error: error.message };
     await loadData();
     return {};
@@ -1749,15 +1888,19 @@ function AppProvider({ children }) {
     return {};
   }, [currentUser, loadData]);
 
-  // Se retirer d'une extension. Si plus aucun propriétaire, l'extension est supprimée.
-  const removeExtensionOwner = useCallback(async (extId) => {
-    if (!currentUser) return;
-    await supabase.from("extension_owners").delete().eq("extension_id", extId).eq("owner_id", currentUser.id);
-    const { data: remaining } = await supabase.from("extension_owners").select("id").eq("extension_id", extId);
-    if (!remaining || remaining.length === 0) {
-      await supabase.from("extensions").delete().eq("id", extId);
-    }
+  // (lot W) Se retirer d'une extension SANS la faire disparaître. La fiche ne
+  // s'efface que si on le demande explicitement et qu'il ne reste plus aucun
+  // propriétaire — même logique que les fiches de jeu, qui deviennent des
+  // « fiches de référence » quand leur dernier propriétaire s'en va.
+  // Renvoie { deleted: true|false }.
+  const removeExtensionOwner = useCallback(async (extId, deleteIfOrphan = false) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data, error } = await supabase.rpc("aladj_leave_extension", {
+      p_ext_id: extId, p_delete_if_orphan: deleteIfOrphan === true,
+    });
+    if (error) return { error: error.message };
     await loadData();
+    return { deleted: data === "deleted" };
   }, [currentUser, loadData]);
 
   const updateGame = useCallback(async (id, patch) => {
@@ -1769,7 +1912,7 @@ function AppProvider({ children }) {
     if (patch.newPrice !== undefined) fields.new_price = patch.newPrice === "" || patch.newPrice == null ? null : Number(patch.newPrice);
     if (patch.ludumUrl !== undefined) fields.ludum_url = patch.ludumUrl ? patch.ludumUrl.trim() : "";
     if (patch.scoreDirection !== undefined) fields.score_direction = patch.scoreDirection || null;
-    if (patch.isCoop !== undefined) fields.is_coop = patch.isCoop === true;
+    if (patch.isCoop !== undefined) fields.is_coop = patch.isCoop === true ? true : (patch.isCoop === false ? false : null);
     if (patch.coopTarget !== undefined) fields.coop_target = patch.coopTarget === "" || patch.coopTarget == null ? null : Number(patch.coopTarget);
     await supabase.from("games").update(fields).eq("id", id);
     await loadData();
@@ -3143,7 +3286,7 @@ function AppProvider({ children }) {
     dismissedRecos, dismissReco, restoreReco,
     setRetroEmails,
     household, householdByUser, householdGuests, addHouseholdGuest, removeHouseholdGuest, renameHouseholdGuest, setHouseholdGuestAvatar, inviteToHousehold, acceptHouseholdInvite, declineHouseholdInvite, cancelHouseholdInvite, leaveHousehold,
-    addExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
+    addExtension, updateExtension, deleteExtension, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, confirmExtensionOwnership,
     setGameWeight, createLoan, closeLoan,
     loanRequests, loanAlerts, createLoanRequest, acceptLoanRequest, declineLoanRequest, cancelLoanRequest,
     conversations, messagesUnread, createConversation, fetchMessages, sendMessage,
@@ -3729,7 +3872,7 @@ function GameRulesModal({ gameId, gameName, onClose, onCount }) {
    ----------------------------------------------------------------------------- */
 function GameCoopModal({ g, onClose, setToast }) {
   const { reload } = useApp();
-  const [isCoop, setIsCoop] = useState(g.isCoop === true);
+  const [isCoop, setIsCoop] = useState(g.isCoop === true ? true : (g.isCoop === false ? false : null));
   const [target, setTarget] = useState(g.coopTarget == null ? "" : String(g.coopTarget));
   const [dir, setDir] = useState(scoreDirOf(g));
   const [busy, setBusy] = useState(false);
@@ -3740,13 +3883,13 @@ function GameCoopModal({ g, onClose, setToast }) {
     const { error } = await supabase.rpc("aladj_set_game_coop", {
       p_game_id: g.id,
       p_is_coop: isCoop,
-      p_target: !isCoop || target === "" ? null : Number(target),
+      p_target: isCoop !== true || target === "" ? null : Number(target),
       p_direction: dir,
     });
     if (error) { setBusy(false); setErr(error.message); return; }
     await reload();
     setBusy(false);
-    if (setToast) setToast(isCoop ? "Jeu déclaré coopératif." : "Mode coopératif retiré.");   // setToast arrive en prop
+    if (setToast) setToast(isCoop === true ? "Jeu déclaré coopératif." : isCoop === false ? "Jeu déclaré non coopératif." : "Mode coopératif remis en attente.");   // setToast arrive en prop
     onClose();
   };
 
@@ -3783,30 +3926,56 @@ function GameCoopModal({ g, onClose, setToast }) {
    points de regle, avec la tranche de score qu'elles concernent, et s'affichent
    ensuite a l'enregistrement de la partie.
    Chargement a la demande (table game_score_phrases), jamais au demarrage.
+   (lot W) Chaque phrase peut viser une tablee precise : le bareme d'un jeu
+   depend souvent du nombre de joueurs. Les phrases sont regroupees par tablee
+   a l'affichage, les phrases valables partout venant en tete.
    ----------------------------------------------------------------------------- */
 function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
   const { currentUser, users, askConfirm } = useApp();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ min: "", max: "", content: "" });
+  const [draft, setDraft] = useState({ players: "", min: "", max: "", content: "" });
   const [editId, setEditId] = useState(null);
-  const [editDraft, setEditDraft] = useState({ min: "", max: "", content: "" });
+  const [editDraft, setEditDraft] = useState({ players: "", min: "", max: "", content: "" });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("game_score_phrases")
-      .select("id,game_id,author_id,min_score,max_score,content,created_at,updated_at")
-      .eq("game_id", gameId).order("min_score", { ascending: true, nullsFirst: true });
+      .select("id,game_id,author_id,player_count,min_score,max_score,content,created_at,updated_at")
+      .eq("game_id", gameId)
+      .order("player_count", { ascending: true, nullsFirst: true })
+      .order("min_score", { ascending: true, nullsFirst: true });
     if (error) { setErr(error.message); setRows([]); return; }
     setRows(data || []);
     if (onCount) onCount((data || []).length);
   }, [gameId, onCount]);
   useEffect(() => { load(); }, [load]);
 
+  // Regroupement par tablee : « toutes les tablees » d'abord, puis 2, 3, 4...
+  const groups = useMemo(() => {
+    const by = new Map();
+    (rows || []).forEach((r) => {
+      const k = r.player_count == null ? "" : String(Number(r.player_count));
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(r);
+    });
+    return [...by.entries()]
+      .sort((a, b) => (a[0] === "" ? -1 : b[0] === "" ? 1 : Number(a[0]) - Number(b[0])))
+      .map(([k, list]) => ({ key: k, count: k === "" ? null : Number(k), list }));
+  }, [rows]);
+
   const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
   const canTouch = (r) => !!currentUser && (r.author_id === currentUser.id || currentUser.admin === true);
   const numOrNull = (v) => (v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
+  // Un nombre de joueurs se saisit en entier positif ; vide = toutes les tablees.
+  const playersOrNull = (v) => {
+    const n = numOrNull(v);
+    if (n == null) return null;
+    const i = Math.round(n);
+    return i >= 1 && i <= 99 ? i : null;
+  };
 
   const submitNew = async () => {
     const txt = draft.content.trim();
@@ -3815,11 +3984,12 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
     if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
     setBusy(true); setErr("");
     const { error } = await supabase.from("game_score_phrases").insert({
-      game_id: gameId, author_id: currentUser.id, min_score: mn, max_score: mx, content: txt.slice(0, 400),
+      game_id: gameId, author_id: currentUser.id, player_count: playersOrNull(draft.players),
+      min_score: mn, max_score: mx, content: txt.slice(0, 400),
     });
     setBusy(false);
     if (error) { setErr(error.message); return; }
-    setDraft({ min: "", max: "", content: "" }); setAdding(false);
+    setDraft({ players: "", min: "", max: "", content: "" }); setAdding(false);
     await load();
   };
 
@@ -3830,7 +4000,7 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
     if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
     setBusy(true); setErr("");
     const { error } = await supabase.from("game_score_phrases")
-      .update({ min_score: mn, max_score: mx, content: txt.slice(0, 400), updated_at: new Date().toISOString() })
+      .update({ player_count: playersOrNull(editDraft.players), min_score: mn, max_score: mx, content: txt.slice(0, 400), updated_at: new Date().toISOString() })
       .eq("id", editId);
     setBusy(false);
     if (error) { setErr(error.message); return; }
@@ -3852,20 +4022,26 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
   };
 
   const rangeInputs = (v, set) => (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 9 }}>
-      <Field label="Score minimum" hint="Vide = pas de limite basse">
-        <TextInput type="number" step="0.5" value={v.min} onChange={(e) => set({ ...v, min: e.target.value })} placeholder="ex. 9" />
+    <>
+      <Field label="À combien de joueurs ?" hint="Vide = ce barème vaut pour toutes les tablées. Renseignez-le quand l'échelle du jeu change selon le nombre de joueurs.">
+        <TextInput type="number" step="1" min="1" max="99" value={v.players} onChange={(e) => set({ ...v, players: e.target.value })} placeholder="ex. 3" />
       </Field>
-      <Field label="Score maximum" hint="Vide = pas de limite haute">
-        <TextInput type="number" step="0.5" value={v.max} onChange={(e) => set({ ...v, max: e.target.value })} placeholder="ex. 12" />
-      </Field>
-    </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 9 }}>
+        <Field label="Score minimum" hint="Vide = pas de limite basse">
+          <TextInput type="number" step="0.5" value={v.min} onChange={(e) => set({ ...v, min: e.target.value })} placeholder="ex. 9" />
+        </Field>
+        <Field label="Score maximum" hint="Vide = pas de limite haute">
+          <TextInput type="number" step="0.5" value={v.max} onChange={(e) => set({ ...v, max: e.target.value })} placeholder="ex. 12" />
+        </Field>
+      </div>
+    </>
   );
 
   return (
     <Modal open onClose={onClose} title={`🏁 Phrases de score · ${gameName}`} width={580}>
       <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
         Le barème imprimé dans la règle du jeu, recopié une fois pour toutes. À la fin d'une partie, la phrase correspondant au score obtenu s'affiche automatiquement.
+        {" "}Une phrase peut viser <b>une tablée précise</b> quand l'échelle du jeu change selon le nombre de joueurs ; elle prime alors sur les phrases valables partout.
         {currentUser ? " Chacun peut en ajouter, et corriger ou supprimer les siennes." : ""}
       </p>
 
@@ -3881,8 +4057,18 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
           <p style={{ fontSize: 14, margin: 0 }}>Aucune phrase pour ce jeu.{currentUser ? " Recopiez le barème de la règle !" : ""}</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: 16 }}>
-          {rows.map((r) => {
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, marginBottom: 16 }}>
+          {groups.map((grp) => (
+            <div key={grp.key || "all"}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: grp.count == null ? "#8a7c6a" : C.navy }}>
+                  {grp.count == null ? "Toutes les tablées" : `À ${grp.count} joueur${grp.count > 1 ? "s" : ""}`}
+                </span>
+                <span style={{ flex: 1, height: 1, background: "#efe6d6" }} />
+                <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{grp.list.length} phrase{grp.list.length > 1 ? "s" : ""}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+          {grp.list.map((r) => {
             const mine = !!currentUser && r.author_id === currentUser.id;
             return (
               <div key={r.id} style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.18)", borderRadius: 13, padding: "11px 14px" }}>
@@ -3907,7 +4093,7 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
                     </div>
                     {canTouch(r) && (
                       <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
-                        <button onClick={() => { setEditId(r.id); setEditDraft({ min: r.min_score == null ? "" : String(r.min_score), max: r.max_score == null ? "" : String(r.max_score), content: r.content }); }} title="Modifier cette phrase"
+                        <button onClick={() => { setEditId(r.id); setEditDraft({ players: r.player_count == null ? "" : String(r.player_count), min: r.min_score == null ? "" : String(r.min_score), max: r.max_score == null ? "" : String(r.max_score), content: r.content }); }} title="Modifier cette phrase"
                           style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, height: 20 }}><Edit3 size={15} /></button>
                         <button onClick={() => removeRow(r)} title="Supprimer cette phrase"
                           style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 20 }}><Trash2 size={15} /></button>
@@ -3918,6 +4104,9 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
               </div>
             );
           })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -3937,7 +4126,7 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
             <Btn size="sm" variant="teal" onClick={submitNew} disabled={busy || !draft.content.trim()}>
               {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Ajouter</>}
             </Btn>
-            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setDraft({ min: "", max: "", content: "" }); }}>Annuler</Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setDraft({ players: "", min: "", max: "", content: "" }); }}>Annuler</Btn>
           </div>
         </div>
       )}
@@ -5258,6 +5447,7 @@ function GuidePage() {
           q: "Les suggestions de jeux : le cœur, la croix, et ce que le site en apprend",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, la section <b>Suggestions</b> propose désormais <b>12 jeux</b> (deux rangées de six sur grand écran). Ils sont choisis d'après vos notes, les goûts des membres qui notent comme vous, vos mécaniques et formats favoris, et les envies de découverte de la bande. Une étiquette turquoise dit toujours <i>pourquoi</i> le jeu vous est proposé.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque vignette annonce désormais le <b>nombre de joueurs</b> et la <b>durée</b> du jeu, de quoi écarter tout de suite ce qui ne rentre pas dans le créneau. Et quand l'association a chronométré <b>au moins deux parties</b>, la <b>durée réellement constatée</b> s'ajoute en turquoise, à côté de celle annoncée sur la boîte — les deux ne coïncident pas toujours. La même ligne figure sur les <b>jeux suggérés d'un moment jeux</b>, là où l'on choisit le programme de la soirée.</p>
             <p style={{ margin: "0 0 8px" }}>Deux boutons sur chaque vignette :</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li>Le <b>cœur</b> enregistre une <b>envie de découvrir</b>. C'est le signal le plus utile : il prévient les propriétaires du jeu, il compte pour le composeur de tablée, et il oriente aussi les suggestions des membres proches de vous.</li>
@@ -5344,8 +5534,10 @@ function GuidePage() {
         {
           q: "Les phrases de score : le barème de fin de partie",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Beaucoup de jeux — les coopératifs en tête — se terminent par un petit barème imprimé dans la règle : « 7 à 8 : pas mal », « 9 et plus : bravo ». Sur chaque fiche de jeu, sous les points de règle, un encadré <b style={{ color: C.purple }}>🏁 Phrases de score</b> permet de le recopier <b>une fois pour toutes</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Beaucoup de jeux — les coopératifs en tête — se terminent par un petit barème imprimé dans la règle : « 7 à 8 : pas mal », « 9 et plus : bravo ». Sur chaque fiche de jeu, une tuile <b style={{ color: C.purple }}>🏁 Phrases de score</b> permet de le recopier <b>une fois pour toutes</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Une phrase se compose d'une <b>tranche de score</b> et d'un <b>texte</b>. Les deux bornes sont facultatives et <b>inclusives</b> : « minimum 9, maximum vide » signifie <b>9 et plus</b> ; « minimum vide, maximum 3 » signifie <b>jusqu'à 3</b> ; « minimum 7, maximum 7 » vise <b>exactement 7</b>. Si deux tranches conviennent au même score, c'est <b>la plus étroite</b> qui s'affiche.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Un barème par tablée.</b> L'échelle de beaucoup de jeux dépend du nombre de joueurs : 25 points à deux et 25 points à cinq ne racontent pas la même partie. Un champ <b>« À combien de joueurs ? »</b> permet donc de viser une tablée précise. Laissé vide, le barème vaut <b>pour toutes les tablées</b> — c'est le cas le plus fréquent, et le comportement d'avant.</p>
+            <p style={{ margin: "0 0 8px" }}>La règle d'arbitrage est simple : <b>une phrase écrite pour le nombre de joueurs de la partie l'emporte toujours</b> sur une phrase générale, même si cette dernière est plus précise. Ce n'est qu'entre phrases de même portée qu'on départage par la tranche la plus étroite. Vous pouvez donc poser un barème général et n'écrire des barèmes dédiés que pour les tablées qui font exception. La fenêtre les regroupe par tablée, « Toutes les tablées » en tête.</p>
             <p style={{ margin: "0 0 8px" }}>Comme pour les points de règle, <b>tout membre peut en ajouter</b>, et chacun modifie ou supprime les siennes ; les administrateurs peuvent intervenir sur toutes.</p>
             <p style={{ margin: 0 }}>À quoi ça sert ? À la fin d'une partie — au chronomètre comme dans « Enregistrer une partie jouée » — la phrase correspondant au score obtenu <b>s'affiche automatiquement</b>, dans un cadre vert avec un feu d'artifice en cas de victoire, dans un cadre rouge en cas de défaite.</p>
           </>,
@@ -5384,7 +5576,11 @@ function GuidePage() {
           q: "Les extensions",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Une extension est un contenu qui <b>nécessite absolument le jeu de base</b> pour être joué (nouvelles cartes, plateaux, modules…). Si une boîte se joue seule, ce n'est pas une extension : entrez-la comme un <b>jeu</b> à part entière.</p>
-            <p style={{ margin: 0 }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>
+            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un jeu, la rubrique extensions permet d'en ajouter (recherche BGG ou saisie manuelle), de dire « Je l'ai », ou de <b>déclarer un autre propriétaire</b> — même circuit de confirmation que pour les jeux.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Qui la possède ? La question est posée dès la création.</b> Comme pour une fiche de jeu, quatre réponses : <i>je la possède</i>, <i>un autre membre la possède</i>, <i>plusieurs membres (dont moi)</i>, ou <i>personne — fiche de référence</i>. Vous n'êtes donc plus inscrit d'office comme propriétaire : on peut référencer l'extension d'un camarade sans se l'attribuer. Le membre désigné reçoit une demande de confirmation dans <b>Mon espace</b>.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Une extension a ses propres caractéristiques.</b> Nombre de joueurs minimum et maximum, durée, et une <b>description</b> de ce qu'elle apporte. Ces champs sont <b>facultatifs</b> : laissés vides, ils signifient « comme le jeu de base » — on ne renseigne que ce qui change. Utile quand une extension monte le jeu à 5 joueurs, ajoute un mode solo, ou allonge sensiblement la partie. Un import depuis BoardGameGeek les remplit tout seul quand la fiche les porte, description comprise (traduite en français).</p>
+            <p style={{ margin: "0 0 8px" }}><b>Corriger une extension existante.</b> Un lien <b>Modifier</b> sous chaque extension ouvre les mêmes champs. Y ont droit ses propriétaires, le membre qui a créé la fiche, et les administrateurs. Les extensions saisies avant cette évolution n'ont ni joueurs, ni durée, ni description : il suffit de les compléter là.</p>
+            <p style={{ margin: 0 }}><b>Se retirer sans tout effacer.</b> La croix rouge vous retire des propriétaires. Si d'autres membres possèdent l'extension, elle reste en place, tout simplement. Si vous êtes le <b>dernier propriétaire</b>, le site vous demande quoi en faire : <b>garder la fiche</b> — elle demeure visible sur le jeu, sans propriétaire, et n'importe qui pourra dire « Je l'ai » — ou <b>la supprimer</b> définitivement. Auparavant, se retirer effaçait la fiche sans prévenir.</p>
           </>,
         },
         {
@@ -5401,8 +5597,10 @@ function GuidePage() {
         {
           q: "Les parties coopératives : un score, un sort commun",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Un jeu se déclare <b style={{ color: C.purple }}>🤝 coopératif</b> depuis <b>sa fiche</b> : ouvrez le jeu dans la ludothèque et cliquez sur l'encart <b>« Mode coopératif »</b>, juste au-dessus des phrases de score. <b>Tout membre peut le faire</b> — le réglage décrit le jeu, pas votre façon d'y jouer, exactement comme le sens du score.</p>
-            <p style={{ margin: "0 0 8px" }}>Deux réglages seulement : la case <b>Jeu coopératif</b>, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>. Les mêmes champs figurent aussi dans « Modifier le jeu » et dans le formulaire d'ajout d'un jeu.</p>
+            <p style={{ margin: "0 0 8px" }}>Un jeu se déclare <b style={{ color: C.purple }}>🤝 coopératif</b> depuis <b>sa fiche</b> : ouvrez le jeu dans la ludothèque et cliquez sur la <b>tuile « Coopératif »</b>. <b>Tout membre peut le faire</b> — le réglage décrit le jeu, pas votre façon d'y jouer, exactement comme le sens du score.</p>
+            <p style={{ margin: "0 0 8px" }}><b>La tuile a trois états</b>, et non deux : <b style={{ color: C.purple }}>Oui</b>, <b>Non</b>, ou <b style={{ color: C.amber }}>En attente</b> tant que personne ne s'est prononcé. La nuance compte : un « Non » affirme quelque chose, « En attente » reconnaît simplement qu'on n'a pas encore regardé — et signale d'un coup d'œil les fiches à compléter. Toutes les fiches de la ludothèque sont donc reparties en « En attente ».</p>
+            <p style={{ margin: "0 0 8px" }}>À côté, la tuile <b>Phrases de score</b> n'apparaît que pour un jeu <b>déclaré coopératif</b> : c'est là que le barème sert. Elle reste toutefois visible sur un jeu compétitif qui en porte déjà, pour ne rien rendre inaccessible.</p>
+            <p style={{ margin: "0 0 8px" }}>Le réglage tient en deux champs : l'<b>état</b> ci-dessus, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>. Les mêmes champs figurent aussi dans « Modifier le jeu » et dans le formulaire d'ajout d'un jeu.</p>
             <p style={{ margin: "0 0 8px" }}>Et si vous vous en apercevez trop tard ? À la fin d'une partie au chronomètre, un bouton <b>« En fait, ce jeu est coopératif »</b> bascule l'écran aussitôt, sans quitter le chrono.</p>
             <p style={{ margin: "0 0 8px" }}>Le sens de lecture réutilise le réglage existant « quel score l'emporte » : <b>le plus grand</b> signifie « on gagne à partir du seuil », <b>le plus petit</b> signifie « on gagne en dessous ». Laissez le seuil vide si le jeu n'en a pas de chiffré : vous déclarerez alors la victoire à la main.</p>
             <p style={{ margin: "0 0 8px" }}>Une fois le jeu marqué coopératif, <b>le chronomètre et « Enregistrer une partie jouée » s'adaptent tout seuls</b> : plus de score ni de trophée joueur par joueur, mais <b>un seul score pour la table</b> et un seul résultat — <b>Gagné</b>, <b>Perdu</b> ou <b>Je ne sais pas</b>. Le résultat se déduit du score et du seuil, et reste corrigeable d'un clic. Tous les joueurs sont enregistrés avec le même score, et tous vainqueurs (ou aucun).</p>
@@ -9134,7 +9332,8 @@ function EventGameSuggestions({ e, canSuggest, canManage }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 12, marginBottom: adding ? 14 : 0 }}>
           {list.map((s) => {
             const mine = currentUser ? (s.votes.find((v) => v.userId === currentUser.id)?.value ?? null) : null;
-            const gameExists = !!(games || []).find((g) => g.id === s.gameId);
+            const sugGame = (games || []).find((g) => g.id === s.gameId) || null;
+            const gameExists = !!sugGame;
             const canRemove = !!currentUser && (s.addedBy === currentUser.id || canManage);
             const open = detailFor === s.id;
             return (
@@ -9168,6 +9367,8 @@ function EventGameSuggestions({ e, canSuggest, canManage }) {
                 <div style={{ padding: "8px 9px 9px" }}>
                   <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 12.5, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.gameName}</div>
                   <div style={{ fontSize: 10.5, color: "#a89a86", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>proposé par {s.addedByName}</div>
+                  {/* (lot W) De quoi juger sur pièce : la tablée qu'il faut et le temps qu'il prend */}
+                  {sugGame && <div style={{ marginTop: 4 }}><GameQuickFacts g={sugGame} size={10} /></div>}
                   {canSuggest && (
                     <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
                       {SUGGESTION_VOTE_OPTIONS.map((o) => {
@@ -9905,6 +10106,57 @@ function SessionsModal({ sessions, gameName, game, canDelete, onClose, onDeleted
   );
 }
 
+/* -----------------------------------------------------------------------------
+   (lot W) LES DEUX TUILES DE LA FICHE : MODE COOP ET PHRASES DE SCORE
+   Deux pavés pleine largeur mangeaient la fiche. La tuile « Coopératif » dit
+   toujours l'état exact du réglage — y compris « en attente » quand personne ne
+   l'a tranché, ce qu'un simple « Non » masquait. La tuile « Phrases de score »
+   ne s'affiche à côté que pour un jeu déclaré coopératif, ou s'il porte déjà des
+   phrases : sans cette seconde condition, un barème saisi sur un jeu compétitif
+   deviendrait inaccessible.
+   ----------------------------------------------------------------------------- */
+function GameCoopTiles({ g, phraseCount, onCoop, onPhrases }) {
+  const showPhrases = g.isCoop === true || (phraseCount || 0) > 0;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: showPhrases ? "repeat(auto-fit, minmax(146px, 1fr))" : "minmax(0,1fr)", gap: 10, marginBottom: 18 }}>
+      <button type="button" onClick={onCoop} title="Déclarer si ce jeu est coopératif, et fixer son seuil de victoire"
+        style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, boxSizing: "border-box", font: "inherit", textAlign: "left", cursor: "pointer",
+          background: g.isCoop === true ? "rgba(107,58,122,.11)" : g.isCoop === false ? "rgba(26,58,92,.05)" : "rgba(232,163,23,.10)",
+          border: `1.5px solid ${g.isCoop === true ? C.purple : g.isCoop === false ? "#e6dcc9" : C.amber}55`,
+          borderRadius: 13, padding: "11px 13px" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a7c6a", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+          <span style={{ fontSize: 15, lineHeight: 1 }}>🤝</span> Coopératif
+        </span>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, lineHeight: 1.15,
+          color: g.isCoop === true ? C.purple : g.isCoop === false ? C.navy : C.amber }}>
+          {g.isCoop === true ? "Oui" : g.isCoop === false ? "Non" : "En attente"}
+        </span>
+        <span style={{ fontSize: 11.5, color: "#9c8d79", lineHeight: 1.35 }}>
+          {g.isCoop === true
+            ? (coopTargetOf(g) == null ? "Sans seuil chiffré" : `On gagne ${scoreDirOf(g) === "low" ? "en dessous de" : "à partir de"} ${String(coopTargetOf(g)).replace(".", ",")}`)
+            : g.isCoop === false ? "Chacun pour soi" : "Cliquez pour renseigner"}
+        </span>
+      </button>
+
+      {showPhrases && (
+        <button type="button" onClick={onPhrases} title="Voir et compléter le barème de fin de partie"
+          style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, boxSizing: "border-box", font: "inherit", textAlign: "left", cursor: "pointer",
+            background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "11px 13px" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a7c6a", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+            <Trophy size={14} color={C.purple} /> Phrases de score
+          </span>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, lineHeight: 1.15, color: C.purple }}>
+            {phraseCount === null || phraseCount === undefined ? "…" : phraseCount === 0 ? "Aucune" : phraseCount}
+          </span>
+          <span style={{ fontSize: 11.5, color: "#9c8d79", lineHeight: 1.35 }}>
+            {phraseCount === null || phraseCount === undefined ? "" : phraseCount === 0 ? "Recopiez le barème de la règle" : `Affichée${phraseCount > 1 ? "s" : ""} en fin de partie`}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function GameDetailModal({ g, onClose, onAuth, setToast }) {
   const { currentUser, rateGame, clearRating, removeGame, updateGame, users, addOwner, removeOwner, declareOwners, toggleDiscover, openChrono, plays, beltByGame, askConfirm } = useApp();
   const { avg, count } = gameStats(g);
@@ -10095,41 +10347,9 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
         </button>
       )}
 
-      {/* (lot V) Mode cooperatif : reglable par tout membre, depuis la fiche */}
+      {/* (lot W) Mode coop et bareme, en deux tuiles compactes */}
       {currentUser && (
-        <button type="button" onClick={() => setShowCoop(true)} title="Déclarer ce jeu coopératif et fixer son seuil de victoire"
-          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", background: g.isCoop ? "rgba(107,58,122,.13)" : "rgba(26,58,92,.05)", border: `1.5px solid ${g.isCoop ? C.purple : "#e6dcc9"}`, borderRadius: 13, padding: "12px 16px", marginBottom: 12, cursor: "pointer", textAlign: "left", font: "inherit" }}>
-          <span style={{ fontSize: 21, flexShrink: 0, lineHeight: 1 }}>🤝</span>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>Mode coopératif</span>
-            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
-              {!g.isCoop ? "Non — ce jeu se joue chacun pour soi" : coopTargetOf(g) == null
-                ? "Oui, sans seuil chiffré — la victoire se déclare à la main"
-                : `Oui — on gagne ${scoreDirOf(g) === "low" ? "en dessous de" : "à partir de"} ${String(coopTargetOf(g)).replace(".", ",")}`}
-            </span>
-          </span>
-          <ChevronRight size={17} color={g.isCoop ? C.purple : "#b6a78f"} style={{ flexShrink: 0 }} />
-        </button>
-      )}
-
-      {/* (lot V) Phrases de score : le bareme de fin de partie, recopie du livret */}
-      {currentUser && (
-        <button type="button" onClick={() => setShowPhrases(true)} title="Voir et compléter le barème de fin de partie"
-          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "12px 16px", marginBottom: 18, cursor: "pointer", textAlign: "left", font: "inherit" }}
-          onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(107,58,122,.13)"; }}
-          onMouseLeave={(ev) => { ev.currentTarget.style.background = "rgba(107,58,122,.07)"; }}>
-          <Trophy size={21} color={C.purple} style={{ flexShrink: 0 }} />
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>Phrases de score</span>
-            <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>
-              {phraseCount === null ? "…" : phraseCount === 0 ? "Aucune pour l'instant — recopiez le barème de la règle" : `${phraseCount} phrase${phraseCount > 1 ? "s" : ""} affichée${phraseCount > 1 ? "s" : ""} en fin de partie`}
-            </span>
-          </span>
-          {phraseCount > 0 && (
-            <span style={{ flexShrink: 0, background: C.purple, color: "#fff", borderRadius: 999, padding: "2px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{phraseCount}</span>
-          )}
-          <ChevronRight size={17} color={C.purple} style={{ flexShrink: 0 }} />
-        </button>
+        <GameCoopTiles g={g} phraseCount={phraseCount} onCoop={() => setShowCoop(true)} onPhrases={() => setShowPhrases(true)} />
       )}
 
       {/* note moyenne */}
@@ -10761,21 +10981,194 @@ function LoanModal({ g, onClose, setToast, defaultWeight, request }) {
   );
 }
 
+/* ---- (lot W) Les caracteristiques propres a une extension ---------------------
+   Une extension peut modifier le nombre de joueurs ou la duree du jeu de base :
+   « Marco Polo -- Venise » monte a 5 joueurs, une extension solo redescend a 1.
+   Champ vide = « comme le jeu de base », et on n'affiche alors rien : la fiche
+   du jeu porte deja l'information juste au-dessus. */
+function ExtensionFacts({ x }) {
+  const hasPlayers = x.min !== "" && x.min != null;
+  const hasMax = x.max !== "" && x.max != null;
+  const hasTime = x.time !== "" && x.time != null;
+  if (!hasPlayers && !hasMax && !hasTime) return null;
+  const players = hasPlayers || hasMax
+    ? (hasPlayers && hasMax && String(x.min) !== String(x.max) ? `${x.min}–${x.max}` : String(hasPlayers ? x.min : x.max))
+    : null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+      {players && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(30,138,138,.10)", color: C.teal, borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>
+          <Users size={11} /> {players} joueur{players === "1" ? "" : "s"}
+        </span>
+      )}
+      {hasTime && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(232,163,23,.13)", color: "#a8760f", borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>
+          <Clock size={11} /> {x.time} min
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ---- (lot W) Champs communs a la creation et a la modification d'extension ----
+   Les indications rappellent la valeur du jeu de base : on ne remplit que ce
+   qui change, le reste est herite. */
+function ExtensionFormFields({ f, setF, g }) {
+  const base = g || {};
+  const baseHint = (v) => (v === "" || v == null ? "Vide = comme le jeu de base" : `Vide = comme le jeu de base (${v})`);
+  return (
+    <>
+      <Field label="Nom de l'extension"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Oceania, Europe..." /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        <Field label="Joueurs min." hint={baseHint(base.min)}>
+          <TextInput type="number" min="1" step="1" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} placeholder={base.min === "" || base.min == null ? "—" : String(base.min)} />
+        </Field>
+        <Field label="Joueurs max." hint={baseHint(base.max)}>
+          <TextInput type="number" min="1" step="1" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} placeholder={base.max === "" || base.max == null ? "—" : String(base.max)} />
+        </Field>
+        <Field label="Durée (min)" hint={baseHint(base.time)}>
+          <TextInput type="number" min="1" step="1" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} placeholder={base.time === "" || base.time == null ? "—" : String(base.time)} />
+        </Field>
+      </div>
+      <Field label="Description" hint="Ce que l'extension apporte : nouveaux modules, nouvelles cartes, mode solo…">
+        <textarea rows={4} value={f.desc} onChange={(e) => setF({ ...f, desc: e.target.value })} maxLength={2000}
+          placeholder="Facultatif — mais bien utile pour savoir si l'extension vaut le détour." style={{ ...inputStyle, resize: "vertical" }} />
+      </Field>
+      <Field label="Image" hint="Facultatif"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+    </>
+  );
+}
+
+/* ---- (lot W) Qui possede cette extension ? ------------------------------------
+   Meme circuit que la creation d'une fiche de jeu : on peut la referencer pour
+   quelqu'un d'autre sans se declarer soi-meme proprietaire. */
+function ExtensionOwnershipPicker({ ownership, setOwnership, forUserIds, toggleUser, users, currentUser }) {
+  const others = (users || []).filter((u) => !u.banned && u.id !== currentUser?.id);
+  return (
+    <Field label="Qui possède cette extension ?" hint="Le membre concerné devra confirmer la possession depuis Mon espace. « Personne » crée une simple fiche de référence.">
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+        {[
+          { v: "self", t: "Je la possède" },
+          { v: "other", t: "Un autre membre la possède" },
+          { v: "both", t: "Plusieurs membres la possèdent (dont moi)" },
+          { v: "none", t: "Personne — fiche de référence" },
+        ].map((opt) => {
+          const active = ownership === opt.v;
+          return (
+            <button key={opt.v} type="button" onClick={() => setOwnership(opt.v)}
+              style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left", border: `2px solid ${active ? C.teal : "#e6dcc9"}`, background: active ? "rgba(30,138,138,.06)" : "#fff" }}>
+              <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${active ? C.teal : "#c5b69c"}`, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                {active && <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.teal }} />}
+              </span>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{opt.t}</span>
+            </button>
+          );
+        })}
+      </div>
+      {(ownership === "other" || ownership === "both") && (
+        <div style={{ marginTop: 10, padding: "11px 13px", background: "rgba(232,163,23,.08)", borderRadius: 11 }}>
+          <span style={{ display: "block", fontSize: 12.5, color: "#6e6256", marginBottom: 8 }}>Sélectionnez le ou les membres propriétaires :</span>
+          {others.length === 0 ? (
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>Aucun autre membre à sélectionner.</span>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {others.map((u) => {
+                const active = forUserIds.includes(u.id);
+                return (
+                  <button key={u.id} type="button" onClick={() => toggleUser(u.id)}
+                    style={{ padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, border: `2px solid ${active ? C.amber : "#e6dcc9"}`, background: active ? C.amber : "#fff", color: active ? "#fff" : "#8a7c6a" }}>
+                    {active && <Check size={12} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </Field>
+  );
+}
+
 /* ---- Une ligne d'extension : possession + déclaration d'un autre propriétaire (avec confirmation) ---- */
-function ExtensionRow({ x, setToast }) {
-  const { currentUser, users, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, askConfirm } = useApp();
+function ExtensionRow({ x, g, setToast }) {
+  const { currentUser, users, addExtensionOwner, removeExtensionOwner, declareExtensionOwners, updateExtension, deleteExtension, askConfirm } = useApp();
   const [declaring, setDeclaring] = useState(false);
   const [sel, setSel] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [ef, setEf] = useState({ name: "", min: "", max: "", time: "", desc: "", img: "" });
+  const [err, setErr] = useState("");
+  const [openDesc, setOpenDesc] = useState(false);
+  // (lot W) Panneau du dernier propriétaire : se retirer ne doit pas effacer la
+  // fiche sans qu'on l'ait demandé.
+  const [leaving, setLeaving] = useState(false);
+
   const isOwner = currentUser && (x.ownerIds || []).includes(currentUser.id);
-  const canDeclare = currentUser && (isOwner || currentUser.admin);
   const pending = x.pendingOwners || [];
+  const isCreator = currentUser && x.createdBy === currentUser.id;
+  const canTouch = !!currentUser && (isOwner || isCreator || currentUser.admin === true);
+  const canDeclare = canTouch;
   const rattaches = new Set([...(x.ownerIds || []), ...pending.map((o) => o.id)]);
   const declarableUsers = (users || []).filter((u) => !u.banned && u.id !== currentUser?.id && !rattaches.has(u.id));
+  // Reste-t-il quelqu'un d'autre si je m'en vais ? (les déclarations en attente comptent)
+  const othersLeft = (x.ownerIds || []).filter((id) => id !== currentUser?.id).length + pending.length;
+
+  const openEdit = () => {
+    setEf({ name: x.name || "", min: x.min === "" || x.min == null ? "" : String(x.min), max: x.max === "" || x.max == null ? "" : String(x.max), time: x.time === "" || x.time == null ? "" : String(x.time), desc: x.desc || "", img: x.img || "" });
+    setErr(""); setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    if (!ef.name.trim()) { setErr("Le nom de l'extension est obligatoire."); return; }
+    setBusy(true); setErr("");
+    const res = await updateExtension(x.id, ef);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setEditing(false);
+    setToast("Extension mise à jour.");
+  };
+
+  const doLeave = async (deleteIfOrphan) => {
+    setBusy(true);
+    const res = await removeExtensionOwner(x.id, deleteIfOrphan);
+    setBusy(false); setLeaving(false);
+    if (res?.error) { setToast("Erreur : " + res.error); return; }
+    setToast(res?.deleted ? "Extension supprimée." : "Vous ne possédez plus cette extension — la fiche reste référencée.");
+  };
+
+  const onLeaveClick = async () => {
+    if (othersLeft > 0) {
+      const ok = await askConfirm({
+        title: "Ne plus posséder cette extension ?",
+        message: "Vous serez retiré des propriétaires. L'extension reste référencée sur la fiche du jeu, puisque d'autres membres la possèdent.",
+        confirmLabel: "Je ne l'ai plus",
+      });
+      if (!ok) return;
+      doLeave(false);
+      return;
+    }
+    setLeaving(true);   // dernier propriétaire : on demande quoi faire de la fiche
+  };
+
+  const removeWhole = async () => {
+    const ok = await askConfirm({
+      title: "Supprimer cette extension ?",
+      message: "La fiche de l'extension et toutes ses possessions seront effacées. Cette action est définitive.",
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    setBusy(true);
+    const res = await deleteExtension(x.id);
+    setBusy(false);
+    if (res?.error) { setToast("Erreur : " + res.error); return; }
+    setToast("Extension supprimée.");
+  };
+
+  const iconBtn = { background: "none", border: "none", cursor: "pointer", padding: 0, height: 20, display: "grid", placeItems: "center" };
 
   return (
     <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: "10px 12px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, background: x.img ? `center/cover url("${x.img}")` : `linear-gradient(135deg,${C.purple},${C.red})`, display: "grid", placeItems: "center" }}>
           {!x.img && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: 13 }}>🧩</span>}
         </div>
@@ -10789,53 +11182,109 @@ function ExtensionRow({ x, setToast }) {
               <Clock size={11} /> En attente : {pending.map((o) => o.name).join(", ")}
             </div>
           )}
+          <ExtensionFacts x={x} />
         </div>
-        {currentUser && (
-          isOwner ? (
-            <Btn size="sm" variant="danger" onClick={async () => { if (!(await askConfirm({ title: "Ne plus posséder cette extension ?", message: "Vous serez retiré des propriétaires de cette extension.", confirmLabel: "Je ne l'ai plus" }))) return; await removeExtensionOwner(x.id); setToast("Vous ne possédez plus cette extension."); }}><X size={13} /></Btn>
-          ) : (
-            <Btn size="sm" variant="teal" onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
-          )
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {currentUser && (
+            isOwner ? (
+              <Btn size="sm" variant="danger" disabled={busy} onClick={onLeaveClick} title="Je ne possède plus cette extension"><X size={13} /></Btn>
+            ) : (
+              <Btn size="sm" variant="teal" disabled={busy} onClick={async () => { await addExtensionOwner(x.id); setToast("Extension ajoutée à votre ludothèque !"); }}><Plus size={13} /> Je l'ai</Btn>
+            )
+          )}
+        </div>
       </div>
 
-      {canDeclare && (
+      {/* Description : repliée par défaut, pour ne pas noyer la liste */}
+      {x.desc && (
         <div style={{ marginTop: 8 }}>
-          {!declaring ? (
+          <div style={{ fontSize: 13, color: "#5c5346", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere",
+            maxHeight: openDesc ? "none" : 58, overflow: "hidden" }}>{x.desc}</div>
+          {x.desc.length > 150 && (
+            <button type="button" onClick={() => setOpenDesc(!openDesc)}
+              style={{ background: "none", border: "none", color: C.purple, cursor: "pointer", padding: "3px 0 0", fontSize: 12, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
+              {openDesc ? "Réduire" : "Lire la suite"} <ChevronDown size={12} style={{ transform: openDesc ? "rotate(180deg)" : "none" }} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Dernier propriétaire : garder la fiche, ou tout effacer ? */}
+      {leaving && (
+        <div style={{ marginTop: 10, padding: "11px 13px", background: "rgba(232,163,23,.10)", border: `1.5px solid ${C.amber}55`, borderRadius: 11 }}>
+          <span style={{ display: "block", fontSize: 12.5, color: "#6e6256", lineHeight: 1.55, marginBottom: 9 }}>
+            Vous êtes le <b>seul propriétaire</b> de cette extension. Que faut-il en faire ?
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn size="sm" variant="teal" disabled={busy} onClick={() => doLeave(false)}>Me retirer, garder la fiche</Btn>
+            <Btn size="sm" variant="danger" disabled={busy} onClick={() => doLeave(true)}><Trash2 size={13} /> Supprimer l'extension</Btn>
+            <Btn size="sm" variant="soft" disabled={busy} onClick={() => setLeaving(false)}>Annuler</Btn>
+          </div>
+          <span style={{ display: "block", fontSize: 11.5, color: "#9c8d79", marginTop: 8, lineHeight: 1.45 }}>
+            Gardée, elle reste visible sur la fiche du jeu sans propriétaire — un autre membre pourra dire « Je l'ai ».
+          </span>
+        </div>
+      )}
+
+      {/* Modification de l'extension */}
+      {editing && (
+        <div style={{ marginTop: 10, padding: "12px 13px", background: "#fff", border: "1px solid #ece2d0", borderRadius: 11 }}>
+          <ExtensionFormFields f={ef} setF={setEf} g={g} />
+          {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "8px 11px", borderRadius: 8, fontSize: 12.5, marginBottom: 9 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" disabled={busy || !ef.name.trim()} onClick={saveEdit}>{busy ? <Loader2 size={13} className="aladj-spin" /> : <><Check size={13} /> Enregistrer</>}</Btn>
+            <Btn size="sm" variant="soft" disabled={busy} onClick={() => { setEditing(false); setErr(""); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {canTouch && !editing && (
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          {!declaring && (
             <button type="button" onClick={() => setDeclaring(true)}
               style={{ border: "none", background: "transparent", color: C.purple, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
               <UserPlus size={13} /> Déclarer un autre propriétaire
             </button>
+          )}
+          <button type="button" onClick={openEdit} title="Modifier cette extension"
+            style={{ ...iconBtn, color: "#9c8d79", display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12 }}>
+            <Edit3 size={13} /> Modifier
+          </button>
+          <button type="button" onClick={removeWhole} title="Supprimer définitivement cette extension"
+            style={{ ...iconBtn, color: C.red, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12 }}>
+            <Trash2 size={13} /> Supprimer
+          </button>
+        </div>
+      )}
+
+      {canDeclare && declaring && (
+        <div style={{ padding: "10px 12px", background: "rgba(232,163,23,.08)", borderRadius: 10, marginTop: 8 }}>
+          <span style={{ display: "block", fontSize: 12, color: "#6e6256", marginBottom: 8 }}>Quels membres possèdent aussi cette extension ? Ils recevront une demande de confirmation.</span>
+          {declarableUsers.length === 0 ? (
+            <span style={{ fontSize: 12, color: "#9c8d79" }}>Tous les membres sont déjà rattachés à cette extension.</span>
           ) : (
-            <div style={{ padding: "10px 12px", background: "rgba(232,163,23,.08)", borderRadius: 10, marginTop: 4 }}>
-              <span style={{ display: "block", fontSize: 12, color: "#6e6256", marginBottom: 8 }}>Quels membres possèdent aussi cette extension ? Ils recevront une demande de confirmation.</span>
-              {declarableUsers.length === 0 ? (
-                <span style={{ fontSize: 12, color: "#9c8d79" }}>Tous les membres sont déjà rattachés à cette extension.</span>
-              ) : (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  {declarableUsers.map((u) => {
-                    const on = sel.includes(u.id);
-                    return (
-                      <button key={u.id} type="button" onClick={() => setSel((arr) => on ? arr.filter((v) => v !== u.id) : [...arr, u.id])}
-                        style={{ padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, border: `2px solid ${on ? C.amber : "#e6dcc9"}`, background: on ? C.amber : "#fff", color: on ? "#fff" : "#8a7c6a" }}>
-                        {on && <Check size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 8 }}>
-                <Btn size="sm" variant="teal" disabled={sel.length === 0 || busy} onClick={async () => {
-                  setBusy(true);
-                  const res = await declareExtensionOwners(x.id, sel);
-                  setBusy(false);
-                  if (res?.error) { setToast(res.error); }
-                  else { setToast("Demande de confirmation envoyée."); setDeclaring(false); setSel([]); }
-                }}>{busy ? <Loader2 size={13} className="aladj-spin" /> : <><Check size={13} /> Envoyer</>}</Btn>
-                <Btn size="sm" variant="soft" onClick={() => { setDeclaring(false); setSel([]); }}>Annuler</Btn>
-              </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {declarableUsers.map((u) => {
+                const on = sel.includes(u.id);
+                return (
+                  <button key={u.id} type="button" onClick={() => setSel((arr) => on ? arr.filter((v) => v !== u.id) : [...arr, u.id])}
+                    style={{ padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, border: `2px solid ${on ? C.amber : "#e6dcc9"}`, background: on ? C.amber : "#fff", color: on ? "#fff" : "#8a7c6a" }}>
+                    {on && <Check size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />}{u.name}
+                  </button>
+                );
+              })}
             </div>
           )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" disabled={sel.length === 0 || busy} onClick={async () => {
+              setBusy(true);
+              const res = await declareExtensionOwners(x.id, sel);
+              setBusy(false);
+              if (res?.error) { setToast(res.error); }
+              else { setToast("Demande de confirmation envoyée."); setDeclaring(false); setSel([]); }
+            }}>{busy ? <Loader2 size={13} className="aladj-spin" /> : <><Check size={13} /> Envoyer</>}</Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setDeclaring(false); setSel([]); }}>Annuler</Btn>
+          </div>
         </div>
       )}
     </div>
@@ -10844,11 +11293,15 @@ function ExtensionRow({ x, setToast }) {
 
 /* ---- Section extensions d'une fiche de jeu ---- */
 function GameExtensions({ g, onAuth, onClose, setToast }) {
-  const { currentUser, addExtension, addExtensionOwner, removeExtensionOwner } = useApp();
+  const { currentUser, users, addExtension } = useApp();
   const [adding, setAdding] = useState(false);
   const [mode, setMode] = useState("bgg"); // "bgg" | "manual"
-  const [f, setF] = useState({ name: "", img: "" });
+  const [f, setF] = useState({ name: "", img: "", min: "", max: "", time: "", desc: "" });
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // (lot W) Qui possède l'extension créée — on ne s'inscrit plus d'office.
+  const [ownership, setOwnership] = useState("self");
+  const [forUserIds, setForUserIds] = useState([]);
   // recherche BGG
   const [bggQuery, setBggQuery] = useState("");
   const [bggResults, setBggResults] = useState([]);
@@ -10857,13 +11310,29 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
   const [bggErr, setBggErr] = useState("");
   const exts = g.extensions || [];
 
-  const reset = () => { setAdding(false); setMode("bgg"); setF({ name: "", img: "" }); setBggQuery(""); setBggResults([]); setBggErr(""); };
+  const reset = () => {
+    setAdding(false); setMode("bgg");
+    setF({ name: "", img: "", min: "", max: "", time: "", desc: "" });
+    setOwnership("self"); setForUserIds([]);
+    setBggQuery(""); setBggResults([]); setBggErr(""); setErr("");
+  };
+
+  const toggleUser = (id) => setForUserIds((arr) => (arr.includes(id) ? arr.filter((v) => v !== id) : [...arr, id]));
 
   const submitManual = async () => {
     if (!f.name.trim()) return;
-    setBusy(true);
-    await addExtension(g.id, f);
+    if ((ownership === "other" || ownership === "both") && forUserIds.length === 0) {
+      setErr("Sélectionnez au moins un membre, ou choisissez « Je la possède ».");
+      return;
+    }
+    setBusy(true); setErr("");
+    const res = await addExtension(g.id, {
+      ...f,
+      selfOwns: ownership === "self" || ownership === "both",
+      forUserIds: (ownership === "other" || ownership === "both") ? forUserIds : [],
+    });
     setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
     reset();
     setToast("Extension ajoutée !");
   };
@@ -10888,8 +11357,18 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
       // L'utilisateur peut alors corriger le nom, l'image, etc. avant validation.
       // Le nom cliqué dans les résultats (souvent français) prime sur le nom
       // "primaire" de BGG (presque toujours anglais).
-      setF({ name: name || d.name, img: d.img || "" });
+      // (lot W) On récupère aussi joueurs, durée et description : BGG les porte
+      // pour la plupart des extensions, autant ne pas les ressaisir.
+      setF({
+        name: name || d.name, img: d.img || "",
+        min: d.min ? String(d.min) : "", max: d.max ? String(d.max) : "", time: d.time ? String(d.time) : "",
+        desc: d.desc || "",
+      });
       setMode("manual");
+      // Traduction en tâche de fond : l'aperçu s'affiche tout de suite.
+      if (d.desc) {
+        translateText(d.desc).then((t) => { if (t) setF((cur) => (cur.desc === d.desc ? { ...cur, desc: t } : cur)); });
+      }
     } catch (e) {
       setBggErr("Impossible de récupérer cette fiche depuis BGG.");
     } finally { setBggLoadingId(null); }
@@ -10905,7 +11384,7 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
       {exts.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucune extension référencée pour ce jeu.</span>}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10, marginBottom: adding ? 14 : 0 }}>
-        {exts.map((x) => <ExtensionRow key={x.id} x={x} setToast={setToast} />)}
+        {exts.map((x) => <ExtensionRow key={x.id} x={x} g={g} setToast={setToast} />)}
       </div>
 
       {adding && (
@@ -10945,8 +11424,10 @@ function GameExtensions({ g, onAuth, onClose, setToast }) {
             </>
           ) : (
             <>
-              <Field label="Nom de l'extension"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Oceania, Europe..." autoFocus /></Field>
-              <Field label="Image" hint="Facultatif"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
+              <ExtensionFormFields f={f} setF={setF} g={g} />
+              <ExtensionOwnershipPicker ownership={ownership} setOwnership={setOwnership} forUserIds={forUserIds}
+                toggleUser={toggleUser} users={users} currentUser={currentUser} />
+              {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 10 }}>{err}</div>}
               <div style={{ display: "flex", gap: 8 }}>
                 <Btn size="sm" variant="purple" onClick={submitManual} disabled={busy || !f.name.trim()}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Plus size={14} /> Ajouter l'extension</>}</Btn>
                 <Btn size="sm" variant="soft" onClick={reset}>Annuler</Btn>
@@ -12367,7 +12848,7 @@ function LocationsPage({ setToast }) {
 
 function EditGameModal({ g, onClose, onSave }) {
   const { currentUser, toggleGameShared } = useApp();
-  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "", scoreDirection: g.scoreDirection || "", isCoop: g.isCoop === true, coopTarget: g.coopTarget == null ? "" : String(g.coopTarget) });
+  const [f, setF] = useState({ name: g.name, year: g.year, min: g.min, max: g.max, time: g.time, desc: g.desc, img: g.img, mechanics: (g.mechanics || []).join(", "), newPrice: g.newPrice != null ? String(g.newPrice) : "", ludumUrl: g.ludumUrl || "", scoreDirection: g.scoreDirection || "", isCoop: g.isCoop === true ? true : (g.isCoop === false ? false : null), coopTarget: g.coopTarget == null ? "" : String(g.coopTarget) });
   const [shared, setShared] = useState(g.shared !== false);
   const isOwner = currentUser && currentUser.id === g.ownerId;
   const previewRental = rentalPrice(Number(f.newPrice));
@@ -13601,7 +14082,7 @@ const backLinkStyle = { background: "none", border: "none", color: C.teal, fontF
 
 function ManualForm({ onBack, onDone, prefillName = "" }) {
   const { games, upcoming, users, currentUser, addOwner } = useApp();
-  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "", scoreDirection: "", isCoop: false, coopTarget: "" });
+  const [f, setF] = useState({ name: prefillName, year: "", min: "", max: "", time: "", desc: "", img: "", mechanics: [], ludumUrl: "", newPrice: "", scoreDirection: "", isCoop: null, coopTarget: "" });
   const [err, setErr] = useState("");
   const [dismissed, setDismissed] = useState(false); // l'utilisateur a écarté la suggestion de doublon
   const [busy, setBusy] = useState(false); // anti double-clic : verrouille le bouton pendant la création
@@ -16118,7 +16599,7 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
     if (!gameId) { setPhrases([]); return undefined; }
     (async () => {
       const { data } = await supabase.from("game_score_phrases")
-        .select("id,min_score,max_score,content").eq("game_id", gameId);
+        .select("id,player_count,min_score,max_score,content").eq("game_id", gameId);
       if (go) setPhrases(data || []);
     })();
     return () => { go = false; };
@@ -16157,7 +16638,9 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
     if (!coopOn || coopTouched) return;
     setCoopWon(coopAuto);
   }, [coopAuto, coopOn, coopTouched]);
-  const coopPhrase = useMemo(() => phraseForScore(phrases, coopScore), [phrases, coopScore]);
+  // (lot W) La tablee entre dans le choix de la phrase : le bareme d'un jeu
+  // n'a pas la meme echelle a 2 et a 5.
+  const coopPhrase = useMemo(() => phraseForScore(phrases, coopScore, parts.length), [phrases, coopScore, parts.length]);
   const setCoopVerdict = (v) => { setCoopTouched(true); setCoopWon(v); };
 
   const save = async () => {
@@ -16381,7 +16864,9 @@ function RecordPlayModal({ open, onClose, setToast, defaultGameId }) {
                 </div>
                 {coopPhrase && (
                   <div style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.purple}33`, borderRadius: 10, padding: "9px 12px", fontSize: 13.5, color: "#4e463b", lineHeight: 1.5 }}>
-                    <b style={{ color: C.purple }}>{phraseRangeLabel(coopPhrase)}</b> — {coopPhrase.content}
+                    <b style={{ color: C.purple }}>{phraseRangeLabel(coopPhrase)}</b>
+                    {coopPhrase.player_count != null && <span style={{ color: "#9c8d79", fontSize: 12 }}> ({phrasePlayersLabel(coopPhrase)})</span>}
+                    {" "}— {coopPhrase.content}
                   </div>
                 )}
                 {!coopPhrase && phrases.length === 0 && (
@@ -16972,7 +17457,7 @@ function MyLudoPage({ setToast, setPage }) {
                 </span>
                 <div style={{ display: "flex", gap: 6 }}>
                   <Btn size="sm" variant="teal" onClick={async () => { const r = await confirmExtensionOwnership(ext.id); if (r?.error) { setToast("Erreur : " + r.error); return; } setToast(`« ${ext.name} » confirmée dans votre ludothèque.`); }}><Check size={14} /> Confirmer</Btn>
-                  <Btn size="sm" variant="danger" onClick={async () => { if (!(await askConfirm({ title: "Refuser cette possession ?", message: "La déclaration faite en votre nom pour cette extension sera supprimée.", confirmLabel: "Refuser" }))) return; await removeExtensionOwner(ext.id); setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
+                  <Btn size="sm" variant="danger" onClick={async () => { if (!(await askConfirm({ title: "Refuser cette possession ?", message: "La déclaration faite en votre nom pour cette extension sera supprimée. La fiche de l'extension, elle, reste sur le jeu.", confirmLabel: "Refuser" }))) return; const r = await removeExtensionOwner(ext.id); if (r?.error) { setToast("Erreur : " + r.error); return; } setToast("Possession refusée."); }}><X size={14} /> Supprimer</Btn>
                 </div>
               </div>
             ))}
@@ -17010,6 +17495,8 @@ function MyLudoPage({ setToast, setPage }) {
                     <div style={{ padding: "9px 11px" }}>
                       <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, lineHeight: 1.2 }}>{g.name}</div>
                       <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 3 }}>chez {(g.owners && g.owners.length ? g.owners[0].name : g.ownerName)}{st.count > 0 ? ` · ★ ${st.avg.toFixed(2).replace(".", ",")}` : ""}</div>
+                      {/* (lot W) Joueurs, durée annoncée, et durée réellement mesurée au chronomètre */}
+                      <div style={{ marginTop: 4 }}><GameQuickFacts g={g} /></div>
                       {g._recoReason && (
                         <div style={{ marginTop: 6, fontSize: 10.5, color: C.teal, background: "rgba(30,138,138,.08)", borderRadius: 6, padding: "3px 7px", lineHeight: 1.3, display: "inline-block" }}>
                           {g._recoReason}
