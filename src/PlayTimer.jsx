@@ -1946,7 +1946,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     if (!gid) { setPhrases([]); return undefined; }
     (async () => {
       const { data } = await supabase.from('game_score_phrases')
-        .select('id,min_score,max_score,content').eq('game_id', gid);
+        .select('id,player_count,min_score,max_score,content').eq('game_id', gid);
       if (go) setPhrases(data || []);
     })();
     return () => { go = false; };
@@ -1958,7 +1958,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     if (!isCoop || coopTouched) return;
     setCoopWon(coopAuto);
   }, [coopAuto, isCoop, coopTouched]);
-  const coopPhrase = phraseForScore(phrases, coopScore);
+  // (lot W) Le bareme peut dependre du nombre de joueurs a la table : on passe
+  // la tablee reelle de la partie en cours.
+  const coopPhrase = phraseForScore(phrases, coopScore, players.length);
 
   // Le score commun est ecrit sur chaque siege : l'historique du jeu reste
   // exploitable (moyennes, records) exactement comme en competitif.
@@ -3426,13 +3428,24 @@ function coopWinFromScore(target, dir, score) {
 
 /* Phrase du bareme correspondant a un score. Bornes inclusives, une borne vide
    valant « pas de limite de ce cote ». A egalite, la tranche la plus etroite
-   l'emporte : une phrase ecrite pour un score precis prime sur une phrase large. */
-function phraseForScore(phrases, score) {
+   l'emporte : une phrase ecrite pour un score precis prime sur une phrase large.
+
+   (lot W) Une phrase peut viser une tablee precise (player_count) : dans ce
+   cas elle prime sur les phrases valables partout. Si la tablee est inconnue,
+   on s'en tient aux phrases generales plutot que d'afficher le bareme d'une
+   autre tablee. Meme regle que dans App.jsx. */
+function phraseForScore(phrases, score, playerCount) {
   const s = score === '' || score == null || !Number.isFinite(Number(score)) ? null : Number(score);
   if (s == null) return null;
+  const n = Number(playerCount);
+  const pc = Number.isFinite(n) && n > 0 ? n : null;
   const lo = (p) => (p.min_score == null ? -Infinity : Number(p.min_score));
   const hi = (p) => (p.max_score == null ? Infinity : Number(p.max_score));
-  const hits = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  const inRange = (phrases || []).filter((p) => s >= lo(p) && s <= hi(p));
+  if (!inRange.length) return null;
+  const generic = inRange.filter((p) => p.player_count == null);
+  const exact = pc == null ? [] : inRange.filter((p) => Number(p.player_count) === pc);
+  const hits = exact.length ? exact : generic;
   if (!hits.length) return null;
   const width = (p) => {
     const w = hi(p) - lo(p);
