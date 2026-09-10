@@ -1324,6 +1324,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [nextQuery, setNextQuery] = useState('');
   const [nextHits, setNextHits] = useState([]);
   const [resultSaved, setResultSaved] = useState(false);
+  // (lot X) Creer un moment jeux a partir de la partie en cours : il demarre
+  // a l'heure de lancement du chrono et ne contient que la tablee presente.
+  const [eventPrompt, setEventPrompt] = useState(false);
+  const [eventBusy, setEventBusy] = useState(false);
+  const [eventCreated, setEventCreated] = useState(false);
 
   // ---- minuteur de table (sablier) -----------------------------------
   // Accessoire purement local : aucune ecriture en base, aucun partage entre
@@ -2190,6 +2195,39 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     }
   };
 
+  // (lot X) Le moment jeux nait de la partie : meme heure de debut, meme
+  // tablee, et surtout rien a ressaisir. Une seule question est posee --
+  // ouvert a tous ou prive -- parce que c'est la seule que le chrono ne
+  // peut pas deviner. Un moment cree ainsi n'est jamais un moment BGA.
+  const createEventFromSession = async (isPrivate) => {
+    if (!sid || eventBusy) return;
+    setEventBusy(true); setError(null);
+    try {
+      const { error: e } = await supabase.rpc('aladj_create_event_from_session', {
+        p_session_id: sid, p_is_private: !!isPrivate, p_place: 'A preciser',
+      });
+      if (e) throw e;
+      await refetchSession(sid);
+      await syncEventGame(sid);   // le jeu rejoint aussitot les jeux joues du moment
+      setEventCreated(true);
+      setEventPrompt(false);
+    } catch (err) {
+      const m = err.message || String(err);
+      setError(/ALADJ_NOT_HOST/.test(m)
+        ? "Seul celui qui a lance la partie peut creer le moment jeux."
+        : /ALADJ_SESSION_NOT_FOUND/.test(m) ? "Cette partie est introuvable."
+        : /ALADJ_NOT_SIGNED_IN/.test(m) ? "Connectez-vous pour creer un moment jeux."
+        : /Could not find the function/i.test(m) || /aladj_create_event_from_session/.test(m)
+          ? "La creation de moment jeux n'est pas installee sur le serveur (migration a rejouer)."
+          : m);
+    } finally {
+      setEventBusy(false);
+    }
+  };
+
+  // Le moment ne se propose que si la partie n'est rattachee a aucun.
+  const canMakeEvent = !!(isHost && sid && !session?.event_id && !eventId && currentUser);
+
   // (2) Remplacer le jeu de la session en cours. Le serveur refuse des qu'une
   // manche a ete archivee : les temps deja mesures appartiennent au jeu
   // precedent, il faut alors « terminer et enchainer » pour que chacun garde
@@ -2455,6 +2493,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           swap={swapPicker}
           onPick={swapPicker ? swapGame : continueWithGame}
           onClose={() => { if (!switching) { setNextPicker(false); setSwapPicker(false); setNextQuery(''); } }}
+        />
+      )}
+      {eventPrompt && (
+        <NewEventSheet
+          busy={eventBusy}
+          nPlayers={players.length}
+          gameName={game?.name || ''}
+          onCreate={createEventFromSession}
+          onClose={() => { if (!eventBusy) setEventPrompt(false); }}
         />
       )}
       {clockEdit && (
@@ -2785,6 +2832,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />
         </Card>
 
+        <EventBanner created={eventCreated} can={canMakeEvent}
+          onOpen={() => setEventPrompt(true)} />
+
         {isHost ? (
           <button style={{ ...btnPrimary, width: '100%' }} onClick={start}>Démarrer la partie</button>
         ) : (
@@ -3048,6 +3098,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {tile('👥', teamsOn ? 'La tablée · équipes' : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
+            {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
+            {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
             {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
             {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
             {isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
@@ -3254,6 +3306,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>La tablee</button>
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setClockEdit(true)}>Corriger les temps</button>}
+            {canMakeEvent && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setEventPrompt(true)}>📅 Créer un moment jeux</button>}
+            {eventCreated && !canMakeEvent && (
+              <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                gap: 6, borderRadius: 12, padding: '12px 16px', background: 'rgba(30,138,138,.10)',
+                border: `1.5px solid ${C.teal}55`, color: C.teal, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5 }}>
+                📅 Moment jeux créé
+              </span>
+            )}
             {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
@@ -3404,6 +3464,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             🎲 Enregistrer et enchaîner un autre jeu
           </button>
         )}
+        <div style={{ marginTop: 10 }}>
+          <EventBanner created={eventCreated} can={canMakeEvent}
+            onOpen={() => setEventPrompt(true)} />
+        </div>
         <p style={{ fontSize: 12.5, color: `${C.navy}99`, textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
           {isHost
             ? "Les mêmes joueurs, les mêmes équipes et les mêmes couleurs sont repris — et tous les téléphones déjà connectés basculent tout seuls sur le nouveau jeu."
@@ -3497,6 +3561,87 @@ function CoopOutcome({ won, score, phrase }) {
 }
 
 // ---- choix du sens du score (le plus grand / le plus petit l'emporte) ----
+/* ---------------------------------------------------------------------
+   (lot X) Le moment jeux ne du chrono.
+   On joue d'abord, on declare ensuite : plutot que de creer une fiche de
+   moment avant de s'installer, on laisse le chronometre la fabriquer a
+   partir de ce qui s'est reellement passe -- l'heure ou la boite a ete
+   ouverte, et les gens qui etaient autour de la table. Rien d'autre n'est
+   demande, sauf la seule chose que le chrono ne peut pas savoir : si ce
+   moment regarde toute l'association ou seulement ceux qui y etaient.
+   --------------------------------------------------------------------- */
+function EventBanner({ created, can, onOpen }) {
+  if (created) {
+    return (
+      <div style={{ background: 'rgba(30,138,138,.10)', border: `1.5px solid ${C.teal}55`, borderRadius: 14,
+        padding: '11px 14px', marginBottom: 14, fontSize: 13.5, color: C.navy, lineHeight: 1.5 }}>
+        <b style={{ fontFamily: TITLE, fontWeight: 600 }}>📅 Moment jeux créé.</b>{' '}
+        Il est dans le calendrier de l'asso, avec la tablée d'aujourd'hui. Le lieu reste à préciser
+        sur sa fiche, et les jeux joués s'y ajoutent tout seuls.
+      </div>
+    );
+  }
+  if (!can) return null;
+  return (
+    <button type="button" onClick={onOpen}
+      style={{ width: '100%', marginBottom: 14, border: `1.5px dashed ${C.teal}`, background: 'rgba(30,138,138,.06)',
+        color: C.teal, borderRadius: 14, padding: '13px 14px', fontFamily: TITLE, fontWeight: 600,
+        fontSize: 15.5, cursor: 'pointer', textAlign: 'center' }}>
+      📅 Créer un moment jeux à partir de cette partie
+    </button>
+  );
+}
+
+function NewEventSheet({ busy, nPlayers, gameName, onCreate, onClose }) {
+  const [priv, setPriv] = useState(false);
+  const choice = (on, title, desc, onClick, tint) => (
+    <button type="button" onClick={onClick} disabled={busy}
+      style={{ flex: '1 1 200px', minWidth: 0, textAlign: 'left', cursor: busy ? 'default' : 'pointer',
+        borderRadius: 14, padding: '12px 14px', background: on ? `${tint}14` : '#fff',
+        border: `2px solid ${on ? tint : '#e6dcc9'}` }}>
+      <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: on ? tint : C.navy }}>{title}</div>
+      <div style={{ fontSize: 12.5, color: `${C.navy}99`, marginTop: 3, lineHeight: 1.45 }}>{desc}</div>
+    </button>
+  );
+
+  return (
+    <div onClick={busy ? undefined : onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620,
+          maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>📅 Créer un moment jeux</div>
+          <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
+        </div>
+        <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '4px 0 16px', lineHeight: 1.55 }}>
+          Le moment <b>démarre à l'heure où vous avez lancé le chrono</b> et ne réunit
+          que <b>les {nPlayers} personnes présentes</b> à cette table — membres et invités.
+          {gameName ? <> {gameName} y figure d'emblée dans les jeux joués.</> : null} Ce n'est
+          pas un moment Board Game Arena, et le <b>lieu reste à préciser</b> : tout se corrige
+          ensuite sur la fiche du moment.
+        </p>
+
+        <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
+          Ce moment est-il privé ?
+        </div>
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+          {choice(!priv, '🌍 Ouvert à tous', "Il apparaît dans le calendrier de l'association, comme les autres moments.", () => setPriv(false), C.teal)}
+          {choice(priv, '🔒 Privé', 'Réservé aux personnes concernées : il ne s\'affiche pas dans le calendrier public.', () => setPriv(true), C.purple)}
+        </div>
+
+        <div style={{ display: 'flex', gap: 9 }}>
+          <button type="button" onClick={() => onCreate(priv)} disabled={busy}
+            style={{ ...btnPrimary, flex: 1, opacity: busy ? 0.6 : 1 }}>
+            {busy ? 'Création…' : 'Créer le moment jeux'}
+          </button>
+          <button type="button" onClick={onClose} style={btnGhost} disabled={busy}>Annuler</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* Choisir le jeu suivant, sans quitter le chrono ni ressaisir les joueurs. */
 function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose, swap = false }) {
   const seen = new Set();
