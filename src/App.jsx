@@ -3935,9 +3935,17 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ players: "", min: "", max: "", content: "" });
-  const [editId, setEditId] = useState(null);
+  // (lot X) Le texte s'ecrit UNE seule fois et porte autant de tranches que
+  // necessaire : « a 2 joueurs, de 9 a 12 », « a 4 joueurs, de 14 a 18 »...
+  // C'est la meme phrase ; seuls les points changent avec la tablee.
+  const [draft, setDraft] = useState({ content: "", ranges: [{ key: "r0", players: "", min: "", max: "" }] });
+  const [editId, setEditId] = useState(null);              // tranche en cours de modification
   const [editDraft, setEditDraft] = useState({ players: "", min: "", max: "", content: "" });
+  const [textEditKey, setTextEditKey] = useState(null);    // phrase dont on reecrit le texte
+  const [textDraft, setTextDraft] = useState("");
+  const [addRangeKey, setAddRangeKey] = useState(null);    // phrase a laquelle on ajoute une tablee
+  const [rangeDraft, setRangeDraft] = useState({ players: "", min: "", max: "" });
+  const [byText, setByText] = useState(true);              // regroupement : par phrase (defaut) ou par tablee
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -3952,19 +3960,6 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
   }, [gameId, onCount]);
   useEffect(() => { load(); }, [load]);
 
-  // Regroupement par tablee : « toutes les tablees » d'abord, puis 2, 3, 4...
-  const groups = useMemo(() => {
-    const by = new Map();
-    (rows || []).forEach((r) => {
-      const k = r.player_count == null ? "" : String(Number(r.player_count));
-      if (!by.has(k)) by.set(k, []);
-      by.get(k).push(r);
-    });
-    return [...by.entries()]
-      .sort((a, b) => (a[0] === "" ? -1 : b[0] === "" ? 1 : Number(a[0]) - Number(b[0])))
-      .map(([k, list]) => ({ key: k, count: k === "" ? null : Number(k), list }));
-  }, [rows]);
-
   const nameOf = (id) => (users || []).find((u) => u.id === id)?.name || "Un membre";
   const canTouch = (r) => !!currentUser && (r.author_id === currentUser.id || currentUser.admin === true);
   const numOrNull = (v) => (v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -3977,40 +3972,125 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
     return i >= 1 && i <= 99 ? i : null;
   };
 
+  // Bornes de tri, toujours finies : soustraire deux infinis donnerait NaN.
+  const loOf = (p) => (p.min_score == null ? -1e9 : Number(p.min_score));
+  const pcOf = (p) => (p.player_count == null ? -1 : Number(p.player_count));
+
+  // (lot X) Regroupement par PHRASE : le texte apparait une fois, suivi de ses
+  // tranches. C'est la lecture naturelle d'un bareme cooperatif, ou la meme
+  // appreciation vaut a toutes les tablees mais pas pour les memes points.
+  const textGroups = useMemo(() => {
+    const by = new Map();
+    (rows || []).forEach((r) => {
+      const k = (r.content || "").trim();
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(r);
+    });
+    return [...by.entries()]
+      .map(([content, list]) => ({
+        key: content,
+        content,
+        list: [...list].sort((a, b) => (pcOf(a) - pcOf(b)) || (loOf(a) - loOf(b))),
+      }))
+      .sort((a, b) => Math.min(...a.list.map(loOf)) - Math.min(...b.list.map(loOf)));
+  }, [rows]);
+
+  // Regroupement par TABLEE : la lecture d'origine, conservee au choix.
+  const tableGroups = useMemo(() => {
+    const by = new Map();
+    (rows || []).forEach((r) => {
+      const k = r.player_count == null ? "" : String(Number(r.player_count));
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(r);
+    });
+    return [...by.entries()]
+      .sort((a, b) => (a[0] === "" ? -1 : b[0] === "" ? 1 : Number(a[0]) - Number(b[0])))
+      .map(([k, list]) => ({ key: k, count: k === "" ? null : Number(k), list }));
+  }, [rows]);
+
+  /* ---- saisie : une phrase, autant de tranches qu'on veut ---- */
+  const addDraftRange = () => setDraft((d) => ({ ...d, ranges: [...d.ranges, { key: `r${Date.now()}${d.ranges.length}`, players: "", min: "", max: "" }] }));
+  const setDraftRange = (key, patch) => setDraft((d) => ({ ...d, ranges: d.ranges.map((r) => (r.key === key ? { ...r, ...patch } : r)) }));
+  const removeDraftRange = (key) => setDraft((d) => ({ ...d, ranges: d.ranges.length > 1 ? d.ranges.filter((r) => r.key !== key) : d.ranges }));
+  const resetDraft = () => setDraft({ content: "", ranges: [{ key: "r0", players: "", min: "", max: "" }] });
+
+  // Une tranche saisie devient une ligne de bareme. La verification est commune
+  // a l'ajout et a la modification : un minimum ne depasse jamais un maximum.
+  const rowsFromRanges = (content, ranges) => {
+    const out = [];
+    for (const r of ranges) {
+      const mn = numOrNull(r.min), mx = numOrNull(r.max);
+      if (mn != null && mx != null && mn > mx) return { error: "Le score minimum ne peut pas dépasser le maximum." };
+      const pc = playersOrNull(r.players);
+      // Deux tranches identiques dans la meme saisie : on n'en garde qu'une.
+      if (out.some((o) => o.player_count === pc && o.min_score === mn && o.max_score === mx)) continue;
+      out.push({ player_count: pc, min_score: mn, max_score: mx, content });
+    }
+    if (!out.length) return { error: "Ajoutez au moins une tranche de score." };
+    return { list: out };
+  };
+
   const submitNew = async () => {
     const txt = draft.content.trim();
     if (!txt || !currentUser) return;
-    const mn = numOrNull(draft.min), mx = numOrNull(draft.max);
-    if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
+    const built = rowsFromRanges(txt.slice(0, 400), draft.ranges);
+    if (built.error) { setErr(built.error); return; }
     setBusy(true); setErr("");
-    const { error } = await supabase.from("game_score_phrases").insert({
-      game_id: gameId, author_id: currentUser.id, player_count: playersOrNull(draft.players),
-      min_score: mn, max_score: mx, content: txt.slice(0, 400),
-    });
+    const { error } = await supabase.from("game_score_phrases")
+      .insert(built.list.map((r) => ({ ...r, game_id: gameId, author_id: currentUser.id })));
     setBusy(false);
     if (error) { setErr(error.message); return; }
-    setDraft({ players: "", min: "", max: "", content: "" }); setAdding(false);
+    resetDraft(); setAdding(false);
     await load();
   };
 
-  const saveEdit = async () => {
-    const txt = editDraft.content.trim();
-    if (!txt) return;
+  // (lot X) Ajouter une tablee a une phrase deja ecrite : c'est tout l'objet du
+  // lot — on ne retape pas le texte pour changer les points.
+  const submitRange = async (group) => {
+    if (!currentUser) return;
+    const built = rowsFromRanges((group.content || "").slice(0, 400), [{ ...rangeDraft, key: "x" }]);
+    if (built.error) { setErr(built.error); return; }
+    setBusy(true); setErr("");
+    const { error } = await supabase.from("game_score_phrases")
+      .insert(built.list.map((r) => ({ ...r, game_id: gameId, author_id: currentUser.id })));
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setAddRangeKey(null); setRangeDraft({ players: "", min: "", max: "" });
+    await load();
+  };
+
+  // Modifier une tranche : seules les bornes et la tablee bougent, jamais le
+  // texte — sinon la ligne quitterait sa phrase sans qu'on l'ait demande.
+  const saveRangeEdit = async () => {
     const mn = numOrNull(editDraft.min), mx = numOrNull(editDraft.max);
     if (mn != null && mx != null && mn > mx) { setErr("Le score minimum ne peut pas dépasser le maximum."); return; }
     setBusy(true); setErr("");
-    const { error } = await supabase.from("game_score_phrases")
-      .update({ player_count: playersOrNull(editDraft.players), min_score: mn, max_score: mx, content: txt.slice(0, 400), updated_at: new Date().toISOString() })
-      .eq("id", editId);
+    const fields = { player_count: playersOrNull(editDraft.players), min_score: mn, max_score: mx, updated_at: new Date().toISOString() };
+    if (editDraft.content != null && editDraft.content.trim()) fields.content = editDraft.content.trim().slice(0, 400);
+    const { error } = await supabase.from("game_score_phrases").update(fields).eq("id", editId);
     setBusy(false);
     if (error) { setErr(error.message); return; }
     setEditId(null);
     await load();
   };
 
+  // Corriger le texte d'une phrase : la correction vaut pour TOUTES ses tranches.
+  const saveGroupText = async (group) => {
+    const txt = textDraft.trim();
+    if (!txt) return;
+    setBusy(true); setErr("");
+    const ids = group.list.filter(canTouch).map((r) => r.id);
+    const { error } = await supabase.from("game_score_phrases")
+      .update({ content: txt.slice(0, 400), updated_at: new Date().toISOString() }).in("id", ids);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setTextEditKey(null); setTextDraft("");
+    await load();
+  };
+
   const removeRow = async (r) => {
     const ok = await askConfirm({
-      title: "Supprimer cette phrase ?",
+      title: "Supprimer cette tranche ?",
       message: "Elle ne s'affichera plus à la fin des parties de ce jeu.",
       confirmLabel: "Supprimer",
     });
@@ -4021,27 +4101,89 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
     await load();
   };
 
-  const rangeInputs = (v, set) => (
-    <>
-      <Field label="À combien de joueurs ?" hint="Vide = ce barème vaut pour toutes les tablées. Renseignez-le quand l'échelle du jeu change selon le nombre de joueurs.">
-        <TextInput type="number" step="1" min="1" max="99" value={v.players} onChange={(e) => set({ ...v, players: e.target.value })} placeholder="ex. 3" />
+  const removeGroup = async (group) => {
+    const ids = group.list.filter(canTouch).map((r) => r.id);
+    if (!ids.length) return;
+    const ok = await askConfirm({
+      title: "Supprimer cette phrase ?",
+      message: `Ses ${ids.length} tranche${ids.length > 1 ? "s" : ""} de score disparaîtront aussi.`,
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    setErr("");
+    const { error } = await supabase.from("game_score_phrases").delete().in("id", ids);
+    if (error) { setErr(error.message); return; }
+    await load();
+  };
+
+  /* ---- briques d'affichage ---- */
+  const rangeFields = (v, set, compact) => (
+    <div style={{ display: "grid", gridTemplateColumns: compact ? "repeat(3, minmax(0,1fr))" : "minmax(0,1fr)", gap: 10, marginBottom: 9 }}>
+      <Field label="À combien de joueurs ?" hint={compact ? "Vide = toutes" : "Vide = ce barème vaut pour toutes les tablées. Renseignez-le quand l'échelle du jeu change selon le nombre de joueurs."}>
+        <TextInput type="number" step="1" min="1" max="99" value={v.players} onChange={(e) => set({ players: e.target.value })} placeholder="ex. 3" />
       </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 9 }}>
-        <Field label="Score minimum" hint="Vide = pas de limite basse">
-          <TextInput type="number" step="0.5" value={v.min} onChange={(e) => set({ ...v, min: e.target.value })} placeholder="ex. 9" />
-        </Field>
-        <Field label="Score maximum" hint="Vide = pas de limite haute">
-          <TextInput type="number" step="0.5" value={v.max} onChange={(e) => set({ ...v, max: e.target.value })} placeholder="ex. 12" />
-        </Field>
-      </div>
-    </>
+      <Field label="Score minimum" hint="Vide = pas de limite basse">
+        <TextInput type="number" step="0.5" value={v.min} onChange={(e) => set({ min: e.target.value })} placeholder="ex. 9" />
+      </Field>
+      <Field label="Score maximum" hint="Vide = pas de limite haute">
+        <TextInput type="number" step="0.5" value={v.max} onChange={(e) => set({ max: e.target.value })} placeholder="ex. 12" />
+      </Field>
+    </div>
+  );
+
+  const chip = (txt, tint) => (
+    <span style={{ background: tint, color: "#fff", borderRadius: 999, padding: "3px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, whiteSpace: "nowrap" }}>{txt}</span>
+  );
+
+  // Une tranche, en lecture ou en modification.
+  const rangeRow = (r, withText) => (
+    <div key={r.id} style={{ background: "#fff", border: "1px solid rgba(107,58,122,.18)", borderRadius: 11, padding: "8px 11px" }}>
+      {editId === r.id ? (
+        <div>
+          {rangeFields(editDraft, (p) => setEditDraft({ ...editDraft, ...p }), true)}
+          {withText && (
+            <textarea value={editDraft.content} onChange={(ev) => setEditDraft({ ...editDraft, content: ev.target.value })} rows={2} maxLength={400}
+              style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" onClick={saveRangeEdit} disabled={busy}><Check size={14} /> Enregistrer</Btn>
+            <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+          {chip(phrasePlayersLabel(r), r.player_count == null ? "#a89a86" : C.navy)}
+          {chip(phraseRangeLabel(r), C.purple)}
+          <span style={{ flex: 1, minWidth: 0 }} />
+          <span style={{ fontSize: 11.5, color: "#9c8d79", whiteSpace: "nowrap" }}>
+            par {currentUser && r.author_id === currentUser.id ? "vous" : nameOf(r.author_id)}
+          </span>
+          {canTouch(r) && (
+            <span style={{ display: "flex", gap: 9, flexShrink: 0 }}>
+              <button onClick={() => { setEditId(r.id); setEditDraft({ players: r.player_count == null ? "" : String(r.player_count), min: r.min_score == null ? "" : String(r.min_score), max: r.max_score == null ? "" : String(r.max_score), content: r.content }); }} title="Modifier cette tranche"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, height: 20 }}><Edit3 size={15} /></button>
+              <button onClick={() => removeRow(r)} title="Supprimer cette tranche"
+                style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 20 }}><Trash2 size={15} /></button>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const modeBtn = (on, label, onClick) => (
+    <button type="button" onClick={onClick}
+      style={{ padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5,
+        border: on ? `2px solid ${C.purple}` : "1.5px solid #e6dcc9", background: on ? "rgba(107,58,122,.1)" : "#fff", color: on ? C.purple : "#9c8d79" }}>
+      {label}
+    </button>
   );
 
   return (
     <Modal open onClose={onClose} title={`🏁 Phrases de score · ${gameName}`} width={580}>
-      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+      <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "#8a7c6a", lineHeight: 1.55 }}>
         Le barème imprimé dans la règle du jeu, recopié une fois pour toutes. À la fin d'une partie, la phrase correspondant au score obtenu s'affiche automatiquement.
-        {" "}Une phrase peut viser <b>une tablée précise</b> quand l'échelle du jeu change selon le nombre de joueurs ; elle prime alors sur les phrases valables partout.
+        {" "}Une phrase s'écrit <b>une seule fois</b> et peut porter <b>plusieurs tranches</b>, une par tablée, quand le même commentaire ne s'obtient pas avec les mêmes points à 2 et à 5 joueurs. Une tranche écrite pour une tablée précise prime sur une tranche valable partout.
         {currentUser ? " Chacun peut en ajouter, et corriger ou supprimer les siennes." : ""}
       </p>
 
@@ -4057,76 +4199,131 @@ function GameScorePhrasesModal({ gameId, gameName, onClose, onCount }) {
           <p style={{ fontSize: 14, margin: 0 }}>Aucune phrase pour ce jeu.{currentUser ? " Recopiez le barème de la règle !" : ""}</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, marginBottom: 16 }}>
-          {groups.map((grp) => (
-            <div key={grp.key || "all"}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: grp.count == null ? "#8a7c6a" : C.navy }}>
-                  {grp.count == null ? "Toutes les tablées" : `À ${grp.count} joueur${grp.count > 1 ? "s" : ""}`}
-                </span>
-                <span style={{ flex: 1, height: 1, background: "#efe6d6" }} />
-                <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{grp.list.length} phrase{grp.list.length > 1 ? "s" : ""}</span>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
-          {grp.list.map((r) => {
-            const mine = !!currentUser && r.author_id === currentUser.id;
-            return (
-              <div key={r.id} style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.18)", borderRadius: 13, padding: "11px 14px" }}>
-                {editId === r.id ? (
-                  <div>
-                    {rangeInputs(editDraft, setEditDraft)}
-                    <textarea value={editDraft.content} onChange={(ev) => setEditDraft({ ...editDraft, content: ev.target.value })} rows={2} maxLength={400}
-                      style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy || !editDraft.content.trim()}><Check size={14} /> Enregistrer</Btn>
-                      <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "#a89a86", fontWeight: 700, marginRight: 2 }}>Regrouper :</span>
+            {modeBtn(byText, "Par phrase", () => setByText(true))}
+            {modeBtn(!byText, "Par tablée", () => setByText(false))}
+          </div>
+
+          {byText ? (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 13, marginBottom: 16 }}>
+              {textGroups.map((grp) => {
+                const mineAll = grp.list.every(canTouch);
+                return (
+                  <div key={grp.key} style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.18)", borderRadius: 13, padding: "12px 14px" }}>
+                    {textEditKey === grp.key ? (
+                      <div style={{ marginBottom: 10 }}>
+                        <textarea value={textDraft} onChange={(ev) => setTextDraft(ev.target.value)} rows={2} maxLength={400} autoFocus
+                          style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <Btn size="sm" variant="teal" onClick={() => saveGroupText(grp)} disabled={busy || !textDraft.trim()}><Check size={14} /> Enregistrer</Btn>
+                          <Btn size="sm" variant="soft" onClick={() => { setTextEditKey(null); setTextDraft(""); }}>Annuler</Btn>
+                          <span style={{ fontSize: 11.5, color: "#9c8d79" }}>La correction s'applique aux {grp.list.length} tranche{grp.list.length > 1 ? "s" : ""}.</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 14.5, color: "#4e463b", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere", marginBottom: 10 }}>{grp.content}</div>
+                    )}
+
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+                      {grp.list.map((r) => rangeRow(r, false))}
                     </div>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
-                    <span style={{ flexShrink: 0, background: C.purple, color: "#fff", borderRadius: 999, padding: "3px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, whiteSpace: "nowrap" }}>
-                      {phraseRangeLabel(r)}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14.5, color: "#4e463b", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{r.content}</div>
-                      <div style={{ fontSize: 11.5, color: "#9c8d79", marginTop: 5 }}>par {mine ? "vous" : nameOf(r.author_id)}</div>
-                    </div>
-                    {canTouch(r) && (
-                      <div style={{ display: "flex", gap: 9, flexShrink: 0 }}>
-                        <button onClick={() => { setEditId(r.id); setEditDraft({ players: r.player_count == null ? "" : String(r.player_count), min: r.min_score == null ? "" : String(r.min_score), max: r.max_score == null ? "" : String(r.max_score), content: r.content }); }} title="Modifier cette phrase"
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, height: 20 }}><Edit3 size={15} /></button>
-                        <button onClick={() => removeRow(r)} title="Supprimer cette phrase"
-                          style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 20 }}><Trash2 size={15} /></button>
+
+                    {addRangeKey === grp.key && (
+                      <div style={{ background: "#fff", border: `1.5px dashed ${C.purple}66`, borderRadius: 11, padding: "10px 11px", marginTop: 8 }}>
+                        {rangeFields(rangeDraft, (p) => setRangeDraft({ ...rangeDraft, ...p }), true)}
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="teal" onClick={() => submitRange(grp)} disabled={busy}><Check size={14} /> Ajouter la tranche</Btn>
+                          <Btn size="sm" variant="soft" onClick={() => { setAddRangeKey(null); setRangeDraft({ players: "", min: "", max: "" }); }}>Annuler</Btn>
+                        </div>
+                      </div>
+                    )}
+
+                    {currentUser && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <Btn size="sm" variant="soft" onClick={() => { setAddRangeKey(grp.key); setRangeDraft({ players: "", min: "", max: "" }); setErr(""); }}>
+                          <Plus size={14} /> Une autre tablée
+                        </Btn>
+                        {mineAll && (
+                          <Btn size="sm" variant="soft" onClick={() => { setTextEditKey(grp.key); setTextDraft(grp.content); }}>
+                            <Edit3 size={14} /> Modifier le texte
+                          </Btn>
+                        )}
+                        {mineAll && (
+                          <Btn size="sm" variant="soft" onClick={() => removeGroup(grp)}>
+                            <Trash2 size={14} /> Tout supprimer
+                          </Btn>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            );
-          })}
-              </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, marginBottom: 16 }}>
+              {tableGroups.map((grp) => (
+                <div key={grp.key || "all"}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: grp.count == null ? "#8a7c6a" : C.navy }}>
+                      {grp.count == null ? "Toutes les tablées" : `À ${grp.count} joueur${grp.count > 1 ? "s" : ""}`}
+                    </span>
+                    <span style={{ flex: 1, height: 1, background: "#efe6d6" }} />
+                    <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{grp.list.length} phrase{grp.list.length > 1 ? "s" : ""}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+                    {grp.list.map((r) => (
+                      <div key={r.id} style={{ background: "rgba(107,58,122,.06)", border: "1px solid rgba(107,58,122,.18)", borderRadius: 13, padding: "11px 14px" }}>
+                        <div style={{ fontSize: 14.5, color: "#4e463b", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere", marginBottom: 8 }}>{r.content}</div>
+                        {rangeRow(r, true)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {!currentUser ? (
         <span style={{ fontSize: 13, color: "#a89a86" }}>Connectez-vous pour ajouter une phrase.</span>
       ) : !adding ? (
-        <Btn full variant="soft" onClick={() => setAdding(true)}><Plus size={16} /> Ajouter une phrase</Btn>
+        <Btn full variant="soft" onClick={() => { setAdding(true); setErr(""); }}><Plus size={16} /> Ajouter une phrase</Btn>
       ) : (
         <div style={{ background: "rgba(107,58,122,.06)", borderRadius: 12, padding: 12 }}>
-          {rangeInputs(draft, setDraft)}
-          <Field label="La phrase" hint="Celle du livret de règles, telle quelle.">
+          <Field label="La phrase" hint="Celle du livret de règles, telle quelle. Vous ne l'écrivez qu'une fois.">
             <textarea value={draft.content} onChange={(ev) => setDraft({ ...draft, content: ev.target.value })} rows={2} maxLength={400} autoFocus
-              placeholder="Ex. : 9 à 12 — Excellent ! Vous vous comprenez à demi-mot."
+              placeholder="Ex. : Excellent ! Vous vous comprenez à demi-mot."
               style={{ ...inputStyle, resize: "vertical" }} />
           </Field>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, color: C.navy, margin: "4px 0 8px" }}>
+            Les points qui donnent cette phrase
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9, marginBottom: 10 }}>
+            {draft.ranges.map((r, i) => (
+              <div key={r.key} style={{ background: "#fff", border: "1px solid #efe6d6", borderRadius: 11, padding: "9px 11px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: "#a89a86" }}>Tranche {i + 1}</span>
+                  <span style={{ flex: 1 }} />
+                  {draft.ranges.length > 1 && (
+                    <button onClick={() => removeDraftRange(r.key)} title="Retirer cette tranche"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, height: 18 }}><X size={15} /></button>
+                  )}
+                </div>
+                {rangeFields(r, (p) => setDraftRange(r.key, p), true)}
+              </div>
+            ))}
+          </div>
+          <Btn size="sm" variant="soft" onClick={addDraftRange} style={{ marginBottom: 10 }}>
+            <Plus size={14} /> Une autre tablée
+          </Btn>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn size="sm" variant="teal" onClick={submitNew} disabled={busy || !draft.content.trim()}>
               {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Ajouter</>}
             </Btn>
-            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setDraft({ players: "", min: "", max: "", content: "" }); }}>Annuler</Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); resetDraft(); }}>Annuler</Btn>
           </div>
         </div>
       )}
@@ -5486,6 +5683,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.amber }}>🏆 Top 20 de l'asso</b> — le palmarès de fond. Tous les jeux partagés y concourent, à condition d'avoir réuni <b>au moins 4 votes</b> : ce seuil évite qu'un ou deux avis isolés propulsent un jeu en tête. Classement par note moyenne, départagé par le nombre de votants.</p>
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.purple }}>✨ Top 20 du moment</b> — l'actualité de l'association. Deux conditions <b>cumulées</b> : le jeu est <b>paru cette année ou l'an dernier</b>, et il est <b>entré dans la ludothèque du site depuis moins de {MOMENT_MONTHS} mois</b>. Une vieille boîte ressortie d'un placard n'y figure donc pas, et une nouveauté ajoutée il y a un an non plus.</p>
             <p style={{ margin: "0 0 8px" }}>Ce second classement sert d'abord les jeux à <b>4 votes et plus</b>, comme le Top 20 de l'asso. S'il n'est pas plein, il se complète par les <b>mieux notés d'entre les autres nouveautés</b> — celles-ci portent alors la mention <b>« peu de votes »</b>, pour que la lecture reste honnête. Un jeu récent que personne n'a encore noté n'y apparaît pas.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Sur tablette et téléphone</b>, les deux classements ne restent pas dans une colonne étroite : ils <b>passent au-dessus de la ludothèque</b>, sur toute la largeur. C'est notamment le cas de toute tablette tenue <b>en portrait</b>, où une colonne latérale de 340 px étranglerait la grille de jeux — et où le texte du classement débordait auparavant sous son cadre.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : une fiche dont l'<b>année de sortie n'est pas renseignée</b> ne peut pas être datée — elle reste hors du Top du moment, mais concourt normalement au Top 20 de l'asso. Complétez l'année sur la fiche pour l'y faire entrer.</p>
           </>,
         },
@@ -5536,8 +5734,10 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Beaucoup de jeux — les coopératifs en tête — se terminent par un petit barème imprimé dans la règle : « 7 à 8 : pas mal », « 9 et plus : bravo ». Sur chaque fiche de jeu, une tuile <b style={{ color: C.purple }}>🏁 Phrases de score</b> permet de le recopier <b>une fois pour toutes</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Une phrase se compose d'une <b>tranche de score</b> et d'un <b>texte</b>. Les deux bornes sont facultatives et <b>inclusives</b> : « minimum 9, maximum vide » signifie <b>9 et plus</b> ; « minimum vide, maximum 3 » signifie <b>jusqu'à 3</b> ; « minimum 7, maximum 7 » vise <b>exactement 7</b>. Si deux tranches conviennent au même score, c'est <b>la plus étroite</b> qui s'affiche.</p>
-            <p style={{ margin: "0 0 8px" }}><b>Un barème par tablée.</b> L'échelle de beaucoup de jeux dépend du nombre de joueurs : 25 points à deux et 25 points à cinq ne racontent pas la même partie. Un champ <b>« À combien de joueurs ? »</b> permet donc de viser une tablée précise. Laissé vide, le barème vaut <b>pour toutes les tablées</b> — c'est le cas le plus fréquent, et le comportement d'avant.</p>
-            <p style={{ margin: "0 0 8px" }}>La règle d'arbitrage est simple : <b>une phrase écrite pour le nombre de joueurs de la partie l'emporte toujours</b> sur une phrase générale, même si cette dernière est plus précise. Ce n'est qu'entre phrases de même portée qu'on départage par la tranche la plus étroite. Vous pouvez donc poser un barème général et n'écrire des barèmes dédiés que pour les tablées qui font exception. La fenêtre les regroupe par tablée, « Toutes les tablées » en tête.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Un barème par tablée.</b> L'échelle de beaucoup de jeux dépend du nombre de joueurs : 25 points à deux et 25 points à cinq ne racontent pas la même partie. Chaque tranche porte donc un champ <b>« À combien de joueurs ? »</b>. Laissé vide, le barème vaut <b>pour toutes les tablées</b> — c'est le cas le plus fréquent, et le comportement d'avant.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Le texte ne s'écrit qu'une fois.</b> Dans les coopératifs, c'est presque toujours la <b>même appréciation</b> qui change seulement de fourchette : « Vous vous comprenez à demi-mot » s'obtient à 9-12 points à deux, et à 14-18 à quatre. Le formulaire d'ajout comporte donc <b>la phrase</b>, puis autant de <b>tranches</b> que nécessaire — le bouton <b>« Une autre tablée »</b> en ajoute une, et chacune a son nombre de joueurs, son minimum et son maximum. Plus besoin de recopier le texte pour chaque tablée.</p>
+            <p style={{ margin: "0 0 8px" }}>La liste se lit par défaut <b>« Par phrase »</b> : le texte apparaît une seule fois, suivi de ses tranches en pastilles. On peut alors lui <b>ajouter une tablée</b> plus tard sans rien retaper, <b>modifier le texte</b> (la correction s'applique d'un coup à toutes ses tranches) ou <b>tout supprimer</b>. Le bouton <b>« Par tablée »</b> rétablit l'ancienne lecture, groupée par nombre de joueurs, « Toutes les tablées » en tête.</p>
+            <p style={{ margin: "0 0 8px" }}>La règle d'arbitrage ne change pas : <b>une tranche écrite pour le nombre de joueurs de la partie l'emporte toujours</b> sur une tranche générale, même si cette dernière est plus précise. Ce n'est qu'entre tranches de même portée qu'on départage par la plus étroite. Vous pouvez donc poser un barème général et n'écrire des barèmes dédiés que pour les tablées qui font exception.</p>
             <p style={{ margin: "0 0 8px" }}>Comme pour les points de règle, <b>tout membre peut en ajouter</b>, et chacun modifie ou supprime les siennes ; les administrateurs peuvent intervenir sur toutes.</p>
             <p style={{ margin: 0 }}>À quoi ça sert ? À la fin d'une partie — au chronomètre comme dans « Enregistrer une partie jouée » — la phrase correspondant au score obtenu <b>s'affiche automatiquement</b>, dans un cadre vert avec un feu d'artifice en cas de victoire, dans un cadre rouge en cas de défaite.</p>
           </>,
@@ -5944,6 +6144,16 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
             <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
             <p style={{ margin: "8px 0 0" }}><b>Les « jeux joués » du moment se remplissent tout seuls.</b> Le jeu choisi dans le chrono s'ajoute immédiatement à la fiche du moment, et chaque <b>manche supplémentaire</b> relève son compteur de parties. Plus rien à ressaisir après coup — et pas de doublon : les demandes de confirmation envoyées aux participants tiennent compte de ce que le chrono a déjà enregistré. Si vous aviez relevé le compteur à la main pour des parties non chronométrées, votre chiffre est conservé : le chrono ne le fait jamais redescendre.</p>
+          </>,
+        },
+        {
+          q: "Créer un moment jeux depuis le chrono",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>On ne prévoit pas toujours une soirée à l'avance : parfois on sort une boîte, on lance le chrono, et c'est seulement après coup qu'on se dit que ça méritait de figurer au calendrier. Le bouton <b style={{ color: C.teal }}>📅 Créer un moment jeux</b> fait exactement cela, <b>à partir de la partie en cours</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Il est proposé à <b>l'hôte</b> — celui qui a lancé le chrono — à trois endroits : sur l'écran de <b>préparation</b> (sous la liste des joueurs), parmi les <b>commandes de la partie</b> (et en tuile dans la vue tablette), et sur l'<b>écran de fin</b>. Il n'apparaît pas si la partie est <b>déjà rattachée</b> à un moment, par exemple parce que le chrono a été lancé depuis la fiche d'un moment.</p>
+            <p style={{ margin: "0 0 8px" }}>Le moment est rempli tout seul : il <b>démarre à l'heure où le chrono a été lancé</b>, et ne réunit que <b>les personnes réellement présentes à cette table</b> — les membres deviennent participants, les invités non-membres sont repris comme invités. Le jeu en cours rejoint aussitôt ses <b>jeux joués</b>, et les manches suivantes s'y ajoutent comme d'habitude.</p>
+            <p style={{ margin: "0 0 8px" }}>Une seule question vous est posée, parce que c'est la seule que le chrono ne peut pas deviner : le moment est-il <b>ouvert à tous</b> ou <b>privé</b> ? Un moment créé ainsi n'est jamais un moment <b>Board Game Arena</b> : on était bien autour d'une vraie table.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : le <b>lieu</b> ne peut pas être deviné non plus, il est donc noté <b>« À préciser »</b>. Ouvrez la fiche du moment pour le compléter, comme le nombre de joueurs attendu ou une note — tout y reste modifiable.</p>
           </>,
         },
         {
@@ -13236,13 +13446,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           </div>
 
           {/* TOP 20 */}
-          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }} className="aladj-ludo-rank">
+          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff", display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }} className="aladj-ludo-rank">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <Trophy size={20} color={C.amber} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
             </div>
             {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 350, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 auto", minHeight: "min(350px, 40vh)", maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {top.map((g, i) => {
                 const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
                 return (
@@ -13262,7 +13472,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           </div>
 
           {/* (lot V) TOP 20 DES JEUX DU MOMENT — les arrivées récentes */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}`, display: "flex", flexDirection: "column", minHeight: 0 }} className="aladj-ludo-rank">
+          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}`, display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }} className="aladj-ludo-rank">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <Sparkles size={20} color={C.purple} />
               <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Top 20 du moment</h3>
@@ -13275,7 +13485,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                 Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
               </p>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 0", minHeight: 350, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 auto", minHeight: "min(350px, 40vh)", maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
               {momentTop.map((g, i) => (
                 <button key={g.id} onClick={() => setSelected(g.id)}
                   style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
@@ -18034,7 +18244,10 @@ export default function App() {
           .aladj-burger { display: grid !important; }
         }
         @media (min-width: 861px) { .aladj-mobile-menu { display: none !important; } }
-        @media (max-width: 920px) {
+        /* (lot X) Une tablette en portrait est large (jusqu'a 1024 px) mais la
+           colonne laterale de 340 px y etrangle la ludotheque, et les deux Top 20
+           n'y tiennent pas en hauteur. On empile donc en portrait aussi. */
+        @media (max-width: 920px), (orientation: portrait) and (max-width: 1200px) {
           .aladj-ludo-grid { display: flex !important; flex-direction: column !important; }
           .aladj-ludo-aside { position: static !important; order: -1; display: block !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
           .aladj-ludo-aside .aladj-ludo-rank { margin-top: 18px; }
