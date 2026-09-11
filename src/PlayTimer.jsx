@@ -2096,23 +2096,32 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   };
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
   const toggleWinner = (pid) => { setWinnersTouched(true); setWinnerIds((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid])); };
+  // (lot V) En cooperatif, la table gagne ou perd d'un bloc : tous vainqueurs,
+  // ou aucun. Le score commun a deja ete reporte sur chaque siege.
+  // Une seule regle, partagee par « enregistrer et quitter » et par les deux
+  // boutons d'enchainement : sans cela, une partie cooperative enchainee partait
+  // sans le moindre vainqueur.
+  const finalWinnerIds = () => (isCoop ? (coopWon === true ? players.map((p) => p.id) : []) : winnerIds);
+
+  // Le seuil de victoire et le sens du score corriges sur l'ecran de fin
+  // remontent sur la fiche du jeu -- que l'on quitte OU que l'on enchaine.
+  const persistCoopSettings = async () => {
+    if (!isCoop || !game?.id || !currentUser) return;
+    const savedTarget = game.coop_target == null ? '' : String(game.coop_target);
+    if (savedTarget === String(coopTarget || '') && game.score_direction === scoreDir) return;
+    try {
+      await supabase.rpc('aladj_set_game_coop', {
+        p_game_id: game.id, p_is_coop: true,
+        p_target: coopTarget === '' ? null : Number(coopTarget),
+        p_direction: scoreDir,
+      });
+    } catch (err) { /* le chrono ne doit jamais bloquer sur ce point */ }
+  };
+
   const saveResultAndExit = async () => {
     setSavingResult(true); setError(null);
-    // (lot V) En cooperatif, la table gagne ou perd d'un bloc : tous vainqueurs,
-    // ou aucun. Le score commun a deja ete reporte sur chaque siege.
-    const ids = isCoop ? (coopWon === true ? players.map((p) => p.id) : []) : winnerIds;
-    if (isCoop && game?.id && currentUser) {
-      const savedTarget = game.coop_target == null ? '' : String(game.coop_target);
-      if (savedTarget !== String(coopTarget || '') || game.score_direction !== scoreDir) {
-        try {
-          await supabase.rpc('aladj_set_game_coop', {
-            p_game_id: game.id, p_is_coop: true,
-            p_target: coopTarget === '' ? null : Number(coopTarget),
-            p_direction: scoreDir,
-          });
-        } catch (err) { /* le chrono ne doit jamais bloquer sur ce point */ }
-      }
-    }
+    const ids = finalWinnerIds();
+    await persistCoopSettings();
     const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: ids });
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
@@ -2146,8 +2155,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setSwitching(true); setError(null);
     try {
       // 1. Le resultat de la partie qui s'acheve doit etre enregistre d'abord.
+      await persistCoopSettings();
       if (!resultSaved) {
-        const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: winnerIds });
+        const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: finalWinnerIds() });
         if (e0) throw e0;
         setResultSaved(true);
         await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
@@ -2193,6 +2203,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     } finally {
       setSwitching(false);
     }
+  };
+
+  // (4 bis) Refaire une partie de CE jeu : c'est « enchainer », mais sans avoir
+  // a choisir -- le jeu est deja sur la table. La partie qui s'acheve est
+  // enregistree, puis un chrono tout neuf repart avec la meme tablee, les memes
+  // equipes et les memes couleurs. Chaque partie garde ainsi sa propre duree.
+  const replaySameGame = () => {
+    const g = game || (session?.game_id ? { id: session.game_id, play_time: null } : null);
+    if (!g || !g.id) { setError("Le jeu de cette partie n'est pas encore chargé : réessayez dans un instant."); return; }
+    continueWithGame(g);
   };
 
   // (lot X) Le moment jeux nait de la partie : meme heure de debut, meme
@@ -2491,6 +2511,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           onQuery={setNextQuery}
           busy={switching}
           swap={swapPicker}
+          replayGame={swapPicker ? null : (game || null)}
           onPick={swapPicker ? swapGame : continueWithGame}
           onClose={() => { if (!switching) { setNextPicker(false); setSwapPicker(false); setNextQuery(''); } }}
         />
@@ -2953,13 +2974,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
       // Les accessoires sont de gros carres : sur une tablette, une pastille
       // fine se rate une fois sur deux.
-      const tile = (icon, label, on, onClick, tint) => (
+      // `highlight` : tuile mise en avant sans etre "active" -- une action qu'on
+      // doit reperer du premier coup d'oeil au milieu des autres.
+      const tile = (icon, label, on, onClick, tint, highlight) => (
         <button onClick={onClick} style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5,
           minHeight: 'clamp(74px,7.6vh,104px)', padding: '8px 10px', borderRadius: 18, cursor: 'pointer',
-          border: `2px solid ${on ? (tint || C.teal) : '#E7DCC7'}`,
-          background: on ? `${tint || C.teal}18` : '#fff',
-          color: on ? (tint || C.teal) : C.navy,
+          border: `2px solid ${on ? (tint || C.teal) : (highlight ? `${tint || C.teal}99` : '#E7DCC7')}`,
+          background: on ? `${tint || C.teal}18` : (highlight ? `${tint || C.teal}0f` : '#fff'),
+          color: on ? (tint || C.teal) : (highlight ? (tint || C.teal) : C.navy),
           boxShadow: '0 2px 8px rgba(90,70,40,.07)', textAlign: 'center',
         }}>
           <span style={{ fontSize: 'clamp(20px,1.9vw,28px)', lineHeight: 1 }}>{icon}</span>
@@ -3098,9 +3121,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {tile('👥', teamsOn ? 'La tablée · équipes' : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
+            {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
             {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
             {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
-            {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle manche', false, openNewGame)}
             {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
             {isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
             {isHost && gamePhase === 'play' && simul && tile('↩', 'Mode normal', false, simulExit, C.purple)}
@@ -3110,9 +3133,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           {newGamePrompt && (
             <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
-                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Manche terminée</div>
+                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminée</div>
                 <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                  {anyScore ? 'Qui a gagné cette manche ? Le vainqueur est déduit des scores.' : 'Qui a gagné cette manche ? (laisse vide pour un coopératif)'}
+                  {anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? (laisse vide pour un coopératif) On repart ensuite sur une nouvelle partie du même jeu.'}
                 </div>
                 <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
                   {players.map((p) => {
@@ -3131,7 +3154,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
-                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Manche suivante →'}</button>
+                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
                 </div>
               </div>
             </div>
@@ -3305,6 +3328,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
             <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>La tablee</button>
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
+            {gamePhase === 'play' && !simul && (
+              <button style={{ ...btnSecondary, flex: 1, background: 'rgba(232,163,23,.14)', color: '#8a6a1f', border: `1.5px solid ${C.amber}` }}
+                onClick={openNewGame} title="Rejouer au même jeu : la partie en cours est enregistrée, les chronos repartent à zéro">
+                🔁 Nouvelle partie
+              </button>
+            )}
             {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setClockEdit(true)}>Corriger les temps</button>}
             {canMakeEvent && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setEventPrompt(true)}>📅 Créer un moment jeux</button>}
             {eventCreated && !canMakeEvent && (
@@ -3315,7 +3344,6 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               </span>
             )}
             {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={openNewGame}>Nouvelle partie</button>}
             {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
             {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
             {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
@@ -3459,6 +3487,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <button style={{ ...btnPrimary, flex: '1 1 180px' }} onClick={saveResultAndExit} disabled={savingResult || switching}>{savingResult ? 'Enregistrement…' : 'Enregistrer et quitter'}</button>
         </div>
         {isHost && (
+          <button style={{ ...btnSecondary, width: '100%', marginTop: 10, background: C.amber, color: C.white, border: 'none' }}
+            onClick={replaySameGame} disabled={savingResult || switching}>
+            🔁 Enregistrer et refaire une partie de ce jeu
+          </button>
+        )}
+        {isHost && (
           <button style={{ ...btnSecondary, width: '100%', marginTop: 10, background: C.teal, color: C.white, border: 'none' }}
             onClick={() => setNextPicker(true)} disabled={savingResult || switching}>
             🎲 Enregistrer et enchaîner un autre jeu
@@ -3470,8 +3504,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         </div>
         <p style={{ fontSize: 12.5, color: `${C.navy}99`, textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
           {isHost
-            ? "Les mêmes joueurs, les mêmes équipes et les mêmes couleurs sont repris — et tous les téléphones déjà connectés basculent tout seuls sur le nouveau jeu."
-            : "L'hôte peut enchaîner sur un autre jeu : votre écran suivra automatiquement."}
+            ? "Dans les deux cas, les mêmes joueurs, les mêmes équipes et les mêmes couleurs sont repris — et tous les téléphones déjà connectés basculent tout seuls sur la nouvelle partie. Chaque partie garde sa propre durée et ses propres statistiques."
+            : "L'hôte peut refaire une partie du même jeu ou enchaîner sur un autre : votre écran suivra automatiquement."}
         </p>
       </div>
     );
@@ -3643,7 +3677,7 @@ function NewEventSheet({ busy, nPlayers, gameName, onCreate, onClose }) {
 }
 
 /* Choisir le jeu suivant, sans quitter le chrono ni ressaisir les joueurs. */
-function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose, swap = false }) {
+function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose, swap = false, replayGame = null }) {
   const seen = new Set();
   const list = [];
   (eventGames || []).forEach((g) => { if (!seen.has(g.id)) { seen.add(g.id); list.push({ ...g, _fromEvent: true }); } });
@@ -3667,6 +3701,26 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
               chrono démarre avec <b>les mêmes joueurs</b>, les mêmes équipes et les mêmes couleurs.
               Les téléphones déjà connectés basculent tout seuls.</>}
         </p>
+
+        {/* Le cas le plus frequent d'abord : on remet le meme jeu sur la table.
+            Inutile de le chercher dans la ludotheque, il est deja devant nous. */}
+        {!swap && replayGame && (
+          <button onClick={() => onPick(replayGame)} disabled={busy}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+              background: 'rgba(232,163,23,.12)', border: `2px solid ${C.amber}`, borderRadius: 14,
+              padding: '11px 13px', cursor: busy ? 'default' : 'pointer', textAlign: 'left',
+              opacity: busy ? .6 : 1 }}>
+            <span style={{ fontSize: 24, flex: '0 0 auto' }}>🔁</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: C.navy }}>
+                Refaire une partie de ce jeu
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, color: `${C.navy}99`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {replayGame.name} — même tablée, nouvelle partie
+              </span>
+            </span>
+          </button>
+        )}
 
         <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Chercher un jeu…"
           style={{ ...input, marginBottom: 12 }} disabled={busy} autoFocus />
