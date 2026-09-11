@@ -2740,6 +2740,27 @@ function AppProvider({ children }) {
     await supabase.from("notifications").delete().eq("id", notifId);
   }, []);
 
+  // Vide la boîte de notifications d'un seul coup (croix de l'encart « Mon espace »).
+  // On supprime TOUT ce que le membre possède — y compris ce qui dépasse les douze
+  // notifications affichées et celles qui ne sont pas encore lues : l'écran n'en
+  // montre qu'un extrait, la suppression, elle, doit être franche.
+  // Contrairement à la croix d'une notification isolée, l'appelant DOIT demander
+  // confirmation : l'action est irréversible.
+  // L'affichage est vidé tout de suite, et remis en place si la base refuse :
+  // on ne laisse jamais l'écran mentir sur ce qui reste réellement enregistré.
+  const deleteAllNotifications = useCallback(async () => {
+    if (!currentUser) return { error: "Connectez-vous pour vider vos notifications." };
+    const backup = notifications;
+    if (!backup.length) return { count: 0 };
+    setNotifications([]);
+    const { error } = await supabase.from("notifications").delete().eq("recipient_id", currentUser.id);
+    if (error) {
+      setNotifications(backup);
+      return { error: "Impossible de supprimer les notifications : " + (error.message || String(error)) };
+    }
+    return { count: backup.length };
+  }, [currentUser, notifications]);
+
   // Marque toutes mes notifications comme lues.
   const markAllNotificationsRead = useCallback(async () => {
     if (!currentUser) return;
@@ -3277,7 +3298,7 @@ function AppProvider({ children }) {
     toggleGameShared, setShareLibrary, addOwner, removeOwner, declareOwners, updateProfile,
     confirmOwnership, declineOwnership, toggleDiscover,
     banUser, unbanUser, deleteUser, adminAddMembershipDays, adminRevokeMembership, memberEmails, bannedNotice, setBannedNotice,
-    notifications, markNotificationRead, markAllNotificationsRead, deleteNotification,
+    notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications,
     momentsUnseen, markMomentsSeen, deciderIds, childIds,
     plays, beltByGame, recordManualPlay, deleteGamePlay, setMyPlayResult,
     eventPlaySuggestions, confirmEventPlay, dismissEventPlay, personalReady, setEventPlayCount,
@@ -5610,6 +5631,7 @@ function GuidePage() {
             </ul>
             <p style={{ margin: "0 0 8px" }}>En revanche, la <b>messagerie n'alimente pas cette liste</b> : un échange un peu vif la remplirait à lui seul. Les nouveaux messages se signalent par une <b>pastille rouge</b> sur « Ma messagerie » et sur le compteur de Mon espace.</p>
             <p style={{ margin: "0 0 8px" }}>Cette pastille apparaît désormais <b>sans avoir à recharger la page</b> : le site vérifie l'arrivée de nouveaux messages toutes les 40 secondes, et immédiatement quand vous revenez sur l'onglet. Sur l'application installée (PWA), les messages non lus s'ajoutent aussi à la <b>pastille de l'icône</b>, aux côtés des notifications.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Faire le ménage.</b> Dans <b>Mon espace</b>, chaque notification se supprime par sa petite croix, sans confirmation. La <b>croix en haut à droite de l'encart</b>, elle, les supprime <b>toutes d'un coup</b> — y compris celles qui dépassent les douze affichées à l'écran et celles qui n'ont pas encore été lues. Une confirmation est demandée, car rien ne se récupère ensuite. Si vous voulez seulement éteindre la pastille rouge, préférez <b>« Tout marquer comme lu »</b>, juste à côté.</p>
             <p style={{ margin: 0 }}>Sur iPhone, les notifications ne fonctionnent que depuis <b>l'appli installée</b> sur l'écran d'accueil (pas depuis Safari). Si vous avez refusé par le passé : Réglages → Notifications → ALADJ pour réactiver.</p>
           </>,
         },
@@ -6262,12 +6284,16 @@ function GuidePage() {
           </>,
         },
         {
-          q: "Enchaîner plusieurs parties du même jeu",
-          a: <p style={{ margin: 0 }}>Le bouton <b>« Nouvelle partie »</b> clôt la manche en cours : vous déclarez son ou ses vainqueurs, le chrono de jeu et les temps de chaque joueur repartent à zéro, et la mise en place comme le rangement (communs) sont conservés — ils seront répartis équitablement entre les parties dans les statistiques de durée.</p>,
+          q: "Refaire une partie du même jeu (sans rien ressaisir)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}><b>Pendant la partie</b> — le bouton <b>🔁 « Nouvelle partie »</b>, placé juste à côté de « Changer de jeu », clôt la partie en cours : vous déclarez son ou ses vainqueurs, le chrono de jeu et les temps de chaque joueur repartent à zéro, et la mise en place comme le rangement (communs) sont conservés — ils seront répartis équitablement entre les parties dans les statistiques de durée. Il porte le même nom sur téléphone et sur tablette, et n'apparaît qu'une fois la <b>phase « Partie » lancée</b> (pas pendant la mise en place, ni pendant le rangement, ni en mode « tous en même temps »).</p>
+            <p style={{ margin: "0 0 8px" }}><b>À la fin</b> — l'écran de fin propose <b>🔁 « Enregistrer et refaire une partie de ce jeu »</b> : la partie qui s'achève est enregistrée, puis un <b>chrono tout neuf</b> repart aussitôt avec le même jeu, les mêmes joueurs, les mêmes équipes et les mêmes couleurs. Rien à ressaisir, et chaque partie garde <b>sa propre durée</b> et ses propres statistiques. Les téléphones déjà connectés basculent tout seuls.</p>
+            <p style={{ margin: 0 }}>La même option figure en tête de l'encart <b>« On enchaîne sur quoi ? »</b> : inutile d'aller chercher dans la ludothèque un jeu qui est déjà sur la table.</p>
+          </>,
         },
         {
           q: "Terminer… ou quitter sans enregistrer",
-          a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : cochez les vainqueurs (laissez vide pour un jeu coopératif) et enregistrez — la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
+          a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : cochez les vainqueurs (laissez vide pour un jeu coopératif), puis choisissez votre sortie — <b>« Enregistrer et quitter »</b>, <b>« 🔁 Enregistrer et refaire une partie de ce jeu »</b> ou <b>« 🎲 Enregistrer et enchaîner un autre jeu »</b>. Dans les trois cas la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
         },
         {
           q: "Pas de doublon : un joueur, une ligne — une partie, un enregistrement",
@@ -17270,7 +17296,7 @@ function HiddenRecosModal({ rows, games, onClose, onRestore }) {
 }
 
 function MyLudoPage({ setToast, setPage }) {
-  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm, personalReady } = useApp();
+  const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm, personalReady } = useApp();
   const [recordOpen, setRecordOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
@@ -17546,7 +17572,34 @@ function MyLudoPage({ setToast, setPage }) {
                 <Sparkles size={18} color={C.teal} /> Notifications
                 {unreadCount > 0 && <span style={{ background: C.red, color: "#fff", borderRadius: 999, fontSize: 12, padding: "1px 9px", fontWeight: 700 }}>{unreadCount}</span>}
               </h3>
-              {unreadCount > 0 && <Btn size="sm" variant="soft" onClick={() => markAllNotificationsRead()}>Tout marquer comme lu</Btn>}
+              <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {unreadCount > 0 && <Btn size="sm" variant="soft" onClick={() => markAllNotificationsRead()}>Tout marquer comme lu</Btn>}
+                {/* Croix de la fenêtre : vide la boîte entière. Une notification isolée se
+                    supprime sans confirmation (geste fréquent, sans risque) ; tout vider,
+                    non — on ne récupère rien ensuite. */}
+                <button type="button" title="Supprimer toutes mes notifications"
+                  aria-label="Supprimer toutes mes notifications"
+                  onClick={async () => {
+                    const total = notifications.length;
+                    const reste = unreadCount === 0 ? ""
+                      : unreadCount === 1 ? ", y compris celle qui n'a pas encore été lue"
+                      : `, y compris les ${unreadCount} qui n'ont pas encore été lues`;
+                    const ok = await askConfirm({
+                      title: "Supprimer toutes les notifications ?",
+                      message: total === 1
+                        ? `Votre unique notification sera définitivement supprimée${unreadCount > 0 ? ", alors qu'elle n'a pas encore été lue" : ""}. Cette action est irréversible.`
+                        : `Vos ${total} notifications seront définitivement supprimées${reste}. Cette action est irréversible.`,
+                      confirmLabel: "Tout supprimer",
+                    });
+                    if (!ok) return;
+                    const res = await deleteAllNotifications();
+                    if (res?.error) setToast(res.error);
+                    else setToast(res?.count > 1 ? `${res.count} notifications supprimées.` : "Notification supprimée.");
+                  }}
+                  style={{ background: "none", border: "1px solid #ece2d0", borderRadius: 9, padding: "5px 7px", cursor: "pointer", color: "#a89a86", display: "grid", placeItems: "center", lineHeight: 0 }}>
+                  <X size={17} />
+                </button>
+              </span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
               {shown.map((n) => {
