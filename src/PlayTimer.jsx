@@ -369,6 +369,8 @@ function readableOn(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) > 165 ? '#1A3A5C' : '#fff';
 }
 const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+// Equipe par defaut d'une tablee cooperative : tout le monde dedans.
+const COOP_TEAM = 0;
 
 /* Ecran large en paysage : on bascule sur la disposition tablette. */
 function useLandscape() {
@@ -979,12 +981,60 @@ function voiceWood(ctx, out, t0) {
   return 0.9;
 }
 
+// Fanfare de victoire : quatre notes montantes (do - mi - sol - do), puis un
+// crepitement de feu d'artifice. Meme principe que les alarmes -- tout est
+// synthetise a la volee, aucun fichier son a heberger, ca marche hors ligne.
+function voiceVictory(ctx, out, t0) {
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  notes.forEach((f, i) => {
+    const t = t0 + i * 0.13;
+    const last = i === notes.length - 1;
+    [[1, 0.26], [2, 0.085], [3, 0.03]].forEach((p) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = last ? 'triangle' : 'sine';
+      o.frequency.setValueAtTime(f * p[0], t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(p[1], t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + (last ? 1.5 : 0.5));
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + (last ? 1.6 : 0.6));
+    });
+  });
+  // Le crepitement : des eclats de bruit filtre, de plus en plus espaces.
+  for (let i = 0; i < 16; i += 1) {
+    const t = t0 + 0.52 + i * 0.058 + ((i * 7) % 5) * 0.011;
+    const src = ctx.createBufferSource();
+    const bp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    src.buffer = noiseBuffer(ctx);
+    bp.type = 'bandpass';
+    bp.frequency.value = 1700 + ((i * 431) % 2600);
+    bp.Q.value = 8;
+    g.gain.setValueAtTime(0.17 * (1 - i / 22), t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    src.connect(bp); bp.connect(g); g.connect(out);
+    src.start(t); src.stop(t + 0.09);
+  }
+  return 1.9;
+}
+
 const ALARM_VOICES = { bip: voiceBip, duck: voiceDuck, chime: voiceChime, wood: voiceWood };
 
 /* Joue une alarme et renvoie { stop } — ou null si le son est coupe / indispo. */
 function playAlarm(key, repeat = 1) {
   const voice = ALARM_VOICES[key];
   if (!voice) return null;
+  return playVoice(voice, repeat);
+}
+
+/* La fanfare de victoire. Le navigateur peut refuser tant qu'aucun geste
+   utilisateur n'a eu lieu : l'echec est silencieux, jamais bloquant. */
+export function playVictory() {
+  return playVoice(voiceVictory, 1);
+}
+
+function playVoice(voice, repeat = 1) {
   const ctx = audioCtx();
   if (!ctx) return null;
   try {
@@ -1886,6 +1936,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   };
   const removeDraft = (key) => setDraft((d) => d.filter((x) => x.key !== key));
 
+  // Cooperatif : toute la tablee marque ensemble. On place donc tout le monde
+  // dans la MEME equipe des le depart — c'est ce groupement qui fait qu'un score
+  // saisi pour un joueur est aussitot reporte sur les autres. Rien n'empeche de
+  // le defaire ensuite depuis « La tablee » : le chrono ne revient jamais dessus
+  // de lui-meme (voir addPlayerLive, qui ne suit que si la table est restee unie).
+  const groupTableAsOneTeam = useCallback(async (sessionId, team = COOP_TEAM) => {
+    if (!sessionId) return;
+    const { data } = await supabase.from('play_session_players')
+      .select('id,team').eq('session_id', sessionId);
+    for (const r of (data || [])) {
+      if (r.team === team) continue;
+      try { await supabase.rpc('aladj_set_player_team', { p_session_id: sessionId, p_player_id: r.id, p_team: team }); }
+      catch (e) { /* confort de saisie : jamais bloquant pour la partie */ }
+    }
+  }, [supabase]);
+
   const createSession = async () => {
     try {
       setError(null);
@@ -1907,6 +1973,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         });
       }
       await applyGuestAvatars(sessionId);   // les photos du carnet suivent la tablee
+      // Jeu cooperatif : la tablee part groupee, et le seuil de victoire saisi
+      // ici rejoint la fiche du jeu — l'ecran de fin pourra trancher tout seul.
+      if (game.is_coop === true) {
+        await groupTableAsOneTeam(sessionId);
+        await persistCoopSettings();
+      }
       const sess = await refetchSession(sessionId);
       await refetchPlayers(sessionId);
       await refetchTotals(sessionId);
@@ -1967,6 +2039,24 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // la tablee reelle de la partie en cours.
   const coopPhrase = phraseForScore(phrases, coopScore, players.length);
 
+  // Une victoire cooperative, ca se fete : confettis a l'ecran (CoopOutcome) et
+  // fanfare. Une seule fois par verdict — pas a chaque rendu, ni quand on
+  // corrige un chiffre. Le navigateur peut refuser le son tant qu'aucun geste
+  // n'a eu lieu : l'echec est silencieux, jamais bloquant.
+  const victoryRef = useRef(null);
+  const celebrate = useCallback(() => {
+    try { playVictory(); } catch (e) { /* audio indisponible */ }
+    try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 240]); }
+    catch (e) { /* non supporte */ }
+  }, []);
+  useEffect(() => {
+    if (!isCoop || phase !== 'done' || coopWon !== true) return;
+    const key = `${sid}|${session?.current_game || 1}`;
+    if (victoryRef.current === key) return;
+    victoryRef.current = key;
+    celebrate();
+  }, [isCoop, phase, coopWon, sid, session?.current_game, celebrate]);
+
   // Le score commun est ecrit sur chaque siege : l'historique du jeu reste
   // exploitable (moyennes, records) exactement comme en competitif.
   // Declarer le jeu cooperatif sans quitter le chrono : la fiche est mise a jour
@@ -1980,6 +2070,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         p_target: null, p_direction: scoreDir,
       });
       setGame((prev) => (prev ? { ...prev, is_coop: true } : prev));
+      // La tablee se groupe aussitot : declarer le jeu cooperatif sans reunir
+      // les joueurs n'aurait servi a rien, le score serait reste individuel.
+      if (sid) { await groupTableAsOneTeam(sid); await refetchPlayers(sid); }
     } catch (e) {
       setError("Impossible d'enregistrer le mode coopératif : " + (e?.message || e));
     } finally {
@@ -1998,6 +2091,23 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Cle stable des scores : evite de recalculer a chaque synchro Realtime.
   const scoreKey = players.map((p) => `${p.id}:${p.score || 0}`).join('|');
   const anyScore = players.some((p) => (p.score || 0) !== 0);
+
+  // Le score commun a deja ete saisi PENDANT la partie, sur les cartes joueurs :
+  // l'ecran de fin le reprend au lieu de le redemander. Sans cela il repartait
+  // d'un champ vide et ne pouvait rien trancher, alors que la table avait bien
+  // marque ses points. Une seule fois par manche : on ne recrase jamais une
+  // correction faite a la main.
+  const coopSeedRef = useRef(null);
+  useEffect(() => {
+    if (!isCoop || phase !== 'done' || !players.length) return;
+    const key = `${sid}|${session?.current_game || 1}`;
+    if (coopSeedRef.current === key) return;
+    const vals = players.map((p) => Number(p.score || 0));
+    if (!vals.some((v) => v !== 0)) return;      // personne n'a marque : on laisse vide
+    const seed = vals.every((v) => v === vals[0]) ? vals[0] : Math.max(...vals);
+    coopSeedRef.current = key;
+    setCoopScore((cur) => (cur === '' ? String(seed) : cur));
+  }, [isCoop, phase, scoreKey, sid, session?.current_game]); // eslint-disable-line
 
   // Vainqueur(s) deduits des scores, selon le sens choisi.
   const autoWinners = useMemo(() => {
@@ -2085,10 +2195,29 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const claim = (playerId) => rpc('claim_turn', { p_session_id: sid, p_player_id: playerId });
   const toggleNeutral = () => rpc('toggle_neutral', { p_session_id: sid });
   const nextRound = () => rpc('next_round', { p_session_id: sid });
-  const openNewGame = () => { setNewGameWinners(autoWinners); setNewGamePrompt(true); };
+  const openNewGame = () => { setNewGameWinners(autoWinners); setNewGameCoopWon(null); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
   const [newGameBusy, setNewGameBusy] = useState(false);
-  const confirmNewGame = async () => { if (newGameBusy) return; setNewGameBusy(true); try { await rpc('new_game', { p_session_id: sid, p_winner_ids: newGameWinners }); for (const p of players) { if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 }); } await refetchPlayers(sid); await syncEventGame(sid); await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid); } finally { setNewGameBusy(false); } setNewGamePrompt(false); setNewGameWinners([]); };
+  // Cooperatif : la manche se solde par un verdict commun, pas par une liste
+  // de vainqueurs. null = on ne tranche pas (la manche est comptee sans vainqueur).
+  const [newGameCoopWon, setNewGameCoopWon] = useState(null);
+  const confirmNewGame = async () => {
+    if (newGameBusy) return;
+    setNewGameBusy(true);
+    try {
+      // En cooperatif, toute la table gagne ou personne : meme regle qu'a l'ecran
+      // de fin, pour que les deux facons d'enchainer comptent pareil.
+      const ids = isCoop ? (newGameCoopWon === true ? players.map((p) => p.id) : []) : newGameWinners;
+      await rpc('new_game', { p_session_id: sid, p_winner_ids: ids });
+      for (const p of players) {
+        if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 });
+      }
+      await refetchPlayers(sid);
+      await syncEventGame(sid);
+      await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
+    } finally { setNewGameBusy(false); }
+    setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null);
+  };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
     if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
@@ -2259,6 +2388,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       const { error: e } = await supabase.rpc('aladj_set_session_game', { p_session_id: sid, p_game_id: g.id });
       if (e) throw e;
       setGame(g);                      // affichage immediat, sans attendre l'aller-retour
+      // Le nouveau jeu est cooperatif : la tablee se groupe, comme au lancement.
+      if (g?.is_coop === true) { await groupTableAsOneTeam(sid); await refetchPlayers(sid); }
       await refetchSession(sid);
       await syncEventGame(sid);        // le moment jeux suit, s'il y en a un
       setSwapPicker(false); setNextQuery(''); setNextHits([]);
@@ -2316,7 +2447,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const addPlayerLive = async (profileId, guestName) => {
     await rpc('add_player', { p_session_id: sid, p_profile_id: profileId || null, p_guest_name: guestName || null });
-    if (!profileId) { await applyGuestAvatars(sid); await refetchPlayers(sid); }
+    if (!profileId) await applyGuestAvatars(sid);
+    // Celui qui s'installe rejoint l'equipe de la table — mais seulement si la
+    // table n'en forme qu'une (cas cooperatif). Si les equipes ont ete reparties
+    // a la main, c'est a l'hote de decider ou va le nouveau venu.
+    const joinTeam = singleTeam != null ? singleTeam : ((isCoop && !teamsOn) ? COOP_TEAM : null);
+    if (joinTeam != null) await groupTableAsOneTeam(sid, joinTeam);
+    await refetchPlayers(sid);
   };
 
   // ---- score en direct (partage entre tous les telephones) -----------
@@ -2357,6 +2494,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // en plus, et tous les appareils sont d'accord sans synchronisation dediee.
   const teamsOn = players.some((p) => p.team != null);
 
+  // Toute la tablee dans une seule et meme equipe : c'est le cas cooperatif.
+  // Le score reste commun, mais ce n'est PAS un affrontement par equipes — on
+  // n'affiche donc ni « ÉQUIPE A » sur chaque carte, ni une couleur unique pour
+  // tout le monde : a la table, chacun garde son pion.
+  const singleTeam = useMemo(() => {
+    if (!players.length) return null;
+    const t = players[0].team;
+    if (t == null) return null;
+    return players.every((p) => p.team === t) ? t : null;
+  }, [players]);
+  const oneTeamTable = singleTeam != null;
+
   /* Attribution des couleurs, dans cet ordre :
        1. la couleur choisie a la main pour cette partie ;
        2. la premiere couleur preferee du profil encore libre ;
@@ -2392,7 +2541,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [players, colorKeyOf]);
 
   const hexFor = (p) => hexOfColor(
-    (teamsOn && p.team != null && teamColorKey[p.team]) ? teamColorKey[p.team] : colorKeyOf[p.id]
+    (teamsOn && !oneTeamTable && p.team != null && teamColorKey[p.team]) ? teamColorKey[p.team] : colorKeyOf[p.id]
   ) || ACCENTS[0];
 
   // ---- temps affichés ------------------------------------------------
@@ -2727,6 +2876,25 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <input type="number" inputMode="numeric" value={boxMin} placeholder="ex. 90"
               onChange={(e) => setBoxMin(e.target.value)} style={input} />
           </div>
+
+          {/* Jeu cooperatif : le seuil de victoire se demande MAINTENANT, pendant
+              qu'on a la boite en main et la regle sous les yeux. Renseigne une
+              fois, il est enregistre sur la fiche du jeu : a la fin de la partie,
+              le chrono annonce tout seul si la table a gagne ou perdu. */}
+          {game?.is_coop === true && (
+            <div style={{ marginTop: 14, background: 'rgba(107,58,122,.06)', border: `1.5px solid ${C.purple}44`,
+              borderRadius: 13, padding: '12px 13px' }}>
+              <Label>🤝 Coopératif · {scoreDir === 'low' ? 'on gagne en dessous de' : 'on gagne à partir de'}</Label>
+              <input type="number" inputMode="decimal" step="0.5" value={coopTarget} placeholder="ex. 20"
+                onChange={(e) => setCoopTarget(e.target.value)} style={input} />
+              <p style={{ fontSize: 12.5, color: `${C.navy}99`, margin: '8px 0 0', lineHeight: 1.5 }}>
+                {game.coop_target == null
+                  ? <>Le score qu'il faut atteindre pour gagner. Il n'est pas encore connu pour ce jeu : notez-le ici, il sera <b>enregistré sur sa fiche</b> et le chrono saura trancher à la fin de chaque partie.</>
+                  : <>Repris de la fiche du jeu. Corrigez-le si la règle dit autre chose — la fiche suivra.</>}
+                {' '}Toute la tablée sera placée dans <b>la même équipe</b> : un score saisi pour un joueur vaudra pour tout le monde.
+              </p>
+            </div>
+          )}
         </Card>
 
         <Card>
@@ -3025,7 +3193,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <span>Partie {session?.current_game || 1}</span>
                 {simul && <span style={{ color: C.purple, fontWeight: 700 }}>· Simultané</span>}
                 {neutral && <span style={{ color: C.amber, fontWeight: 700 }}>· En pause</span>}
-                {teamsOn && <span style={{ color: C.teal, fontWeight: 700 }}>· Mode équipe</span>}
+                {teamsOn && <span style={{ color: C.teal, fontWeight: 700 }}>· {oneTeamTable ? (isCoop ? 'Coopératif · score commun' : 'Toute la table ensemble') : 'Mode équipe'}</span>}
                 {session?.join_code && (
                   <button type="button" onClick={() => setQrOpen(true)} title="Afficher le QR code pour rejoindre la partie"
                     style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.teal, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
@@ -3069,7 +3237,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(19px,2.05vw,34px)',
                       lineHeight: 1.1, color: ink, textAlign: 'center', maxWidth: '100%',
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                    {p.team != null && (
+                    {p.team != null && !oneTeamTable && (
                       <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .4,
                         color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
                     )}
@@ -3118,7 +3286,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
             {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
-            {tile('👥', teamsOn ? 'La tablée · équipes' : 'La tablée', teamsOn, () => setTeamsOpen(true))}
+            {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
             {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
@@ -3135,9 +3303,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
                 <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminée</div>
                 <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                  {anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? (laisse vide pour un coopératif) On repart ensuite sur une nouvelle partie du même jeu.'}
+                  {isCoop
+                    ? 'Partie coopérative : la table a-t-elle gagné ? On repart ensuite sur une nouvelle partie du même jeu.'
+                    : (anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? (laisse vide pour un coopératif) On repart ensuite sur une nouvelle partie du même jeu.')}
                 </div>
-                <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+                {isCoop && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
+                <div style={{ display: isCoop ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
                   {players.map((p) => {
                     const won = newGameWinners.includes(p.id);
                     return (
@@ -3153,7 +3324,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   })}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
+                  <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null); }}>Annuler</button>
                   <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
                 </div>
               </div>
@@ -3179,16 +3350,19 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
               <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, marginBottom: 4 }}>Partie terminee</div>
               <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                {anyScore
-                  ? "Qui a gagne cette partie ? Le vainqueur est deduit des scores, corrige-le si besoin."
-                  : "Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)"}
+                {isCoop
+                  ? "Partie cooperative : la table a-t-elle gagne cette partie ?"
+                  : (anyScore
+                    ? "Qui a gagne cette partie ? Le vainqueur est deduit des scores, corrige-le si besoin."
+                    : "Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)")}
               </div>
-              {anyScore && (
+              {isCoop && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
+              {!isCoop && anyScore && (
                 <div style={{ marginBottom: 12 }}>
                   <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); }} saved={game?.score_direction} compact />
                 </div>
               )}
-              <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+              <div style={{ display: isCoop ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
                 {players.map((p, i) => {
                   const won = newGameWinners.includes(p.id);
                   return (
@@ -3204,7 +3378,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 })}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
-                <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); }}>Annuler</button>
+                <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null); }}>Annuler</button>
                 <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
               </div>
             </div>
@@ -3282,7 +3456,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <div style={{ fontSize: 11, color: `${C.navy}88`, display: 'flex', gap: 6, alignItems: 'center' }}>
                       <span onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
                         style={{ width: 11, height: 11, borderRadius: 3, background: hexFor(p), border: '1px solid rgba(0,0,0,.15)', cursor: 'pointer', flexShrink: 0 }} />
-                      {p.team != null && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
+                      {p.team != null && !oneTeamTable && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
                       {!p.auth_user_id && <span>sans tel</span>}
                     </div>
                   </div>
@@ -3389,10 +3563,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>
                   {scoreDir === 'low' ? 'On gagne en dessous de' : 'On gagne à partir de'}
                 </span>
-                <input type="number" step="0.5" value={coopTarget}
+                <input type="number" step="0.5" value={coopTarget} inputMode="decimal"
                   onChange={(ev) => { setCoopTarget(ev.target.value); setCoopTouched(false); }}
-                  placeholder="ex. 9"
-                  style={{ width: '100%', padding: '9px 11px', borderRadius: 10, border: '1.5px solid #e6dcc9', fontFamily: BODY, fontSize: 15, background: '#fff', color: C.navy, boxSizing: 'border-box' }} />
+                  placeholder="ex. 20"
+                  style={{ width: '100%', padding: '9px 11px', borderRadius: 10,
+                    border: coopTarget === '' ? `2px solid ${C.amber}` : '1.5px solid #e6dcc9',
+                    background: coopTarget === '' ? '#FDF4E0' : '#fff',
+                    fontFamily: BODY, fontSize: 15, color: C.navy, boxSizing: 'border-box' }} />
               </label>
             </div>
             <div style={{ marginTop: 12 }}>
@@ -3414,8 +3591,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               })}
             </div>
             <div style={{ marginTop: 14 }}>
-              <CoopOutcome won={coopWon} score={coopScore} phrase={coopPhrase} />
+              <CoopOutcome won={coopWon} score={coopScore} phrase={coopPhrase}
+                onReplay={coopWon === true ? celebrate : null} />
             </div>
+            {/* Un verdict « non tranche » n'est jamais une fatalite : on dit ce
+                qui manque, et ou le saisir. C'est exactement ce qui bloquait —
+                un seuil de victoire jamais renseigne sur la fiche du jeu. */}
+            {coopWon === null && (
+              <div style={{ background: 'rgba(232,163,23,.10)', border: `1.5px solid ${C.amber}66`,
+                borderRadius: 12, padding: '10px 12px', marginTop: 10, fontSize: 12.5,
+                color: C.navy, lineHeight: 1.55 }}>
+                {coopTarget === ''
+                  ? <>Le chrono ne peut pas trancher : indiquez ci-dessus <b>{scoreDir === 'low' ? 'le score à ne pas dépasser' : 'le score à atteindre'}</b> pour gagner à ce jeu. Il est <b>enregistré sur la fiche du jeu</b> — les prochaines fois, le verdict tombera tout seul.</>
+                  : <>Saisissez le <b>score de la table</b> ci-dessus, ou déclarez vous-même le résultat avec les boutons.</>}
+              </div>
+            )}
             {phrases.length === 0 && (
               <div style={{ fontSize: 11.5, color: `${C.navy}88`, marginTop: 8, lineHeight: 1.45 }}>
                 Aucune phrase de score pour ce jeu. Elles se saisissent sur la fiche du jeu, section « Phrases de score ».
@@ -3552,9 +3742,41 @@ function phraseForScore(phrases, score, playerCount) {
   return [...hits].sort((a, b) => width(a) - width(b))[0];
 }
 
-/* Cadre vert et feu d'artifice quand c'est gagne, cadre rouge quand c'est
-   perdu. La phrase du bareme s'affiche a l'interieur si elle existe. */
-function CoopOutcome({ won, score, phrase }) {
+/* Pluie de confettis. Purement decorative, sans aucune dependance : des petits
+   rectangles colores qui tombent en tournant. Les positions sont calculees et
+   non tirees au hasard -- deux rendus successifs donnent la meme chute, ce qui
+   evite de voir les confettis « sauter » a chaque rafraichissement de l'ecran.
+   Coupee si le systeme demande des animations reduites. */
+export function Confetti({ n = 44 }) {
+  const bits = useMemo(() => Array.from({ length: n }, (_, i) => ({
+    i,
+    left: (i * 37) % 100,
+    delay: (((i * 53) % 100) / 100) * 1.4,
+    dur: 2.4 + (((i * 29) % 100) / 100) * 2.2,
+    w: 5 + ((i * 13) % 5),
+    h: 8 + ((i * 17) % 7),
+    c: ACCENTS[i % ACCENTS.length],
+    rot: 220 + ((i * 97) % 500),
+    dx: (((i * 23) % 21) - 10) * 5,
+    round: i % 3 === 0,
+  })), [n]);
+  return (
+    <span aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+      <style>{'@keyframes aladjConfetti{0%{opacity:0;transform:translate3d(0,-24px,0) rotate(0deg)}12%{opacity:1}100%{opacity:0;transform:translate3d(var(--dx),240px,0) rotate(var(--rot))}}.aladj-confetti{animation:aladjConfetti var(--dur) linear infinite}@media (prefers-reduced-motion:reduce){.aladj-confetti{animation:none;opacity:.45;transform:none}}'}</style>
+      {bits.map((b) => (
+        <span key={b.i} className="aladj-confetti"
+          style={{ position: 'absolute', top: 0, left: `${b.left}%`, width: b.w, height: b.round ? b.w : b.h,
+            borderRadius: b.round ? '50%' : 2, background: b.c,
+            '--dx': `${b.dx}px`, '--rot': `${b.rot}deg`, '--dur': `${b.dur}s`,
+            animationDelay: `${b.delay}s` }} />
+      ))}
+    </span>
+  );
+}
+
+/* Cadre vert, confettis et feu d'artifice quand c'est gagne, cadre rouge quand
+   c'est perdu. La phrase du bareme s'affiche a l'interieur si elle existe. */
+function CoopOutcome({ won, score, phrase, onReplay }) {
   const win = won === true;
   const lose = won === false;
   const color = win ? '#2F8F4E' : lose ? C.red : `${C.navy}66`;
@@ -3564,8 +3786,9 @@ function CoopOutcome({ won, score, phrase }) {
     return { i, x: Math.round(Math.cos(a) * 46), y: Math.round(Math.sin(a) * 46), c: ACCENTS[i % ACCENTS.length], d: (i % 4) * 0.13 };
   });
   return (
-    <div style={{ position: 'relative', overflow: 'hidden', background: bg, border: `2.5px solid ${color}`, borderRadius: 14, padding: '14px 16px', textAlign: 'center' }}>
+    <div style={{ position: 'relative', overflow: 'hidden', background: bg, border: `2.5px solid ${color}`, borderRadius: 14, padding: win ? '22px 16px 18px' : '14px 16px', minHeight: win ? 160 : 0, textAlign: 'center' }}>
       <style>{'@keyframes aladjSpark{0%{opacity:0;transform:translate(0,0) scale(.4)}15%{opacity:1}100%{opacity:0;transform:translate(var(--sx),var(--sy)) scale(.9)}}.aladj-spark{animation:aladjSpark 1.5s ease-out infinite}@media (prefers-reduced-motion:reduce){.aladj-spark{animation:none;opacity:.5}}'}</style>
+      {win && <Confetti />}
       {win && (
         <span aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           {[['30%', '36%'], ['70%', '30%'], ['50%', '66%']].map(([left, top], b) => (
@@ -3589,6 +3812,45 @@ function CoopOutcome({ won, score, phrase }) {
             « {phrase.content} »
           </div>
         )}
+        {win && onReplay && (
+          <button type="button" onClick={onReplay} title="Rejouer la fanfare"
+            style={{ marginTop: 12, border: `1.5px solid ${color}55`, background: '#fff', color,
+              borderRadius: 999, padding: '6px 14px', fontFamily: TITLE, fontWeight: 600,
+              fontSize: 13.5, cursor: 'pointer' }}>
+            🔊 Rejouer la fanfare
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Verdict d'une manche cooperative, pose dans la fenetre « Nouvelle partie ».
+   En cooperatif, la question « qui a gagne ? » n'a pas de sens : c'est la table
+   qui gagne ou qui perd, d'un bloc. */
+function CoopRoundOutcome({ won, onPick }) {
+  const opt = (v, label, col) => {
+    const on = won === v;
+    return (
+      <button key={String(v)} type="button"
+        onClick={() => { if (v === true) { try { playVictory(); } catch (e) { /* audio indispo */ } } onPick(v); }}
+        style={{ flex: '1 1 140px', padding: '14px 10px', borderRadius: 13, cursor: 'pointer',
+          fontFamily: TITLE, fontWeight: 700, fontSize: 15,
+          border: on ? `2px solid ${col}` : '1px solid #e6dcc9',
+          background: on ? col : '#fff', color: on ? C.white : `${C.navy}aa` }}>
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+        {opt(true, '🎉 Gagné ensemble', '#2F8F4E')}
+        {opt(false, '😖 Perdu', C.red)}
+      </div>
+      <div style={{ fontSize: 12, color: `${C.navy}88`, marginTop: 8, lineHeight: 1.45 }}>
+        Sans réponse, la partie est comptée sans vainqueur — elle figure quand même
+        dans l'historique et dans les durées.
       </div>
     </div>
   );
