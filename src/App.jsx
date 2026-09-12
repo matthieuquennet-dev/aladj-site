@@ -8,7 +8,7 @@ import {
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
-import PlayTimer, { ScorePad } from "./PlayTimer";
+import PlayTimer, { ScorePad, Confetti, playVictory } from "./PlayTimer";
 
 /* =============================================================================
    ALADJ — À l'assaut des jeux  ·  version connectée à Supabase
@@ -806,9 +806,24 @@ function CoopOutcomeBox({ won, score, phrase, target, direction }) {
   const color = win ? "#2F8F4E" : lose ? C.red : "#8a7c6a";
   const bg = win ? "rgba(47,143,78,.10)" : lose ? "rgba(181,40,58,.09)" : "rgba(120,110,95,.07)";
   const seuil = target == null ? null : `${direction === "low" ? "en dessous de" : "à partir de"} ${String(target).replace(".", ",")}`;
+  // La fanfare, une seule fois, à l'apparition du verdict gagnant. Le son est
+  // synthétisé par le chrono (aucun fichier audio) et le navigateur peut le
+  // refuser : l'échec est silencieux et n'empêche jamais l'affichage.
+  const fanfareRef = useRef(false);
+  const celebrate = useCallback(() => {
+    try { playVictory(); } catch (e) { /* audio indisponible */ }
+    try { if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 240]); }
+    catch (e) { /* non supporté */ }
+  }, []);
+  useEffect(() => {
+    if (!win || fanfareRef.current) return;
+    fanfareRef.current = true;
+    celebrate();
+  }, [win, celebrate]);
   return (
-    <div style={{ position: "relative", overflow: "hidden", background: bg, border: `2.5px solid ${color}`, borderRadius: 16, padding: "16px 18px", marginBottom: 14, textAlign: "center" }}>
+    <div style={{ position: "relative", overflow: "hidden", background: bg, border: `2.5px solid ${color}`, borderRadius: 16, padding: win ? "22px 18px 18px" : "16px 18px", minHeight: win ? 160 : 0, marginBottom: 14, textAlign: "center" }}>
       {win && <Fireworks />}
+      {win && <Confetti />}
       <div style={{ position: "relative" }}>
         <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           {win ? <><Sparkles size={20} /> Victoire !</> : lose ? <><AlertTriangle size={19} /> Défaite</> : <>Résultat non tranché</>}
@@ -821,6 +836,14 @@ function CoopOutcomeBox({ won, score, phrase, target, direction }) {
         )}
         {seuil && (
           <div style={{ fontSize: 12, color: "#8a7c6a", marginTop: 8 }}>Seuil de victoire du jeu : {seuil}.</div>
+        )}
+        {win && (
+          <button type="button" onClick={celebrate} title="Rejouer la fanfare"
+            style={{ marginTop: 12, border: `1.5px solid ${color}55`, background: "#fff", color,
+              borderRadius: 999, padding: "6px 14px", fontFamily: "'Fredoka',sans-serif", fontWeight: 600,
+              fontSize: 13.5, cursor: "pointer" }}>
+            🔊 Rejouer la fanfare
+          </button>
         )}
       </div>
     </div>
@@ -5826,7 +5849,11 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Et si vous vous en apercevez trop tard ? À la fin d'une partie au chronomètre, un bouton <b>« En fait, ce jeu est coopératif »</b> bascule l'écran aussitôt, sans quitter le chrono.</p>
             <p style={{ margin: "0 0 8px" }}>Le sens de lecture réutilise le réglage existant « quel score l'emporte » : <b>le plus grand</b> signifie « on gagne à partir du seuil », <b>le plus petit</b> signifie « on gagne en dessous ». Laissez le seuil vide si le jeu n'en a pas de chiffré : vous déclarerez alors la victoire à la main.</p>
             <p style={{ margin: "0 0 8px" }}>Une fois le jeu marqué coopératif, <b>le chronomètre et « Enregistrer une partie jouée » s'adaptent tout seuls</b> : plus de score ni de trophée joueur par joueur, mais <b>un seul score pour la table</b> et un seul résultat — <b>Gagné</b>, <b>Perdu</b> ou <b>Je ne sais pas</b>. Le résultat se déduit du score et du seuil, et reste corrigeable d'un clic. Tous les joueurs sont enregistrés avec le même score, et tous vainqueurs (ou aucun).</p>
-            <p style={{ margin: "0 0 8px" }}>Le verdict s'affiche aussitôt : <b>cadre vert et feu d'artifice</b> pour une victoire, <b>cadre rouge</b> pour une défaite, avec la <b>phrase du barème</b> correspondant au score s'il en existe une (voir « Les phrases de score »).</p>
+            <p style={{ margin: "0 0 8px" }}><b>Au chrono, la tablée part groupée.</b> Lancer un jeu coopératif place d'office <b>tous les joueurs dans la même équipe</b> : un score saisi pour l'un est aussitôt reporté sur tous les autres, ce qui est exactement la façon dont on marque les points à un coopératif. Chacun <b>garde sa couleur</b> — on joue ensemble, mais chacun a son pion — et l'étiquette « Équipe A » ne s'affiche pas : le bandeau indique simplement <b>« Coopératif · score commun »</b>. Vous pouvez toujours défaire ce groupement depuis <b>👥 La tablée</b>, et celui qui s'installe en cours de partie rejoint la table automatiquement tant qu'elle n'a pas été répartie à la main.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Le seuil se demande dès la préparation.</b> Si le jeu choisi est coopératif, l'écran de préparation du chrono affiche un encart <b>🤝 « on gagne à partir de »</b> : notez-y le score à atteindre pendant que vous avez la règle sous les yeux. Il est enregistré sur la fiche du jeu, donc à faire <b>une seule fois</b> — et c'est lui qui permet au chrono de trancher tout seul à la fin.</p>
+            <p style={{ margin: "0 0 8px" }}><b>À la fin, rien à ressaisir.</b> Le <b>score de la table</b> est repris des cartes joueurs : les points marqués pendant la partie sont déjà là. Si le verdict reste « non tranché », le chrono dit pourquoi et où le corriger — neuf fois sur dix, c'est le seuil de victoire qui n'a jamais été renseigné pour ce jeu.</p>
+            <p style={{ margin: "0 0 8px" }}>Le verdict s'affiche aussitôt : <b>cadre vert, confettis, feu d'artifice et une petite fanfare</b> pour une victoire, <b>cadre rouge</b> pour une défaite, avec la <b>phrase du barème</b> correspondant au score s'il en existe une (voir « Les phrases de score »). La fanfare se rejoue d'un bouton, et elle se tait si votre appareil est en silencieux ou si le navigateur refuse le son. Même célébration dans « Enregistrer une partie jouée ».</p>
+            <p style={{ margin: "0 0 8px" }}>Quand on enchaîne une manche avec <b>🔁 « Nouvelle partie »</b>, la question posée n'est plus « qui a gagné ? » mais <b>« la table a-t-elle gagné ? »</b> — <b>🎉 Gagné ensemble</b> ou <b>😖 Perdu</b>. Sans réponse, la manche est comptée sans vainqueur, mais elle figure bien dans l'historique et dans les durées.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : ce que vous renseignez à table (seuil, sens du score) est <b>mémorisé sur la fiche du jeu</b> — la partie suivante le retrouvera pré-rempli. La case coopérative peut aussi être cochée ou décochée <b>pour une seule partie</b> depuis la fenêtre d'enregistrement, sans toucher à la fiche… tant que vous ne modifiez pas le seuil.</p>
           </>,
         },
@@ -6196,14 +6223,16 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans le chrono, le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes : chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</p>
             <p style={{ margin: "0 0 8px" }}>Dès lors, le <b>score saisi pour un joueur est reporté à l'identique sur ses coéquipiers</b> — c'est bien le même score, pas une addition : une équipe marque ses points ensemble. Un joueur qui rejoint une équipe en cours de partie hérite aussitôt du score de celle-ci. Les coéquipiers partagent aussi la <b>même couleur</b> à l'écran.</p>
-            <p style={{ margin: 0 }}>Même chose pour une partie <b>non chronométrée</b> : dans « Enregistrer une partie », cochez <b>Partie en équipes</b> et attribuez les lettres. Le pavé de score rappelle l'équipe concernée, et le trophée reste à cocher joueur par joueur.</p>
+            <p style={{ margin: "0 0 8px" }}>Même chose pour une partie <b>non chronométrée</b> : dans « Enregistrer une partie », cochez <b>Partie en équipes</b> et attribuez les lettres. Le pavé de score rappelle l'équipe concernée, et le trophée reste à cocher joueur par joueur.</p>
+            <p style={{ margin: 0 }}><b>Un cas à part : le coopératif.</b> Quand <b>toute la tablée</b> se retrouve dans une seule et même équipe — ce que le chrono fait d'office pour un jeu coopératif — ce n'est pas un affrontement par équipes : le score reste commun, mais <b>chacun garde sa couleur</b> et les cartes n'affichent pas de lettre d'équipe. Voir « Les parties coopératives ».</p>
           </>,
         },
         {
           q: "Les couleurs des joueurs",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Chaque joueur reçoit automatiquement une couleur, dans cet ordre : sa <b>couleur préférée</b> renseignée sur son profil, puis sa deuxième, puis sa troisième si les précédentes sont déjà prises — et à défaut la première couleur libre de la palette. Le premier arrivé garde la sienne.</p>
-            <p style={{ margin: 0 }}>Vous pouvez toujours <b>changer une couleur à la main</b> : touchez la pastille colorée sur la carte du joueur pour ouvrir le nuancier. Les couleurs déjà prises par quelqu'un d'autre y sont signalées d'un point blanc, et un bouton permet de revenir à l'attribution automatique. Le choix vaut pour cette partie et se voit sur tous les appareils.</p>
+            <p style={{ margin: "0 0 8px" }}>Vous pouvez toujours <b>changer une couleur à la main</b> : touchez la pastille colorée sur la carte du joueur pour ouvrir le nuancier. Les couleurs déjà prises par quelqu'un d'autre y sont signalées d'un point blanc, et un bouton permet de revenir à l'attribution automatique. Le choix vaut pour cette partie et se voit sur tous les appareils.</p>
+            <p style={{ margin: 0 }}>En <b>mode équipe</b>, les coéquipiers partagent la couleur du premier d'entre eux — sauf si <b>toute la table ne forme qu'une seule équipe</b> (cas coopératif) : là, chacun conserve la sienne.</p>
           </>,
         },
         {
