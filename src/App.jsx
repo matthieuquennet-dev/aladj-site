@@ -2751,6 +2751,10 @@ function AppProvider({ children }) {
     if (patch.releaseNote !== undefined) fields.release_note = patch.releaseNote || null;
     if (patch.url !== undefined) fields.url = patch.url ? String(patch.url).trim() : null;
     if (patch.sortOrder !== undefined) fields.sort_order = intOrNull(patch.sortOrder) || 0;
+    // Miniature : vide = on revient au dessin livré avec le site.
+    if (patch.img !== undefined) {
+      fields.image_url = patch.img ? (await uploadImageToStorage(patch.img, "web-games")) || null : null;
+    }
     const { data, error } = await supabase.from("web_games").update(fields).eq("id", id).select("id");
     if (error) return { error: error.message };
     if (!data || data.length === 0) return { error: "Modification impossible : droits insuffisants." };
@@ -6565,7 +6569,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>L'onglet se lit en deux temps. <b>« Disponibles »</b> rassemble les jeux que vous pouvez lancer tout de suite. <b>« En cours de développement »</b> montre l'atelier : les titres sur lesquels l'association travaille, avec — quand elle est connue — une <b>date de sortie approximative</b> que les administrateurs renseignent.</p>
             <p style={{ margin: "0 0 8px" }}>Chaque jeu a sa <b>miniature</b> et une phrase qui dit de quoi il retourne. Un clic ouvre sa fiche complète : le <b>principe</b>, les <b>règles</b>, le <b>fonctionnement</b> et quelques <b>conseils</b> pour bien débuter.</p>
-            <p style={{ margin: 0 }}>Tant qu'un jeu n'est pas ouvert au public, <b>aucun lien n'est publié</b> : les adresses de développement changent encore, et un lien mort ne rend service à personne. Le bouton « Jouer » apparaît le jour où le jeu est prêt.</p>
+            <p style={{ margin: "0 0 8px" }}>Tant qu'un jeu n'est pas ouvert au public, <b>aucun lien n'est publié</b> : les adresses de développement changent encore, et un lien mort ne rend service à personne. Le bouton « Jouer » apparaît le jour où le jeu est prêt.</p>
+            <p style={{ margin: 0 }}><b>Côté administrateurs.</b> En bas de chaque fiche, « Modifier cette fiche » règle le nom, l'état, la date de sortie, l'adresse, le nombre de joueurs, la durée et l'ordre d'affichage — ainsi que la <b>miniature</b> : importez une image ou collez une adresse web, l'aperçu montre aussitôt le rendu de la vignette. Laissée vide, la miniature revient au <b>dessin livré avec le site</b> ; un bouton « Revenir au dessin d'origine » le rétablit en un clic.</p>
           </>,
         },
         {
@@ -7226,8 +7231,10 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
     name: w.name || "", status: w.status || "dev",
     releaseDate: w.releaseDate || "", releaseNote: w.releaseNote || "",
     url: w.url || "", min: w.min || "", max: w.max || "", time: w.time || "",
-    sortOrder: w.sortOrder || 0,
+    sortOrder: w.sortOrder || 0, img: w.img || "",
   });
+  // Aperçu tel qu'il apparaîtra sur la vignette : on regarde le résultat, pas le champ.
+  const apercu = { ...w, img: f.img };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -7243,6 +7250,24 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
   return (
     <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: 14 }}>
       <Field label="Nom"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+
+      {/* Miniature : une image maison remplace le dessin livré avec le site.
+          Le format utile est celui de la vignette (paysage, ~16/10) — l'aperçu
+          ci-dessous montre exactement ce que verront les membres. */}
+      <Field label="Miniature" hint="Une image de votre choix, en paysage de préférence. Laissez vide pour garder le dessin livré avec le site.">
+        <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid #ece2d0", aspectRatio: "16 / 10", marginBottom: 10, maxWidth: 280 }}>
+          <WebGameArt w={apercu} />
+        </div>
+        <ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} />
+        {f.img && (
+          <div style={{ marginTop: 8 }}>
+            <Btn size="sm" variant="soft" onClick={() => setF({ ...f, img: "" })}>
+              <RotateCcw size={13} /> Revenir au dessin d'origine
+            </Btn>
+          </div>
+        )}
+      </Field>
+
       <Field label="État">
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
           {[{ k: "dev", t: "🔧 En développement" }, { k: "live", t: "🚀 Jouable" }, { k: "hidden", t: "🙈 Masqué" }].map((o) => (
