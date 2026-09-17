@@ -5,7 +5,8 @@ import {
   Heart, ThumbsUp, Sparkles, BookOpen, RotateCcw, Trash2, Edit3, ExternalLink, Globe, PenLine, Loader2,
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
-  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera
+  EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera,
+  Smartphone, Share2, Rocket, Wrench, CalendarCheck, Puzzle
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad, Confetti, playVictory } from "./PlayTimer";
@@ -142,6 +143,12 @@ const SIGNAL_GROUPS = [
     desc: "Pour nos moments jeux en ligne sur Board Game Arena.",
     url: "https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" },
 ];
+
+/* (lot AA) Delai de grace d'une fiche d'extension a venir : quinze jours apres
+   la premiere declaration de possession, elle quitte la veille. Un jeu, lui,
+   disparait des que sa fiche de ludotheque a recu deux notes. */
+const UPCOMING_EXT_GRACE_DAYS = 15;
+const UPCOMING_EXT_GRACE_MS = UPCOMING_EXT_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
 /* ---------- Utilitaires ---------- */
 const slug = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -1072,6 +1079,10 @@ function AppProvider({ children }) {
   // fil, sinon la moindre visite tirerait toute la messagerie de l'asso.
   const [conversations, setConversations] = useState([]);
   const [upcoming, setUpcoming] = useState([]);
+  // (lot AA) Applications de jeu editees par l'association, et rendez-vous
+  // pris entre membres pour y jouer ensemble.
+  const [webGames, setWebGames] = useState([]);
+  const [webSessions, setWebSessions] = useState([]);
   const [myWeights, setMyWeights] = useState({}); // { gameId: weight_g } pour l'utilisateur connecté
   const [notifications, setNotifications] = useState([]); // notifications du membre connecté
   // Listes d'envie : { userId: { games: [gameId], upcoming: [upcId] } }.
@@ -1146,7 +1157,7 @@ function AppProvider({ children }) {
         supabase.from("loans").select("*").order("started_at", { ascending: false }),
         fetchAllRows("game_weights", "*", ["game_id", "owner_id"]),
         fetchAllRows("event_games", "*", ["id"]),
-        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url,release_date,released,vo_released").order("name"),
+        supabase.from("upcoming_games").select("id,name,year,min_players,max_players,play_time,mechanics,description,image_url,new_price,source,created_by,created_at,ludo_game_id,ludum_url,release_date,released,vo_released,kind,base_game_id,base_upcoming_id,ludo_extension_id,owned_declared_at").order("name"),
         supabase.from("upcoming_hype").select("*"),
         supabase.from("upcoming_intent").select("*"),
         fetchAllRows("upcoming_comments", "*", ["created_at", "id"]),
@@ -1170,6 +1181,19 @@ function AppProvider({ children }) {
         // moins une fois. Table minuscule ; si la vue n'existe pas encore
         // (migration non jouee), data vaut null et tout continue sans elle.
         supabase.from("v_game_avg_duration").select("game_id,avg_seconds,play_count"),
+      ]);
+
+      // (lot AA) Applications de jeu en ligne. Chargees a part du gros
+      // Promise.all ci-dessus : ces tables sont petites, et si la migration
+      // n'a pas encore ete jouee, leur absence ne doit rien casser d'autre.
+      const [{ data: webGameRows }, { data: webSessRows }, { data: webSignRows }] = await Promise.all([
+        supabase.from("web_games").select("*").order("sort_order").order("name"),
+        currentUserIdRef.current
+          ? supabase.from("web_game_sessions").select("*").order("starts_at")
+          : Promise.resolve({ data: [] }),
+        currentUserIdRef.current
+          ? supabase.from("web_game_signups").select("*")
+          : Promise.resolve({ data: [] }),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -1400,6 +1424,10 @@ function AppProvider({ children }) {
           : [];
         return {
           id: u.id, name: u.name, year: u.year || "", min: u.min_players || "", max: u.max_players || "",
+          kind: u.kind === "extension" ? "extension" : "game",
+          baseGameId: u.base_game_id || null, baseUpcomingId: u.base_upcoming_id || null,
+          ludoExtensionId: u.ludo_extension_id || null,
+          ownedDeclaredAt: u.owned_declared_at ? new Date(u.owned_declared_at).getTime() : null,
           time: u.play_time || "", mechanics: u.mechanics || [], desc: u.description || "", img: u.image_url || "", ludumUrl: u.ludum_url || "",
           newPrice: u.new_price != null ? Number(u.new_price) : null,
           source: u.source || "manuel", createdBy: u.created_by, createdByName: nameById[u.created_by] || "Membre",
@@ -1410,9 +1438,38 @@ function AppProvider({ children }) {
           addedAt: u.created_at ? new Date(u.created_at).getTime() : 0,
         };
       });
-      // Règle de bascule : si la fiche ludo liée a ≥ 2 votes, on cache la fiche À venir.
-      // On garde tout en base (la fiche reste consultable techniquement) mais on filtre l'affichage.
-      setUpcoming(allUpc.filter((u) => u.ludoVotes < 2));
+      // Règle de bascule d'un JEU : si la fiche ludo liée a ≥ 2 votes, on cache
+      // la fiche À venir. On garde tout en base (la fiche reste consultable
+      // techniquement) mais on filtre l'affichage.
+      // (lot AA) Une EXTENSION suit une autre règle : elle n'a pas de note
+      // propre, et son arrivée dans la ludothèque est un fait, pas une
+      // opinion. Dès qu'un membre déclare la posséder, sa fiche reste visible
+      // quinze jours — le temps que les autres la voient passer — puis
+      // disparaît de la veille.
+      setUpcoming(allUpc.filter((u) => (u.kind === "extension"
+        ? !(u.ownedDeclaredAt && Date.now() - u.ownedDeclaredAt > UPCOMING_EXT_GRACE_MS)
+        : u.ludoVotes < 2)));
+
+      // (lot AA) Catalogue des applications de jeu, rendez-vous et inscrits.
+      const signupsBySession = {};
+      (webSignRows || []).forEach((r) => { (signupsBySession[r.session_id] ||= []).push(r.user_id); });
+      setWebGames((webGameRows || []).map((w) => ({
+        id: w.id, slug: w.slug, name: w.name, status: w.status || "dev",
+        tagline: w.tagline || "", description: w.description || "", rules: w.rules || "",
+        howTo: w.how_to || "", tips: w.tips || "",
+        min: w.min_players || null, max: w.max_players || null, time: w.play_time || null,
+        languages: w.languages || [],
+        releaseDate: w.release_date || null, releaseNote: w.release_note || "",
+        url: w.url || "", img: w.image_url || "", accent: w.accent || "",
+        sortOrder: w.sort_order || 0,
+      })));
+      setWebSessions((webSessRows || []).map((r) => ({
+        id: r.id, webGameId: r.web_game_id, hostId: r.host_id,
+        hostName: nameById[r.host_id] || "Membre",
+        startsAt: r.starts_at, seats: r.seats || null, note: r.note || "",
+        eventId: r.event_id || null,
+        playerIds: signupsBySession[r.id] || [],
+      })));
 
       // Notifications du membre connecté + jeux rejetés des suggestions
       setNotifications((notifRows || []).map((n) => ({
@@ -2490,7 +2547,7 @@ function AppProvider({ children }) {
     return {};
   }, [currentUser, loadData]);
 
-  // Voter pour une suggestion. value ∈ {3, 2, 1, -1, -3}.
+  // Voter pour une suggestion. value ∈ {3, 2, 1, -1, -3, -5}.
   // Recliquer sur le vote déjà posé le retire (on redevient sans avis).
   const voteEventSuggestion = useCallback(async (suggestionId, value, currentValue = null) => {
     if (!currentUser) return { error: "Connectez-vous." };
@@ -2522,6 +2579,11 @@ function AppProvider({ children }) {
       source: d.source || "manuel", created_by: currentUser.id,
       ludum_url: d.ludumUrl ? d.ludumUrl.trim() : "",
       release_date: d.releaseDate || null, released: !!d.released, vo_released: !!d.voReleased,
+      // (lot AA) Fiche d'extension : elle vise un jeu de la ludothèque, ou
+      // une autre fiche À venir quand le jeu de base n'est pas encore sorti.
+      kind: d.kind === "extension" ? "extension" : "game",
+      base_game_id: d.kind === "extension" ? (d.baseGameId || null) : null,
+      base_upcoming_id: d.kind === "extension" ? (d.baseUpcomingId || null) : null,
     }).select().single();
     if (error) return { error: error.message };
     await loadData();
@@ -2544,6 +2606,8 @@ function AppProvider({ children }) {
     if (patch.releaseDate !== undefined) fields.release_date = patch.releaseDate || null;
     if (patch.released !== undefined) fields.released = !!patch.released;
     if (patch.voReleased !== undefined) fields.vo_released = !!patch.voReleased;
+    if (patch.baseGameId !== undefined) fields.base_game_id = patch.baseGameId || null;
+    if (patch.baseUpcomingId !== undefined) fields.base_upcoming_id = patch.baseUpcomingId || null;
     // .select() pour confirmer l'écriture : un update bloqué par RLS ne renvoie pas d'erreur
     // mais ne touche aucune ligne — on le détecte ici pour éviter un faux « succès ».
     const { data, error } = await supabase.from("upcoming_games").update(fields).eq("id", id).select("id");
@@ -2643,6 +2707,133 @@ function AppProvider({ children }) {
     return { gameId: game.id };
   }, [currentUser, upcoming, loadData]);
 
+
+  // (lot AA) « Je l'ai ! » sur une fiche d'EXTENSION à venir. À la différence
+  // d'un jeu, rien de neuf n'apparaît dans la ludothèque : l'extension rejoint
+  // la fiche du jeu de base déjà présente, et le membre y est inscrit comme
+  // propriétaire. La date de cette première déclaration lance le compte à
+  // rebours de quinze jours au bout duquel la fiche de veille s'efface.
+  const importUpcomingExtension = useCallback(async (upcId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { data, error } = await supabase.rpc("aladj_import_upcoming_extension", { p_upcoming_id: upcId });
+    if (error) {
+      const m = error.message || String(error);
+      return { error: /ALADJ_BASE_GAME_MISSING/.test(m)
+        ? "Le jeu de base n'est pas encore dans la ludothèque : ajoutez-le d'abord, l'extension pourra ensuite s'y rattacher."
+        : /ALADJ_NOT_AN_EXTENSION/.test(m) ? "Cette fiche n'est pas une extension."
+        : /ALADJ_UPCOMING_NOT_FOUND/.test(m) ? "Cette fiche n'existe plus."
+        : /Could not find the function/i.test(m) ? "La bascule des extensions n'est pas installée sur le serveur (migration à rejouer)."
+        : m };
+    }
+    await loadData();
+    return { extensionId: data || null };
+  }, [currentUser, loadData]);
+
+  // ============================================================
+  // ---- (lot AA) Applications de jeu en ligne ----
+  // ============================================================
+
+  // Modifier une fiche d'application (réservé aux administrateurs côté serveur).
+  const updateWebGame = useCallback(async (id, patch) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    const fields = {};
+    if (patch.name !== undefined) fields.name = String(patch.name || "").trim();
+    if (patch.status !== undefined) fields.status = patch.status;
+    if (patch.tagline !== undefined) fields.tagline = patch.tagline || null;
+    if (patch.description !== undefined) fields.description = patch.description || null;
+    if (patch.rules !== undefined) fields.rules = patch.rules || null;
+    if (patch.howTo !== undefined) fields.how_to = patch.howTo || null;
+    if (patch.tips !== undefined) fields.tips = patch.tips || null;
+    if (patch.min !== undefined) fields.min_players = intOrNull(patch.min);
+    if (patch.max !== undefined) fields.max_players = intOrNull(patch.max);
+    if (patch.time !== undefined) fields.play_time = intOrNull(patch.time);
+    if (patch.releaseDate !== undefined) fields.release_date = patch.releaseDate || null;
+    if (patch.releaseNote !== undefined) fields.release_note = patch.releaseNote || null;
+    if (patch.url !== undefined) fields.url = patch.url ? String(patch.url).trim() : null;
+    if (patch.sortOrder !== undefined) fields.sort_order = intOrNull(patch.sortOrder) || 0;
+    const { data, error } = await supabase.from("web_games").update(fields).eq("id", id).select("id");
+    if (error) return { error: error.message };
+    if (!data || data.length === 0) return { error: "Modification impossible : droits insuffisants." };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // Proposer un rendez-vous pour jouer à une application, et s'y inscrire.
+  const addWebSession = useCallback(async (webGameId, d) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    if (!d.startsAt) return { error: "Indiquez la date et l'heure du rendez-vous." };
+    const { data, error } = await supabase.from("web_game_sessions").insert({
+      web_game_id: webGameId, host_id: currentUser.id,
+      starts_at: new Date(d.startsAt).toISOString(),
+      seats: intOrNull(d.seats), note: String(d.note || "").trim() || null,
+    }).select("id").single();
+    if (error) return { error: error.message };
+    await supabase.from("web_game_signups").insert({ session_id: data.id, user_id: currentUser.id });
+    await loadData();
+    return { id: data.id };
+  }, [currentUser, loadData]);
+
+  const removeWebSession = useCallback(async (sessionId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const { error } = await supabase.from("web_game_sessions").delete().eq("id", sessionId);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  // S'inscrire / se désinscrire d'un rendez-vous. L'organisateur est prévenu.
+  const toggleWebSignup = useCallback(async (sessionId) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const sess = (webSessions || []).find((x) => x.id === sessionId);
+    const mine = !!sess && (sess.playerIds || []).includes(currentUser.id);
+    if (mine) {
+      const { error } = await supabase.from("web_game_signups").delete()
+        .eq("session_id", sessionId).eq("user_id", currentUser.id);
+      if (error) return { error: error.message };
+    } else {
+      const { error } = await supabase.from("web_game_signups")
+        .insert({ session_id: sessionId, user_id: currentUser.id });
+      if (error && !/duplicate|unique/i.test(error.message)) return { error: error.message };
+      if (sess && sess.hostId && sess.hostId !== currentUser.id) {
+        const jeu = (webGames || []).find((w) => w.id === sess.webGameId);
+        await notifyUsers([sess.hostId], {
+          type: "web_game_signup",
+          message: `${currentUser.name} rejoint votre partie en ligne${jeu ? ` de « ${jeu.name} »` : ""}.`,
+        });
+      }
+    }
+    await loadData();
+    return {};
+  }, [currentUser, webSessions, webGames, notifyUsers, loadData]);
+
+  // Rattacher un rendez-vous au calendrier de l'association : il devient un
+  // moment jeux « en ligne », avec ses inscriptions et ses commentaires.
+  const webSessionToEvent = useCallback(async (sessionId, isPrivate) => {
+    if (!currentUser) return { error: "Connectez-vous." };
+    const sess = (webSessions || []).find((x) => x.id === sessionId);
+    if (!sess) return { error: "Rendez-vous introuvable." };
+    if (sess.eventId) return { error: "Ce rendez-vous figure déjà au calendrier." };
+    if (sess.hostId !== currentUser.id && !currentUser.admin) {
+      return { error: "Seul l'organisateur peut le porter au calendrier." };
+    }
+    const jeu = (webGames || []).find((w) => w.id === sess.webGameId);
+    const d = new Date(sess.startsAt);
+    const pad = (n) => String(n).padStart(2, "0");
+    const res = await addEvent({
+      date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+      time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      place: jeu ? `En ligne — ${jeu.name}` : "En ligne",
+      min: 2, max: sess.seats || 8,
+      notes: `Partie en ligne sur ${jeu ? jeu.name : "une application de l'association"}.${sess.note ? `\n${sess.note}` : ""}`,
+      online: true, joinSelf: true, isPrivate: !!isPrivate,
+    });
+    if (res?.error) return { error: res.error };
+    if (res?.event?.id) {
+      await supabase.from("web_game_sessions").update({ event_id: res.event.id }).eq("id", sessionId);
+    }
+    await loadData();
+    return { eventId: res?.event?.id || null };
+  }, [currentUser, webSessions, webGames, addEvent, loadData]);
 
   // ---- Invités nommés (membres avec compte OU personnes sans compte) ----
   const addGuest = useCallback(async (eventId, guestName, memberId = null) => {
@@ -3343,6 +3534,8 @@ function AppProvider({ children }) {
     addPlace, updatePlace,
     addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
     addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
+    importUpcomingExtension,
+    webGames, webSessions, updateWebGame, addWebSession, removeWebSession, toggleWebSignup, webSessionToEvent,
     reload: loadData,
     resetPassword, updatePassword, passwordRecovery, setPasswordRecovery,
     chrono, openChrono, closeChrono,
@@ -4846,9 +5039,12 @@ const NAV = [
   { key: "accueil", label: "Accueil", icon: Home },
   { key: "soirees", label: "Moments jeux", icon: Calendar },
   { key: "ludotheque", label: "Ludothèque", icon: Library },
+  { key: "a-venir", label: "À venir", icon: Sparkles },
+  // (lot AA) L'association edite aussi ses propres jeux en ligne : ils ont
+  // leur onglet, entre la veille des sorties et les outils de table.
+  { key: "web-jeux", label: "Jeux en ligne", icon: Gamepad2 },
   { key: "chrono", label: "Chrono", icon: Clock },
   { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
-  { key: "a-venir", label: "À venir", icon: Sparkles },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
   // Onglet reserve : il n'apparait que pour les membres decisionnaires (et les
   // administrateurs). Le serveur applique la meme regle, l'onglet cache n'est
@@ -4883,12 +5079,12 @@ function Navbar({ page, setPage, onAuth }) {
       position: "sticky", top: 0, zIndex: 500, background: "rgba(251,247,239,.86)", backdropFilter: "blur(12px)",
       borderBottom: "1px solid #ece2d0",
     }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <button onClick={() => setPage("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0 }} title="Accueil">
           <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 48, width: "auto", display: "block" }} />
         </button>
 
-        <nav style={{ display: "flex", gap: 4, marginLeft: 12 }} className="aladj-desktop-nav">
+        <nav style={{ display: "flex", gap: 4, marginLeft: 12, flexWrap: "wrap" }} className="aladj-desktop-nav">
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
             const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
@@ -6038,16 +6234,18 @@ function GuidePage() {
         {
           q: "Suggérer des jeux avant le moment (et voter)",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un moment, l'encart <b>« 💡 Jeux suggérés »</b> sert à préparer le programme. Chaque personne inscrite au moment peut <b>proposer un jeu</b> de la ludothèque, puis chacun dit l'envie qu'il en a. Cinq niveaux, du plus au moins désiré :</p>
-            <Illu caption="Les cinq votes possibles. Recliquer sur celui qu'on a posé le retire.">
+            <p style={{ margin: "0 0 8px" }}>Sur la fiche d'un moment, l'encart <b>« 💡 Jeux suggérés »</b> sert à préparer le programme. Chaque personne inscrite au moment peut <b>proposer un jeu</b> de la ludothèque, puis chacun dit l'envie qu'il en a. <b>Six niveaux</b>, du plus au moins désiré :</p>
+            <Illu caption="Les six votes possibles. Recliquer sur celui qu'on a posé le retire.">
               <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 <Legend color={C.teal} label="Deux pouces en haut · +3" />
                 <Legend color={C.teal} label="Un pouce en haut · +2" />
                 <Legend color="#8a7c6a" label="Égal · +1" />
                 <Legend color={C.red} label="Un pouce en bas · −1" />
-                <Legend color={C.red} label="Une croix · −3" />
+                <Legend color={C.red} label="Deux pouces en bas · −3" />
+                <Legend color={C.red} label="Une croix · −5" />
               </span>
             </Illu>
+            <p style={{ margin: "6px 0 8px" }}><b>Pourquoi la croix pèse-t-elle plus lourd ?</b> L'échelle est volontairement asymétrique. Les pouces disent une envie ; la croix dit « pas celui-là, pas aujourd'hui ». Avec −5, un seul refus annule deux enthousiasmes : un jeu qui gêne réellement quelqu'un ne sort pas sur la table par la seule force de deux votes favorables. Les croix posées avant cette évolution valaient −3 : elles ont été reportées à −5, leur intention n'ayant pas changé.</p>
             <p style={{ margin: "6px 0 8px" }}>Le total apparaît dans la <b>pastille ronde en bas à droite</b> de chaque miniature — verte quand le jeu est désiré, rouge quand il ne l'est pas. Les jeux se classent tout seuls, du plus attendu au moins attendu. Un clic sur la pastille montre <b>qui a voté quoi</b>, et un clic sur l'image ouvre la fiche du jeu.</p>
             <p style={{ margin: 0 }}><b>Qui peut y toucher ?</b> Proposer un jeu et voter sont réservés aux <b>membres inscrits au moment</b> (et au créateur), ainsi qu'aux administrateurs. Retirer une suggestion revient à celui qui l'a proposée, à l'organisateur du moment ou à un administrateur. Suggérer un jeu n'engage à rien : c'est une envie, pas une réservation — les <b>jeux joués</b>, eux, se déclarent après coup dans l'encart suivant.</p>
           </>,
@@ -6130,6 +6328,15 @@ function GuidePage() {
             </ul>
             <p style={{ margin: "0 0 8px" }}>Le <b>classement par défaut</b> suit cette logique : d'abord les sorties à venir (la plus proche en tête), puis les jeux déjà disponibles, puis les VO. <b>Nouveau :</b> une fois le jeu sorti — en VF comme en VO — la date n'apprend plus rien ; ces deux groupes sont donc classés par <b>hype moyenne décroissante</b> (départagée par le nombre de votants, puis par ordre alphabétique), et non plus par ordre alphabétique. Ce que l'association attend le plus remonte ainsi de lui-même en tête de chaque groupe. La <b>hype</b> reste accessible dans le menu de tri, aux côtés d'un classement par <b>intention d'achat</b> : chaque réponse vaut des points — précommandé 8, à la sortie 6, certainement 4, en promotion 3, pour compléter une commande 2, peu probable 1, jamais 0 — et <b>chaque membre qui possède déjà le jeu vaut 10 points</b>. Les fiches les plus convoitées remontent ainsi d'elles-mêmes.</p>
             <p style={{ margin: 0 }}>Enfin, deux encarts se repèrent d'un coup d'œil : <b style={{ color: C.teal }}>📦 déjà dans leur ludothèque</b> (lu directement dans la ludothèque de l'association : rien à déclarer, le bouton « Je l'ai ! » suffit — et vous savez à qui l'emprunter) et <b style={{ color: "#8a6a1f" }}>🎯 intéressés par l'achat</b> (tous sauf « peu probable » et « jamais »), de quoi grouper une commande. Les compteurs figurent aussi sur les vignettes.</p>
+          </>,
+        },
+        {
+          q: "Les extensions dans « À venir »",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Une <b>extension</b> peut désormais avoir sa propre fiche de veille, au même titre qu'un jeu. Au moment de l'ajout, un sélecteur en haut de la fenêtre demande simplement : <b>🎲 un jeu</b> ou <b>🧩 une extension</b>. Dans le second cas, il faut désigner son <b>jeu de base</b> — soit un jeu de la ludothèque, soit une autre fiche « À venir » si le jeu de base n'est pas encore sorti.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Ce qui se passe quand on clique sur « Je l'ai&nbsp;! »</b> — et c'est là toute la différence avec un jeu : <b>aucune fiche nouvelle n'est créée</b>. L'extension vient se ranger dans la rubrique « 🧩 Extensions » de la fiche du jeu de base, dans la ludothèque, et vous y êtes inscrit comme propriétaire. Si un autre membre l'avait déjà déclarée, vous vous ajoutez simplement à ses côtés.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Et elle disparaît de la veille au bout de {UPCOMING_EXT_GRACE_DAYS} jours.</b> Un jeu quitte l'onglet « À venir » quand sa fiche de ludothèque a reçu deux notes — une extension, elle, ne se note pas. Le déclencheur est donc la <b>possession</b> : dès qu'un membre la déclare, la fiche reste encore {UPCOMING_EXT_GRACE_DAYS} jours — le temps que les autres la voient passer et disent « moi aussi » — puis s'efface d'elle-même. Le décompte s'affiche sur la fiche.</p>
+            <p style={{ margin: 0 }}>Le filtre <b>« Jeux et extensions »</b> en haut de l'onglet permet de n'afficher que les unes ou que les autres, et le <b>Top 20 hype</b> reste réservé aux jeux. Si le jeu de base n'est pas encore entré dans la ludothèque, la bascule attend : le site le dit clairement plutôt que d'échouer en silence.</p>
           </>,
         },
         {
@@ -6335,6 +6542,51 @@ function GuidePage() {
       ],
     },
     {
+      icon: "🎮", title: "Nos jeux en ligne",
+      items: [
+        {
+          q: "L'association édite ses propres jeux",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>L'ALADJ ne fait plus seulement jouer : elle <b>fabrique des jeux</b>. Ce sont des <b>applications web</b> — on les ouvre d'un lien, sans magasin d'applications, sans téléchargement et sans rien payer. Elles ont leur onglet, <b>« Jeux en ligne »</b>, entre « À venir » et le chrono.</p>
+            <p style={{ margin: "0 0 8px" }}>Tous nos jeux se jouent <b>à plusieurs</b> : côte à côte, chacun sur son téléphone, ou à distance, chacun chez soi. C'est le même jeu dans les deux cas.</p>
+            <p style={{ margin: 0 }}>L'intérêt, au fond, est celui-ci : un jeu qui tient dans un téléphone est un jeu qu'on a <b>toujours sur soi</b>. Un train qui traîne, un apéro qui s'étire, des amis qui n'ont rien apporté — il y a de quoi proposer une partie.</p>
+          </>,
+        },
+        {
+          q: "L'ajouter à mon écran d'accueil (iPhone et Android)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>C'est vivement conseillé : posé sur l'écran d'accueil, le jeu se lance en <b>plein écran</b>, sans barre d'adresse, et se retrouve là où l'on cherche ses jeux. Le <b>« ? »</b> en haut de l'onglet ouvre le mode d'emploi ; le voici en résumé.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Sur iPhone / iPad :</b> ouvrez le jeu dans <b>Safari</b> (obligatoire sur iOS), touchez le bouton <b>Partager</b> — le carré avec une flèche vers le haut —, faites défiler jusqu'à <b>« Sur l'écran d'accueil »</b>, puis <b>Ajouter</b>.</p>
+            <p style={{ margin: 0 }}><b>Sur Android :</b> ouvrez le jeu dans <b>Chrome</b> (ou Edge, Firefox, Samsung Internet), touchez le menu <b>⋮</b> en haut à droite, puis <b>« Ajouter à l'écran d'accueil »</b> ou <b>« Installer l'application »</b>. Un bandeau le propose parfois de lui-même.</p>
+          </>,
+        },
+        {
+          q: "Disponibles, en développement : lire l'onglet",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>L'onglet se lit en deux temps. <b>« Disponibles »</b> rassemble les jeux que vous pouvez lancer tout de suite. <b>« En cours de développement »</b> montre l'atelier : les titres sur lesquels l'association travaille, avec — quand elle est connue — une <b>date de sortie approximative</b> que les administrateurs renseignent.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque jeu a sa <b>miniature</b> et une phrase qui dit de quoi il retourne. Un clic ouvre sa fiche complète : le <b>principe</b>, les <b>règles</b>, le <b>fonctionnement</b> et quelques <b>conseils</b> pour bien débuter.</p>
+            <p style={{ margin: 0 }}>Tant qu'un jeu n'est pas ouvert au public, <b>aucun lien n'est publié</b> : les adresses de développement changent encore, et un lien mort ne rend service à personne. Le bouton « Jouer » apparaît le jour où le jeu est prêt.</p>
+          </>,
+        },
+        {
+          q: "Prendre rendez-vous pour jouer entre membres",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Un jeu à plusieurs suppose d'être plusieurs au même moment. L'encart <b>« Rendez-vous de jeu »</b> sert exactement à cela : indiquez <b>quand</b>, éventuellement un <b>nombre de places</b> et un mot d'explication (« partie d'initiation », « on tente le chapitre 4 »), et le rendez-vous s'affiche pour tous les membres.</p>
+            <p style={{ margin: "0 0 8px" }}>Les autres s'inscrivent d'un bouton <b>« Je joue »</b> et peuvent se retirer aussi simplement. L'organisateur est <b>prévenu par une notification</b> à chaque inscription. La fiche de chaque jeu affiche ses propres rendez-vous ; le bas de l'onglet les récapitule tous, jeux confondus.</p>
+            <p style={{ margin: 0 }}><b>Un rendez-vous qui prend de l'ampleur ?</b> Son organisateur peut le <b>porter au calendrier</b> avec « En faire un moment jeux » : il devient un moment jeux « en ligne » ordinaire, avec ses inscriptions, ses invités et ses commentaires. Les deux coexistent : le rendez-vous rapide pour une partie improvisée, le moment jeux pour ce qui se prépare.</p>
+          </>,
+        },
+        {
+          q: "Les deux premiers titres",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}><b>SudoCulpa — Bureau des affaires singulières.</b> Un sudoku d'enquête : chaque affaire est une grille, chaque suspect un alibi qui dit où il était et surtout où il ne pouvait pas être. En croisant les impossibilités, une seule disposition tient debout — celle où un suspect se retrouve seul dans la chambre de la victime. Dix niveaux, de la grille 4×4 à trois suspects jusqu'au 16×16 à quinze suspects, et quatorze décors d'enquête.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Le Thalex — Le grimoire des liens.</b> Un jeu de cartes coopératif pour deux à cinq mages : vous voyez les arcanes de vos alliés, jamais les vôtres. Tout tient dans ce qu'on choisit de se dire, avec des indices comptés. Une campagne de douze chapitres, une partie libre, une initiation — et vingt à quarante minutes par partie.</p>
+            <p style={{ margin: 0 }}>Les deux sont <b>en cours de développement</b>. Leurs fiches, leurs règles et leur avancement sont déjà consultables dans l'onglet.</p>
+          </>,
+        },
+      ],
+    },
+    {
       icon: "👑", title: "L'espace décisionnaire",
       items: [
         {
@@ -6468,6 +6720,636 @@ function GuidePage() {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/* =============================================================================
+   (lot AA) PAGE — LES APPLICATIONS DE JEU EN LIGNE
+   L'association n'est plus seulement joueuse : elle édite ses propres jeux.
+   Ce sont des applications web — rien à installer, rien à acheter — jouables
+   à plusieurs, autour de la même table ou à distance. L'idée tient en une
+   phrase : avoir toujours un jeu à proposer à ses amis, dans sa poche.
+
+   Le catalogue vit en base (table `web_games`) : les administrateurs y règlent
+   l'état, la date de sortie approximative et l'adresse. Les textes de
+   présentation, eux, sont écrits ici — avec leurs accents, que le SQL de
+   Supabase ne supporte pas — et la base peut les remplacer au cas par cas.
+   ============================================================================= */
+
+const WEB_GAME_DEFAULTS = {
+  sudoculpa: {
+    name: "SudoCulpa",
+    subtitle: "Bureau des affaires singulières",
+    accent: "#1E8A8A",
+    tagline: "Un sudoku d'enquête : placez les suspects, découvrez qui se trouvait dans la chambre de la victime — et donc qui est coupable.",
+    description:
+      "Chaque affaire est une grille. Les lieux en colonnes, les suspects à placer, et pour chacun un alibi qui dit où il était… et surtout où il ne pouvait pas être. "
+      + "En croisant ces impossibilités, une seule disposition tient debout. Celle où un suspect, un seul, se retrouve dans la chambre de la victime.\n\n"
+      + "C'est un jeu de pure logique : aucun hasard, aucune supposition à tenter. Tout ce qu'il faut pour trancher est déjà sur la table.",
+    rules:
+      "• Le coupable est le seul suspect présent dans la chambre de la victime.\n"
+      + "• Chaque grille a une solution unique : elle se déduit, elle ne se devine pas.\n"
+      + "• Les alibis se recoupent comme les chiffres d'un sudoku — ce qui devient impossible ailleurs devient certain ici.\n"
+      + "• Une case peut être marquée « exclue » avant d'être marquée « sûre » : c'est souvent par là qu'on avance.",
+    howTo:
+      "Dix niveaux de difficulté, de « Très facile » (grille 4×4, trois suspects) à « Impossible » (16×16, quinze suspects). "
+      + "Quatorze décors d'enquête, du manoir de province au Starlight Orient Express.\n\n"
+      + "On peut mener une enquête seul, comparer ses temps au classement, ou se lancer un duel : deux joueurs, la même grille, le premier qui nomme le coupable. "
+      + "Le jeu se joue en français comme en anglais.",
+    tips:
+      "• Commencez par l'alibi qui exclut le plus de lieux : c'est lui qui ouvre la grille.\n"
+      + "• Notez les impossibilités avant les certitudes. Un jeu de déduction se gagne en éliminant.\n"
+      + "• Quand deux suspects ne peuvent occuper que les deux mêmes pièces, ces pièces sont fermées à tous les autres.\n"
+      + "• Bloqué ? Reprenez la chambre de la victime : qui, vraiment, pouvait s'y trouver ?",
+    min: 1, max: 2, time: 15,
+    languages: ["Français", "English"],
+  },
+  thalex: {
+    name: "Le Thalex",
+    subtitle: "Le grimoire des liens",
+    accent: "#6B3A7A",
+    tagline: "Un jeu de cartes coopératif où l'on voit les arcanes de ses alliés, jamais les siennes.",
+    description:
+      "Deux à cinq mages autour d'un même grimoire. Chacun tient des arcanes qu'il ne peut pas lire — mais que les autres voient parfaitement. "
+      + "Tout le jeu tient dans ce qu'on choisit de se dire, avec des indices comptés.\n\n"
+      + "« La magie ne se lit jamais seul » : on gagne ensemble, ou pas du tout.",
+    rules:
+      "• Vous voyez les cartes des autres, jamais les vôtres.\n"
+      + "• Les indices sont une ressource : en donner un coûte, et il faut parfois attendre le bon moment.\n"
+      + "• Chaque arcane a sa propre règle — la mémoire, la renaissance, la vie, la lumière, le renouveau… — et les combiner change complètement une partie.\n"
+      + "• La table gagne ou perd d'un bloc : il n'y a pas de vainqueur individuel.",
+    howTo:
+      "Trois façons d'y entrer : une initiation qui déroule les règles en jouant, une campagne de douze chapitres qui introduit les arcanes l'un après l'autre, "
+      + "et la partie libre, où l'on choisit soi-même quelles arcanes mettre dans le grimoire.\n\n"
+      + "Une partie dure de vingt à quarante minutes. On peut jouer côte à côte, chacun sur son téléphone, ou à distance — c'est exactement le même jeu.",
+    tips:
+      "• Un indice qui dit ce que quelqu'un n'a pas vaut souvent mieux qu'un indice qui le désigne.\n"
+      + "• Pensez au tour d'après : l'information que vous donnez doit encore servir quand ce sera à lui de jouer.\n"
+      + "• En campagne, gardez la même tablée : les arcanes se comprennent par accumulation.\n"
+      + "• La confiance fait partie des règles. Un allié qui hésite vous dit déjà quelque chose.",
+    min: 2, max: 5, time: 30,
+    languages: ["Français"],
+  },
+};
+
+/* Une fiche complète : ce que dit la base, complété par ce qui est écrit ici. */
+function mergeWebGame(w) {
+  const d = WEB_GAME_DEFAULTS[w.slug] || {};
+  const pick = (a, b) => (a !== undefined && a !== null && String(a).trim() !== "" ? a : (b || ""));
+  return {
+    ...w,
+    name: pick(w.name, d.name) || w.slug,
+    subtitle: d.subtitle || "",
+    accent: pick(w.accent, d.accent) || C.teal,
+    tagline: pick(w.tagline, d.tagline),
+    description: pick(w.description, d.description),
+    rules: pick(w.rules, d.rules),
+    howTo: pick(w.howTo, d.howTo),
+    tips: pick(w.tips, d.tips),
+    min: w.min || d.min || null,
+    max: w.max || d.max || null,
+    time: w.time || d.time || null,
+    languages: (w.languages && w.languages.length) ? w.languages : (d.languages || []),
+  };
+}
+
+/* ---- Miniatures dessinées ------------------------------------------------
+   Chaque jeu a sa vignette, dessinée en SVG plutôt que photographiée : elle
+   reste nette partout, ne pèse rien, et surtout elle dit le jeu — la grille
+   d'enquête pour SudoCulpa, les arcanes liées pour le Thalex.
+   ------------------------------------------------------------------------ */
+function SudoCulpaArt({ style }) {
+  const cells = [];
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      cells.push({ r, c, x: 30 + c * 66, y: 22 + r * 40 });
+    }
+  }
+  const suspects = [[0, 0], [1, 2], [2, 1], [3, 3], [1, 0], [3, 1]];
+  return (
+    <svg viewBox="0 0 320 200" preserveAspectRatio="xMidYMid slice" style={style} role="img" aria-label="SudoCulpa — grille d'enquête">
+      <defs>
+        <linearGradient id="scBg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#0d2740" /><stop offset="60%" stopColor="#07192c" /><stop offset="100%" stopColor="#040d17" />
+        </linearGradient>
+        <radialGradient id="scGlow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stopColor="#E8A317" stopOpacity="0.85" /><stop offset="100%" stopColor="#E8A317" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect x="0" y="0" width="320" height="200" fill="url(#scBg)" />
+      {/* les pieces */}
+      {cells.map((c, i) => (
+        <rect key={i} x={c.x} y={c.y} width="58" height="34" rx="5"
+          fill={c.r === 2 && c.c === 2 ? "rgba(181,40,58,.28)" : "rgba(255,255,255,.035)"}
+          stroke={c.r === 2 && c.c === 2 ? "#B5283A" : "rgba(30,138,138,.45)"} strokeWidth="1.2" />
+      ))}
+      {/* halo sur la chambre de la victime */}
+      <circle cx="191" cy="119" r="52" fill="url(#scGlow)" />
+      {/* suspects : de simples pions, comme sur un plateau */}
+      {suspects.map(([r, c], i) => (
+        <g key={i} transform={`translate(${30 + c * 66 + 29}, ${22 + r * 40 + 17})`}>
+          <circle cx="0" cy="-4" r="4.6" fill={["#1E8A8A", "#E8A317", "#6B3A7A", "#FBF7EF", "#1E8A8A", "#E8A317"][i]} opacity="0.9" />
+          <path d="M -6 8 Q -6 -1 0 -1 Q 6 -1 6 8 Z" fill={["#1E8A8A", "#E8A317", "#6B3A7A", "#FBF7EF", "#1E8A8A", "#E8A317"][i]} opacity="0.9" />
+        </g>
+      ))}
+      {/* la victime : silhouette a la craie */}
+      <g transform="translate(191,119)" stroke="#FBF7EF" strokeWidth="1.6" fill="none" opacity="0.92" strokeLinecap="round">
+        <circle cx="-9" cy="-6" r="4.2" />
+        <path d="M -5 -3 L 8 2" />
+        <path d="M -4 -6 L 4 -11" />
+        <path d="M -3 0 L 5 6" />
+        <path d="M 8 2 L 15 -2 M 8 2 L 14 7" />
+      </g>
+      {/* la loupe */}
+      <g transform="translate(252,52)" opacity="0.95">
+        <circle cx="0" cy="0" r="21" fill="rgba(251,247,239,.08)" stroke="#E8A317" strokeWidth="3" />
+        <path d="M 15 15 L 29 29" stroke="#E8A317" strokeWidth="5" strokeLinecap="round" />
+      </g>
+    </svg>
+  );
+}
+
+function ThalexArt({ style }) {
+  const arcanes = [
+    { a: -26, c: "#2F6FB3" }, { a: -13, c: "#B5283A" }, { a: 0, c: "#3B9B5B" },
+    { a: 13, c: "#E8B21C" }, { a: 26, c: "#7E4FA0" },
+  ];
+  const runes = ["M -5 -7 L 5 -7 M 0 -7 L 0 7 M -4 7 L 4 7", "M -5 6 L 0 -7 L 5 6 M -3 1 L 3 1",
+    "M 0 -7 Q 6 0 0 7 Q -6 0 0 -7", "M -5 -5 L 5 5 M 5 -5 L -5 5 M 0 -8 L 0 8", "M -6 3 Q 0 -9 6 3 M -3 6 L 3 6"];
+  return (
+    <svg viewBox="0 0 320 200" preserveAspectRatio="xMidYMid slice" style={style} role="img" aria-label="Le Thalex — arcanes liées">
+      <defs>
+        <linearGradient id="thBg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#3a2049" /><stop offset="55%" stopColor="#25153a" /><stop offset="100%" stopColor="#140b22" />
+        </linearGradient>
+        <radialGradient id="thGlow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stopColor="#E8A317" stopOpacity="0.5" /><stop offset="100%" stopColor="#E8A317" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect x="0" y="0" width="320" height="200" fill="url(#thBg)" />
+      <circle cx="160" cy="112" r="92" fill="url(#thGlow)" />
+      {/* poussiere d'etoiles */}
+      {[[38, 34], [74, 22], [268, 40], [292, 92], [26, 132], [246, 160], [128, 26], [204, 18]].map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r={i % 3 === 0 ? 2.4 : 1.5} fill="#FBF7EF" opacity={0.35 + (i % 3) * 0.18} />
+      ))}
+      {/* le lien entre les arcanes */}
+      <path d="M 78 96 Q 160 58 242 96" stroke="#E8A317" strokeWidth="1.6" fill="none" opacity="0.6" strokeDasharray="5 6" />
+      {/* les cartes en eventail */}
+      {arcanes.map((a, i) => (
+        <g key={i} transform={`translate(160,124) rotate(${a.a}) translate(0,-14)`}>
+          <rect x="-24" y="-40" width="48" height="76" rx="7" fill="#1b1030" stroke={a.c} strokeWidth="2.2" />
+          <rect x="-19" y="-35" width="38" height="66" rx="5" fill={a.c} opacity="0.16" />
+          <g transform="translate(0,-4)" stroke={a.c} strokeWidth="2.1" fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <path d={runes[i]} />
+          </g>
+          <circle cx="0" cy="24" r="3" fill={a.c} opacity="0.9" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function WebGameArt({ w, style }) {
+  const st = { display: "block", width: "100%", height: "100%", ...style };
+  if (w.img) return <img src={w.img} alt={w.name} style={{ ...st, objectFit: "cover" }} />;
+  if (w.slug === "sudoculpa") return <SudoCulpaArt style={st} />;
+  if (w.slug === "thalex") return <ThalexArt style={st} />;
+  return (
+    <div style={{ ...st, background: `linear-gradient(135deg, ${w.accent || C.teal}, ${C.navyDeep})`, display: "grid", placeItems: "center" }}>
+      <Gamepad2 size={40} color="rgba(255,255,255,.85)" />
+    </div>
+  );
+}
+
+/* ---- « Installez-le comme une application » ------------------------------
+   Une application web posée sur l'écran d'accueil se lance en plein écran,
+   sans barre d'adresse, et se retrouve là où l'on cherche ses jeux. C'est
+   deux gestes, mais ils ne sont pas les mêmes selon le téléphone : d'où ce
+   point d'interrogation, plutôt qu'un pavé de texte que personne ne lit.
+   ------------------------------------------------------------------------ */
+function PwaHowToModal({ onClose }) {
+  const step = (n, txt) => (
+    <li key={n} style={{ marginBottom: 7, lineHeight: 1.6 }}>{txt}</li>
+  );
+  return (
+    <Modal open onClose={onClose} title="Ajouter le jeu à votre écran d'accueil" width={620}>
+      <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.65, margin: "0 0 18px" }}>
+        Nos jeux sont des <b>applications web</b> : rien à télécharger sur un magasin d'applications, rien à payer.
+        Mais en les ajoutant à votre écran d'accueil, ils se comportent exactement comme une vraie application —
+        une icône, un lancement en plein écran, et surtout <b>vous les retrouvez au moment où vous en avez besoin</b>.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
+        <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+            <span style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,58,92,.1)", display: "grid", placeItems: "center" }}><Smartphone size={19} color={C.navy} /></span>
+            <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16 }}>Sur iPhone / iPad</b>
+          </div>
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 14, color: "#5e5346" }}>
+            {step(1, <>Ouvrez le jeu dans <b>Safari</b> (les autres navigateurs ne le proposent pas sur iOS).</>)}
+            {step(2, <>Touchez le bouton <b>Partager</b> <Share2 size={13} style={{ verticalAlign: "-2px" }} /> — le carré avec une flèche vers le haut, en bas de l'écran.</>)}
+            {step(3, <>Faites défiler et choisissez <b>« Sur l'écran d'accueil »</b>.</>)}
+            {step(4, <>Renommez si vous voulez, puis <b>Ajouter</b>. L'icône apparaît avec vos applications.</>)}
+          </ol>
+        </div>
+
+        <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+            <span style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center" }}><Smartphone size={19} color={C.teal} /></span>
+            <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16 }}>Sur Android</b>
+          </div>
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 14, color: "#5e5346" }}>
+            {step(1, <>Ouvrez le jeu dans <b>Chrome</b> (ou Edge, Firefox, Samsung Internet).</>)}
+            {step(2, <>Touchez le menu <b>⋮</b> en haut à droite.</>)}
+            {step(3, <>Choisissez <b>« Ajouter à l'écran d'accueil »</b> ou <b>« Installer l'application »</b>.</>)}
+            {step(4, <>Confirmez. Un bandeau propose parfois l'installation tout seul : un appui suffit.</>)}
+          </ol>
+        </div>
+      </div>
+
+      <p style={{ fontSize: 13, color: "#8a7c6a", lineHeight: 1.6, margin: "18px 0 0" }}>
+        <Info size={14} style={{ verticalAlign: "-2px" }} /> Sur ordinateur, la plupart des navigateurs affichent une petite icône d'installation
+        dans la barre d'adresse. Et si rien de tout cela ne vous tente : le lien fonctionne très bien tel quel, il suffit de le mettre en favori.
+      </p>
+    </Modal>
+  );
+}
+
+/* ---- Rendez-vous : jouer ensemble, à une heure dite ---------------------- */
+function formatRdv(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${FR_DAYS[d.getDay()]} ${d.getDate()} ${FR_MONTHS[d.getMonth()]} à ${pad(d.getHours())}h${pad(d.getMinutes())}`;
+}
+
+function WebGameRendezVous({ webGameId, onAuth, setToast, compact }) {
+  const { webSessions, webGames, users, currentUser, addWebSession, removeWebSession, toggleWebSignup, webSessionToEvent, askConfirm } = useApp();
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ startsAt: "", seats: "", note: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const list = useMemo(() => {
+    const floor = Date.now() - 3 * 60 * 60 * 1000;   // on garde deux heures de battement
+    return (webSessions || [])
+      .filter((x) => (!webGameId || x.webGameId === webGameId) && new Date(x.startsAt).getTime() > floor)
+      .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
+  }, [webSessions, webGameId]);
+
+  const nameOf = (uid) => (users || []).find((m) => m.id === uid)?.name || "Membre";
+  const gameName = (id) => ((webGames || []).find((w) => w.id === id) || {}).name || "une application";
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true); setErr("");
+    const res = await addWebSession(webGameId, f);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setF({ startsAt: "", seats: "", note: "" });
+    setAdding(false);
+    if (setToast) setToast("Rendez-vous proposé — les autres membres peuvent s'y inscrire.");
+  };
+
+  return (
+    <div style={{ background: "rgba(30,138,138,.07)", border: `1px solid ${C.teal}33`, borderRadius: 16, padding: compact ? 16 : 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: compact ? 16 : 19, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          <CalendarCheck size={compact ? 17 : 20} color={C.teal} /> Rendez-vous de jeu
+        </h3>
+        {currentUser
+          ? (webGameId && !adding && <Btn size="sm" variant="teal" onClick={() => setAdding(true)}><Plus size={14} /> Prendre rendez-vous</Btn>)
+          : <Btn size="sm" variant="soft" onClick={() => onAuth && onAuth("login")}><LogIn size={14} /> Se connecter</Btn>}
+      </div>
+      <p style={{ fontSize: 13, color: "#8a7c6a", margin: "0 0 14px", lineHeight: 1.55 }}>
+        Nos jeux se jouent à plusieurs — au même endroit ou chacun chez soi. Proposez une heure, les autres membres s'inscrivent, et vous vous retrouvez en ligne.
+      </p>
+
+      {adding && (
+        <div style={{ background: "#fff", border: "1px solid #ece2d0", borderRadius: 13, padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12 }}>
+            <Field label="Quand ?">
+              <TextInput type="datetime-local" value={f.startsAt} onChange={(e) => setF({ ...f, startsAt: e.target.value })} />
+            </Field>
+            <Field label="Nombre de places" hint="Facultatif — laissez vide si vous prenez tout le monde.">
+              <TextInput type="number" min="2" value={f.seats} onChange={(e) => setF({ ...f, seats: e.target.value })} placeholder="4" />
+            </Field>
+          </div>
+          <Field label="Un mot ?" hint="« Partie d'initiation », « on tente le chapitre 4 »…">
+            <TextInput value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Facultatif" />
+          </Field>
+          {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 10 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn size="sm" variant="teal" onClick={submit} disabled={busy || !f.startsAt}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Proposer</>}</Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setAdding(false); setErr(""); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+
+      {list.length === 0 && (
+        <span style={{ fontSize: 13.5, color: "#a89a86" }}>
+          Aucun rendez-vous pour l'instant. {currentUser && webGameId ? "Soyez le premier à en proposer un." : ""}
+        </span>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+        {list.map((r) => {
+          const mine = !!currentUser && (r.playerIds || []).includes(currentUser.id);
+          const isHost = !!currentUser && r.hostId === currentUser.id;
+          const full = r.seats != null && (r.playerIds || []).length >= r.seats && !mine;
+          return (
+            <div key={r.id} style={{ background: "#fff", border: `1px solid ${mine ? C.teal : "#ece2d0"}`, borderRadius: 13, padding: "12px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>
+                  {formatRdv(r.startsAt)}
+                </span>
+                <span style={{ fontSize: 12.5, color: "#9c8d79" }}>
+                  proposé par {isHost ? "vous" : r.hostName}
+                  {!webGameId && <> · {gameName(r.webGameId)}</>}
+                </span>
+              </div>
+              {r.note && <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>{r.note}</p>}
+              <div style={{ fontSize: 12.5, color: "#6e6256", marginTop: 7, lineHeight: 1.5 }}>
+                <b>{(r.playerIds || []).length}</b>{r.seats ? ` / ${r.seats}` : ""} inscrit{(r.playerIds || []).length > 1 ? "s" : ""}
+                {(r.playerIds || []).length > 0 && <> : {(r.playerIds || []).map(nameOf).join(", ")}</>}
+              </div>
+              {r.eventId && (
+                <div style={{ fontSize: 12.5, color: C.teal, marginTop: 6, fontWeight: 600 }}>
+                  <Calendar size={12} style={{ verticalAlign: "-2px" }} /> Ce rendez-vous figure au calendrier des moments jeux.
+                </div>
+              )}
+              {currentUser && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <Btn size="sm" variant={mine ? "soft" : "teal"} disabled={busy || (full && !mine)}
+                    onClick={async () => { setBusy(true); const res = await toggleWebSignup(r.id); setBusy(false); if (res?.error && setToast) setToast(res.error); }}>
+                    {mine ? <><X size={13} /> Me retirer</> : (full ? "Complet" : <><Check size={13} /> Je joue</>)}
+                  </Btn>
+                  {isHost && !r.eventId && (
+                    <Btn size="sm" variant="soft" disabled={busy}
+                      onClick={async () => {
+                        if (!(await askConfirm({
+                          title: "En faire un moment jeux ?",
+                          message: "Le rendez-vous rejoint le calendrier de l'association comme moment jeux « en ligne ». Les inscriptions et les commentaires s'y ajoutent ensuite comme pour n'importe quel moment.",
+                          confirmLabel: "Créer le moment jeux",
+                        }))) return;
+                        setBusy(true); const res = await webSessionToEvent(r.id, false); setBusy(false);
+                        if (setToast) setToast(res?.error || "Moment jeux créé — il est au calendrier.");
+                      }}>
+                      <Calendar size={13} /> En faire un moment jeux
+                    </Btn>
+                  )}
+                  {(isHost || currentUser.admin) && (
+                    <Btn size="sm" variant="ghost" disabled={busy}
+                      onClick={async () => {
+                        if (!(await askConfirm({ title: "Annuler ce rendez-vous ?", message: "Les inscrits ne le verront plus. Le moment jeux éventuellement créé, lui, reste au calendrier.", confirmLabel: "Annuler le rendez-vous" }))) return;
+                        setBusy(true); await removeWebSession(r.id); setBusy(false);
+                      }}>
+                      <Trash2 size={13} /> Annuler
+                    </Btn>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Vignette d'une application ---- */
+function WebGameCard({ w, onOpen }) {
+  const dev = w.status !== "live";
+  return (
+    <button onClick={onOpen} style={{
+      width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 20,
+      overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)",
+      transition: "transform .15s, box-shadow .2s", display: "flex", flexDirection: "column",
+    }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 14px 32px rgba(18,41,63,.14)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
+      <div style={{ position: "relative", aspectRatio: "16 / 10", overflow: "hidden" }}>
+        <WebGameArt w={w} />
+        <div style={{ position: "absolute", top: 10, left: 10 }}>
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 5, background: dev ? C.amber : C.teal, color: "#fff",
+            borderRadius: 999, padding: "4px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11.5,
+            boxShadow: "0 2px 6px rgba(0,0,0,.22)",
+          }}>
+            {dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}
+          </span>
+        </div>
+      </div>
+      <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column" }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 18, margin: "0 0 2px", lineHeight: 1.2 }}>{w.name}</h3>
+        {w.subtitle && <p style={{ fontSize: 12.5, color: w.accent, margin: "0 0 8px", fontWeight: 700 }}>{w.subtitle}</p>}
+        <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.55, margin: "0 0 12px", flex: 1 }}>{w.tagline}</p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11.5, color: "#8a7c6a" }}>
+          {w.min && <Badge color={C.teal}><Users size={11} /> {w.min}{w.max && w.max !== w.min ? `–${w.max}` : ""} joueurs</Badge>}
+          {w.time && <Badge color={C.amber}><Clock size={11} /> {w.time} min</Badge>}
+          {dev && (w.releaseNote || w.releaseDate) && (
+            <Badge color={C.purple}><Calendar size={11} /> {w.releaseNote || `vers ${formatDateFr(w.releaseDate)}`}</Badge>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ---- Fiche détaillée d'une application ---- */
+function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
+  const { currentUser, updateWebGame } = useApp();
+  const [editing, setEditing] = useState(false);
+  const dev = w.status !== "live";
+
+  const bloc = (icon, titre, texte) => (texte ? (
+    <div style={{ marginBottom: 18 }}>
+      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+        {icon} {titre}
+      </h4>
+      <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.7, margin: 0, whiteSpace: "pre-line" }}>{texte}</p>
+    </div>
+  ) : null);
+
+  return (
+    <Modal open onClose={onClose} title={w.name} width={760}>
+      <div style={{ borderRadius: 18, overflow: "hidden", aspectRatio: "16 / 7", marginBottom: 16, border: "1px solid #ece2d0" }}>
+        <WebGameArt w={w} />
+      </div>
+
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
+        <Badge color={dev ? C.amber : C.teal} soft={false}>{dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}</Badge>
+        {w.min && <Badge color={C.teal}><Users size={12} /> {w.min}{w.max && w.max !== w.min ? `–${w.max}` : ""} joueurs</Badge>}
+        {w.time && <Badge color={C.amber}><Clock size={12} /> {w.time} min</Badge>}
+        {(w.languages || []).map((l) => <Badge key={l} color="#8a7c6a">{l}</Badge>)}
+        {dev && (w.releaseNote || w.releaseDate) && (
+          <Badge color={C.purple}><Calendar size={12} /> {w.releaseNote || `sortie envisagée vers ${formatDateFr(w.releaseDate)}`}</Badge>
+        )}
+      </div>
+
+      {w.subtitle && <p style={{ fontFamily: "'Fredoka',sans-serif", color: w.accent, fontSize: 16, margin: "0 0 14px", fontWeight: 700 }}>{w.subtitle}</p>}
+
+      {bloc("🎯", "Le principe", w.description)}
+      {bloc("📏", "Les règles", w.rules)}
+      {bloc("🎮", "Comment ça marche", w.howTo)}
+      {bloc("💡", "Quelques conseils", w.tips)}
+
+      {w.status === "live" && w.url ? (
+        <a href={w.url} target="_blank" rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: w.accent, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15.5, padding: "14px 20px", borderRadius: 13, textDecoration: "none", marginBottom: 18 }}>
+          <Gamepad2 size={18} /> Jouer à {w.name}
+        </a>
+      ) : (
+        <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}55`, borderRadius: 13, padding: "13px 16px", marginBottom: 18, fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
+          <b style={{ color: "#8a6a1f", fontFamily: "'Fredoka',sans-serif" }}>🔧 Pas encore ouvert au public.</b>{" "}
+          {w.releaseNote || (w.releaseDate ? `Sortie envisagée vers ${formatDateFr(w.releaseDate)}.` : "La date de sortie n'est pas encore arrêtée.")}
+          {" "}Le lien sera publié ici dès que le jeu sera prêt — inutile de le chercher ailleurs, il bouge encore.
+        </div>
+      )}
+
+      <WebGameRendezVous webGameId={w.id} onAuth={onAuth} setToast={setToast} compact />
+
+      {currentUser?.admin && (
+        <div style={{ marginTop: 18, borderTop: "1px solid #f0e8d8", paddingTop: 14 }}>
+          {editing
+            ? <WebGameAdminForm w={w} onCancel={() => setEditing(false)} onSave={updateWebGame} setToast={setToast} />
+            : <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier cette fiche (administration)</Btn>}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---- Réglages d'une application, côté administrateurs ---- */
+function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
+  const [f, setF] = useState({
+    name: w.name || "", status: w.status || "dev",
+    releaseDate: w.releaseDate || "", releaseNote: w.releaseNote || "",
+    url: w.url || "", min: w.min || "", max: w.max || "", time: w.time || "",
+    sortOrder: w.sortOrder || 0,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    setBusy(true); setErr("");
+    const res = await onSave(w.id, f);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    if (setToast) setToast("Fiche mise à jour.");
+    onCancel();
+  };
+
+  return (
+    <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: 14 }}>
+      <Field label="Nom"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+      <Field label="État">
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          {[{ k: "dev", t: "🔧 En développement" }, { k: "live", t: "🚀 Jouable" }, { k: "hidden", t: "🙈 Masqué" }].map((o) => (
+            <button key={o.k} type="button" onClick={() => setF({ ...f, status: o.k })}
+              style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5,
+                border: `2px solid ${f.status === o.k ? C.navy : "#e6dcc9"}`, background: f.status === o.k ? C.navy : "#fff", color: f.status === o.k ? "#fff" : "#8a7c6a" }}>
+              {o.t}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 12 }}>
+        <Field label="Sortie approximative"><TextInput type="date" value={f.releaseDate} onChange={(e) => setF({ ...f, releaseDate: e.target.value })} /></Field>
+        <Field label="…ou en toutes lettres" hint="« printemps 2027 », « d'ici l'été »"><TextInput value={f.releaseNote} onChange={(e) => setF({ ...f, releaseNote: e.target.value })} /></Field>
+      </div>
+      <Field label="Adresse du jeu" hint="Laissez vide tant que l'adresse n'est pas stable : la fiche affichera « pas encore ouvert au public ».">
+        <TextInput value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="https://..." />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px,1fr))", gap: 12 }}>
+        <Field label="Joueurs min"><TextInput type="number" value={f.min} onChange={(e) => setF({ ...f, min: e.target.value })} /></Field>
+        <Field label="Joueurs max"><TextInput type="number" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value })} /></Field>
+        <Field label="Durée (min)"><TextInput type="number" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></Field>
+        <Field label="Ordre"><TextInput type="number" value={f.sortOrder} onChange={(e) => setF({ ...f, sortOrder: e.target.value })} /></Field>
+      </div>
+      {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 10 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn size="sm" variant="teal" onClick={submit} disabled={busy}>{busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Enregistrer</>}</Btn>
+        <Btn size="sm" variant="soft" onClick={onCancel}>Annuler</Btn>
+      </div>
+    </div>
+  );
+}
+
+/* ---- La page ---- */
+function WebGamesPage({ onAuth, setToast }) {
+  const { webGames, currentUser } = useApp();
+  const [openId, setOpenId] = useState(null);
+  const [howTo, setHowTo] = useState(false);
+
+  const all = useMemo(() => (webGames || [])
+    .filter((w) => w.status !== "hidden" || currentUser?.admin)
+    .map(mergeWebGame), [webGames, currentUser]);
+  const live = all.filter((w) => w.status === "live");
+  const dev = all.filter((w) => w.status !== "live");
+  const opened = all.find((w) => w.id === openId) || null;
+
+  const section = (titre, sousTitre, liste, vide) => (
+    <section style={{ marginBottom: 44 }}>
+      <SectionTitle kicker={titre} title={sousTitre} noMargin />
+      {liste.length === 0
+        ? <div style={{ marginTop: 22 }}><EmptyHint icon={Gamepad2} text={vide} /></div>
+        : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20, marginTop: 26 }}>
+            {liste.map((w) => <WebGameCard key={w.id} w={w} onOpen={() => setOpenId(w.id)} />)}
+          </div>
+        )}
+    </section>
+  );
+
+  return (
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 60px" }}>
+      {/* Bandeau d'introduction */}
+      <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDeep} 55%, #0c1f30 100%)`, borderRadius: 26, padding: "clamp(26px,4vw,44px)", color: "#fff", marginBottom: 30 }}>
+        <Dice color={C.teal} n={4} style={{ position: "absolute", width: 90, top: -10, right: 30, opacity: .2, transform: "rotate(14deg)" }} />
+        <Dice color={C.amber} n={2} style={{ position: "absolute", width: 64, bottom: -8, right: 128, opacity: .16, transform: "rotate(-8deg)" }} />
+        <Badge color={C.amber} soft={false}><Rocket size={13} /> L'ALADJ, éditeur de jeux</Badge>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(28px,4.4vw,44px)", margin: "16px 0 10px", lineHeight: 1.1 }}>
+          Nos jeux en ligne
+        </h1>
+        <p style={{ color: "rgba(255,255,255,.85)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.65, margin: 0, maxWidth: 680 }}>
+          L'association ne fait plus seulement jouer : elle <b>édite ses propres jeux</b>, sous forme d'applications web.
+          Tous se jouent <b>à plusieurs, sur place ou à distance</b> — et comme ils tiennent dans un téléphone,
+          vous avez toujours de quoi proposer une partie, où que vous soyez.
+        </p>
+      </div>
+
+      {/* Rappel d'installation */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", background: "rgba(30,138,138,.09)", border: `1.5px solid ${C.teal}44`, borderRadius: 16, padding: "16px 20px", marginBottom: 34 }}>
+        <span style={{ width: 44, height: 44, borderRadius: 13, background: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <Smartphone size={22} color={C.teal} />
+        </span>
+        <p style={{ flex: 1, minWidth: 220, margin: 0, fontSize: 14.5, color: "#5e5346", lineHeight: 1.6 }}>
+          <b style={{ color: C.navy }}>Ajoutez-les à votre écran d'accueil.</b> Nos jeux sont des applications web : aucun magasin d'applications,
+          aucun téléchargement. Mais posés sur l'écran d'accueil, ils s'ouvrent en plein écran, comme une vraie application — et vous les avez sous la main au bon moment.
+        </p>
+        <button onClick={() => setHowTo(true)} title="Comment faire sur iPhone et sur Android ?" aria-label="Comment ajouter le jeu à l'écran d'accueil ?"
+          style={{ width: 38, height: 38, borderRadius: "50%", flexShrink: 0, border: `2px solid ${C.teal}`, background: "#fff", color: C.teal, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, lineHeight: 1 }}>
+          ?
+        </button>
+      </div>
+
+      {section("Disponibles", "Les jeux que vous pouvez lancer", live,
+        "Aucun jeu n'est encore ouvert au public — les deux premiers arrivent, voyez ci-dessous.")}
+
+      {section("Atelier", "En cours de développement", dev,
+        "Rien en chantier pour le moment.")}
+
+      {/* Tous les rendez-vous, jeux confondus */}
+      <WebGameRendezVous webGameId={null} onAuth={onAuth} setToast={setToast} />
+
+      <p style={{ fontSize: 13, color: "#8a7c6a", lineHeight: 1.65, margin: "28px 0 0", textAlign: "center", maxWidth: 720, marginLeft: "auto", marginRight: "auto" }}>
+        <Info size={14} style={{ verticalAlign: "-2px" }} /> Nos jeux en ligne sont gratuits pour les membres comme pour les curieux.
+        Une idée de jeu, une remarque, un bug&nbsp;? Dites-le sur la conversation Signal « Blabla » — c'est comme cela qu'ils s'améliorent.
+      </p>
+
+      {opened && <WebGameDetailModal w={opened} onClose={() => setOpenId(null)} onAuth={onAuth} setToast={setToast} />}
+      {howTo && <PwaHowToModal onClose={() => setHowTo(false)} />}
     </div>
   );
 }
@@ -6768,7 +7650,7 @@ function ChronoPage({ onAuth, setPage }) {
 }
 
 function HomePage({ setPage, onAuth }) {
-  const { events, games, users, currentUser, openChrono } = useApp();
+  const { events, games, users, currentUser, openChrono, webGames } = useApp();
   const [showMembers, setShowMembers] = useState(false);
   const [viewMemberId, setViewMemberId] = useState(null); // pour consulter la ludothèque d'un membre
   const [chronoCode, setChronoCode] = useState("");
@@ -6785,6 +7667,14 @@ function HomePage({ setPage, onAuth }) {
     const today = new Date().toISOString().slice(0, 10);
     return events.filter((e) => e.date >= today && isEventVisible(e) && canViewEvent(e, currentUser)).length;
   }, [events, currentUser]);
+
+  // (lot AA) Les jeux édités par l'association. Tant qu'aucun n'est ouvert au
+  // public, le compteur annonce honnêtement ceux qui arrivent plutôt que « 0 ».
+  const webLive = useMemo(() => (webGames || []).filter((w) => w.status === "live").length, [webGames]);
+  const webDev = useMemo(() => (webGames || []).filter((w) => w.status === "dev").length, [webGames]);
+  const webStat = webLive > 0
+    ? { n: webLive, l: webLive > 1 ? "jeux en ligne" : "jeu en ligne" }
+    : { n: webDev, l: webDev > 1 ? "jeux en ligne bientôt" : "jeu en ligne bientôt" };
 
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
@@ -6826,6 +7716,9 @@ function HomePage({ setPage, onAuth }) {
               { n: games.filter((g) => !g.unowned).length, l: "jeux partagés", onClick: () => setPage("ludotheque") },
               { n: users.length, l: "membres", onClick: () => setShowMembers(true) },
               { n: upcomingCount, l: "moments à venir", onClick: () => setPage("soirees") },
+              // Le compteur des jeux en ligne ne s'affiche que s'il a quelque
+              // chose a dire : mieux vaut pas de chiffre du tout qu'un « 0 ».
+              ...(webStat.n > 0 ? [{ n: webStat.n, l: webStat.l, onClick: () => setPage("web-jeux") }] : []),
               { n: "2010", l: "depuis", onClick: null },
             ].map((s, i) => (
               <div key={i} onClick={s.onClick || undefined} style={{ textAlign: "center", cursor: s.onClick ? "pointer" : "default", transition: "transform .15s", ...(s.onClick ? {} : {}) }}
@@ -7070,6 +7963,38 @@ function HomePage({ setPage, onAuth }) {
               </a>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* ---- (lot AA) L'association, éditrice de jeux en ligne ---- */}
+      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "0 24px 20px" }}>
+        <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDeep} 60%, #0c1f30 100%)`, borderRadius: 24, padding: "clamp(26px,4vw,42px)", color: "#fff", boxShadow: "0 12px 34px rgba(18,41,63,.18)" }}>
+          <Dice color={C.teal} n={4} style={{ position: "absolute", width: 92, top: -14, right: 34, opacity: .18, transform: "rotate(13deg)" }} />
+          <Dice color={C.amber} n={2} style={{ position: "absolute", width: 62, bottom: -10, right: 136, opacity: .15, transform: "rotate(-9deg)" }} />
+          <div style={{ position: "relative" }}>
+            <Badge color={C.amber} soft={false}><Rocket size={13} /> Nouveau · L'ALADJ éditeur</Badge>
+            <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(24px,3.6vw,34px)", margin: "16px 0 12px", lineHeight: 1.12 }}>
+              L'association édite ses propres jeux en ligne
+            </h2>
+            <p style={{ color: "rgba(255,255,255,.85)", fontSize: 15.5, lineHeight: 1.7, margin: "0 0 12px", maxWidth: 700 }}>
+              Après la ludothèque et les moments jeux, l'ALADJ se met à <b style={{ color: "#fff" }}>fabriquer des jeux</b> : des
+              applications web, gratuites, que l'on ouvre d'un lien. Tous se jouent <b style={{ color: "#fff" }}>à plusieurs</b> — autour
+              de la même table ou chacun chez soi.
+            </p>
+            <p style={{ color: "rgba(255,255,255,.72)", fontSize: 14.5, lineHeight: 1.7, margin: "0 0 22px", maxWidth: 700 }}>
+              L'intérêt est simple : posés sur l'écran d'accueil de votre téléphone, ils ne quittent plus votre poche.
+              Un train qui traîne, un apéro qui s'étire, des amis qui n'ont rien apporté — vous avez toujours un jeu à proposer.
+              {webLive === 0 && <> Les <b style={{ color: "#fff" }}>{webDev > 1 ? `${webDev} premiers titres` : "premiers titres"}</b> sont en cours de développement : leur fiche, leurs règles et leur avancement sont déjà consultables.</>}
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <Btn variant="teal" size="lg" onClick={() => setPage("web-jeux")}>
+                <Gamepad2 size={19} /> Découvrir nos jeux en ligne
+              </Btn>
+              <span style={{ fontSize: 13.5, color: "rgba(255,255,255,.65)", lineHeight: 1.5 }}>
+                <Smartphone size={14} style={{ verticalAlign: "-2px" }} /> À ajouter à l'écran d'accueil : l'onglet explique comment, sur iPhone comme sur Android.
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -9524,17 +10449,22 @@ function EventLiveChronos({ eventId }) {
 
 /* ---- Section : suggestions de jeux pour un moment ----------------------------
    Avant la partie, les personnes présentes au moment proposent des jeux et
-   disent l'envie qu'elles en ont. Cinq niveaux, du plus au moins désiré :
-   deux pouces en haut (+3), un pouce en haut (+2), égal (+1), un pouce en
-   bas (-1), une croix (-3). La somme des votes donne le classement, affichée
-   dans une pastille en bas à droite de la miniature.
+   disent l'envie qu'elles en ont. (lot AA) Six niveaux, du plus au moins
+   désiré : deux pouces en haut (+3), un pouce en haut (+2), égal (+1), un
+   pouce en bas (-1), deux pouces en bas (-3), une croix (-5). L'échelle est
+   volontairement asymétrique : une croix pèse plus lourd qu'un enthousiasme,
+   parce qu'elle dit « pas celui-là, pas aujourd'hui » — un jeu qui gêne
+   quelqu'un ne doit pas sortir sur la seule foi de deux votes favorables.
+   La somme des votes donne le classement, affichée dans une pastille en bas
+   à droite de la miniature.
    ---------------------------------------------------------------------------- */
 const SUGGESTION_VOTE_OPTIONS = [
   { v: 3, label: "Très envie" },
   { v: 2, label: "Envie" },
   { v: 1, label: "Pourquoi pas" },
   { v: -1, label: "Peu envie" },
-  { v: -3, label: "Pas celui-là" },
+  { v: -3, label: "Vraiment pas envie" },
+  { v: -5, label: "Pas celui-là" },
 ];
 
 function SuggestionVoteIcon({ v }) {
@@ -9542,6 +10472,7 @@ function SuggestionVoteIcon({ v }) {
   if (v === 2) return <ThumbsUp size={13} />;
   if (v === 1) return <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, lineHeight: 1 }}>=</span>;
   if (v === -1) return <ThumbsDown size={13} />;
+  if (v === -3) return <span style={{ display: "inline-flex", gap: 1 }}><ThumbsDown size={11} /><ThumbsDown size={11} /></span>;
   return <X size={13} />;
 }
 
@@ -12088,6 +13019,47 @@ function upcomingStats(u) {
   return { avg, count };
 }
 
+/* ---- (lot AA) Le jeu de base d'une fiche d'extension --------------------
+   Une extension ne vit jamais seule : elle se rattache à un jeu de la
+   ludothèque, ou — quand le jeu de base n'est pas encore sorti — à une autre
+   fiche À venir. Cette fonction rend la cible sous une forme unique, quel que
+   soit le rattachement, pour que l'affichage n'ait pas à trancher partout.
+   ---------------------------------------------------------------------- */
+function resolveUpcomingBase(u, games, upcoming) {
+  if (!u || u.kind !== "extension") return null;
+  if (u.baseGameId) {
+    const g = (games || []).find((x) => x.id === u.baseGameId);
+    if (g) return { kind: "ludo", id: g.id, name: g.name, ready: true };
+  }
+  if (u.baseUpcomingId) {
+    const b = (upcoming || []).find((x) => x.id === u.baseUpcomingId);
+    if (b) return { kind: "upcoming", id: b.id, name: b.name, ready: !!b.ludoGameId, ludoGameId: b.ludoGameId || null };
+  }
+  return { kind: "none", id: null, name: "", ready: false };
+}
+
+/* Jours restants avant qu'une fiche d'extension possédée quitte la veille. */
+function extGraceDaysLeft(u) {
+  if (!u || u.kind !== "extension" || !u.ownedDeclaredAt) return null;
+  const left = Math.ceil((u.ownedDeclaredAt + UPCOMING_EXT_GRACE_MS - Date.now()) / (24 * 60 * 60 * 1000));
+  return left > 0 ? left : 0;
+}
+
+/* Pastille « extension », posée sur la vignette comme sur la fiche. */
+function ExtensionBadge({ baseName, big }) {
+  return (
+    <span title={baseName ? `Extension pour ${baseName}` : "Extension"}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 5, background: C.purple, color: "#fff",
+        borderRadius: 999, padding: big ? "5px 13px" : "3px 10px",
+        fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: big ? 13.5 : 11.5,
+        boxShadow: "0 2px 6px rgba(0,0,0,.18)", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
+      }}>
+      <Puzzle size={big ? 14 : 11} /> Extension{baseName ? ` · ${baseName}` : ""}
+    </span>
+  );
+}
+
 /* ---- Carte d'une fiche À venir (grille principale) ---- */
 function UpcomingCard({ u, onOpen, currentUserId }) {
   const { avg, count } = upcomingStats(u);
@@ -12106,7 +13078,10 @@ function UpcomingCard({ u, onOpen, currentUserId }) {
             🌡️ {avg.toFixed(1).replace(".", ",")}
           </div>
         )}
-        <div style={{ position: "absolute", bottom: 10, left: 10 }}><ReleaseBadge u={u} /></div>
+        <div style={{ position: "absolute", bottom: 10, left: 10, display: "flex", gap: 6, flexWrap: "wrap", maxWidth: "calc(100% - 20px)" }}>
+          <ReleaseBadge u={u} />
+          {u.kind === "extension" && <ExtensionBadge baseName={u.baseName} />}
+        </div>
       </div>
       <div style={{ padding: 14 }}>
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 4px", lineHeight: 1.2 }}>{u.name}</h3>
@@ -12140,7 +13115,7 @@ function UpcomingCard({ u, onOpen, currentUserId }) {
 
 /* ---- Page "À venir" ---- */
 function UpcomingPage({ onAuth, setToast }) {
-  const { upcoming, users, currentUser } = useApp();
+  const { upcoming, users, currentUser, games: allGames } = useApp();
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
   // Par defaut on classe par date de sortie : c'est l'information qu'on vient
@@ -12150,6 +13125,12 @@ function UpcomingPage({ onAuth, setToast }) {
   const [showAdd, setShowAdd] = useState(false);
   const [view, setView] = useState("grid");   // (point 6) "grid" | "list"
   const [mine, setMine] = useState("");       // (point 7) "" | "intent" | "hype" | "both"
+  const [kind, setKind] = useState("");       // (lot AA) "" | "game" | "extension"
+  // Le nom du jeu de base, résolu une fois pour toutes : la vignette, la liste
+  // et la fiche l'affichent, inutile de le rechercher trois fois.
+  const withBase = useMemo(() => upcoming.map((u) => (u.kind === "extension"
+    ? { ...u, baseName: (resolveUpcomingBase(u, allGames, upcoming) || {}).name || "" }
+    : u)), [upcoming, allGames]);
 
   const allMechanics = useMemo(() => {
     const s = new Set();
@@ -12171,10 +13152,11 @@ function UpcomingPage({ onAuth, setToast }) {
       if (mine === "both") return hasIntent && hasHype;
       return true;
     };
-    let list = upcoming.filter((u) => {
+    let list = withBase.filter((u) => {
       const okQ = !q || u.name.toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (u.mechanics || []).includes(mech);
-      return okQ && okM && mineOk(u);
+      const okK = !kind || (kind === "extension" ? u.kind === "extension" : u.kind !== "extension");
+      return okQ && okM && okK && mineOk(u);
     }).map((u) => {
       const st = upcomingStats(u);
       return { ...u, _avg: st.avg, _count: st.count };
@@ -12188,11 +13170,11 @@ function UpcomingPage({ onAuth, setToast }) {
     else if (sort === "year") list.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
     else if (sort === "recent") list.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [upcoming, q, mech, sort, mine, currentUser]);
+  }, [withBase, q, mech, sort, mine, kind, currentUser]);
 
   // Top 20 : toutes les fiches qui ont au moins 1 vote (différence avec ludothèque !)
   const top = useMemo(() => {
-    return upcoming
+    return upcoming.filter((u) => u.kind !== "extension")
       .map((u) => ({ ...u, _avg: upcomingStats(u).avg, _count: upcomingStats(u).count }))
       .filter((u) => u._count >= 1)
       .sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"))
@@ -12205,11 +13187,11 @@ function UpcomingPage({ onAuth, setToast }) {
         <div>
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 32, margin: 0 }}>À venir</h1>
           <p style={{ color: "#6e6256", fontSize: 14.5, margin: "6px 0 0", maxWidth: 560 }}>
-            Les jeux qui viennent de sortir ou qui arrivent bientôt, classés par <b>date de sortie</b>. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi, et qui l'a déjà.
+            Les jeux — et les <b>extensions</b> — qui viennent de sortir ou qui arrivent bientôt, classés par <b>date de sortie</b>. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi, et qui l'a déjà.
           </p>
         </div>
         {currentUser
-          ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
+          ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter une sortie</Btn>
           : <Btn variant="amber" size="lg" onClick={() => onAuth("login")}><LogIn size={18} /> Se connecter</Btn>}
       </div>
 
@@ -12218,8 +13200,14 @@ function UpcomingPage({ onAuth, setToast }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
               <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu..." style={{ paddingLeft: 42 }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu ou une extension..." style={{ paddingLeft: 42 }} />
             </div>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} title="Ne garder que les jeux, ou que les extensions"
+              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: kind ? C.purple : undefined }}>
+              <option value="">Jeux et extensions</option>
+              <option value="game">🎲 Les jeux</option>
+              <option value="extension">🧩 Les extensions</option>
+            </select>
             <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes mécaniques</option>
               {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -12279,6 +13267,7 @@ function UpcomingPage({ onAuth, setToast }) {
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(232,163,23,.06)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                      {u.kind === "extension" && <span style={{ display: "block", fontSize: 11.5, color: C.purple, fontWeight: 700, marginTop: 1 }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
                       {myIntent && <span style={{ display: "block", fontSize: 11.5, color: myIntent.color, fontWeight: 700, marginTop: 1 }}>🎯 {myIntent.label}</span>}
                     </span>
                     <span style={{ width: 128, flexShrink: 0, fontSize: 12, color: st.kind === "soon" ? C.amber : "#8a7c6a", fontWeight: st.kind === "soon" ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="aladj-upc-col">
@@ -12331,42 +13320,141 @@ function UpcomingPage({ onAuth, setToast }) {
   );
 }
 
+/* ---- (lot AA) Choisir le jeu de base d'une extension ---------------------
+   Deux rayons dans la même recherche : la ludothèque de l'association
+   (rattachement immédiat) et les fiches À venir des jeux pas encore sortis
+   (rattachement différé — l'extension basculera quand le jeu sera là).
+   ------------------------------------------------------------------------ */
+function BaseGamePicker({ games, upcoming, baseGameId, baseUpcomingId, onPick }) {
+  const [q, setQ] = useState("");
+  const picked = baseGameId
+    ? (games || []).find((g) => g.id === baseGameId)
+    : (baseUpcomingId ? (upcoming || []).find((u) => u.id === baseUpcomingId) : null);
+
+  const hits = useMemo(() => {
+    const n = q.trim().toLowerCase();
+    if (!n) return { ludo: [], upc: [] };
+    return {
+      ludo: (games || []).filter((g) => (g.name || "").toLowerCase().includes(n)).slice(0, 6),
+      upc: (upcoming || []).filter((u) => u.kind !== "extension" && (u.name || "").toLowerCase().includes(n)).slice(0, 4),
+    };
+  }, [games, upcoming, q]);
+
+  if (picked) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(107,58,122,.08)", border: `1.5px solid ${C.purple}55`, borderRadius: 12, padding: "10px 13px", marginBottom: 14, flexWrap: "wrap" }}>
+        <Puzzle size={17} color={C.purple} />
+        <span style={{ flex: 1, minWidth: 120, fontSize: 14, color: "#5e5346", lineHeight: 1.45 }}>
+          Extension pour <b style={{ color: C.navy }}>{picked.name}</b>
+          <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>
+            {baseGameId ? "Déjà dans la ludothèque — la bascule sera immédiate." : "Fiche À venir — la bascule attendra que le jeu rejoigne la ludothèque."}
+          </span>
+        </span>
+        <Btn size="sm" variant="soft" onClick={() => { onPick(null, null); setQ(""); }}>Changer</Btn>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: "rgba(107,58,122,.06)", border: `1px solid ${C.purple}33`, borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+      <Field label="Jeu de base *" hint="Cherchez d'abord dans la ludothèque ; si le jeu n'est pas encore sorti, sa fiche À venir fait l'affaire.">
+        <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nom du jeu de base..." />
+      </Field>
+      {q.trim() && hits.ludo.length === 0 && hits.upc.length === 0 && (
+        <span style={{ fontSize: 13, color: "#a89a86" }}>Aucun jeu ne correspond. Créez d'abord la fiche du jeu de base.</span>
+      )}
+      {hits.ludo.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ fontSize: 11.5, color: "#9c8d79", fontWeight: 700, textTransform: "uppercase", letterSpacing: .5 }}>Dans la ludothèque</span>
+          {hits.ludo.map((g) => (
+            <button key={g.id} type="button" onClick={() => onPick(g.id, null)}
+              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 12px", marginTop: 5, cursor: "pointer", fontSize: 13.5, color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              {g.name}{g.year ? ` (${g.year})` : ""}
+            </button>
+          ))}
+        </div>
+      )}
+      {hits.upc.length > 0 && (
+        <div>
+          <span style={{ fontSize: 11.5, color: "#9c8d79", fontWeight: 700, textTransform: "uppercase", letterSpacing: .5 }}>Parmi les sorties à venir</span>
+          {hits.upc.map((u) => (
+            <button key={u.id} type="button" onClick={() => onPick(null, u.id)}
+              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "1px solid #ece2d0", borderRadius: 10, padding: "8px 12px", marginTop: 5, cursor: "pointer", fontSize: 13.5, color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+              {u.name}{u.year ? ` (${u.year})` : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---- Flow d'ajout : choix BGG / manuel + détection de doublons ---- */
 function AddUpcomingFlow({ onClose, setToast }) {
   const { addUpcoming, upcoming, games, currentUser, setHype, setIntent } = useApp();
   const [mode, setMode] = useState("choose");
   const [prefillName, setPrefillName] = useState("");
+  // (lot AA) Jeu ou extension ? La question se pose AVANT de chercher sur BGG :
+  // une extension n'a d'existence que rattachée à son jeu de base, et les deux
+  // chemins d'ajout (BGG ou saisie manuelle) doivent le savoir.
+  const [kind, setKind] = useState("game");
+  const [baseGameId, setBaseGameId] = useState(null);
+  const [baseUpcomingId, setBaseUpcomingId] = useState(null);
+  const baseMissing = kind === "extension" && !baseGameId && !baseUpcomingId;
 
   // (point 2) La hype et l'intention d'achat se déclarent maintenant dès la
   // création : elles sont posées juste après l'insertion de la fiche, ce qui
   // évite d'avoir à la rouvrir pour se prononcer.
   const handleDone = async (data) => {
     if (!data) { onClose(); return; }
-    const res = await addUpcoming({ ...data, source: data.source || "manuel" });
+    const res = await addUpcoming({
+      ...data, source: data.source || "manuel",
+      kind, baseGameId: kind === "extension" ? baseGameId : null,
+      baseUpcomingId: kind === "extension" ? baseUpcomingId : null,
+    });
     const created = res?.upcoming;
     if (created?.id && currentUser) {
       if (data.myHype) { try { await setHype(created.id, Number(data.myHype)); } catch (e) { /* sans gravité */ } }
       if (data.myIntent) { try { await setIntent(created.id, data.myIntent); } catch (e) { /* sans gravité */ } }
     }
     onClose();
-    setToast(`« ${data.name} » ajouté en veille !`);
+    setToast(kind === "extension" ? `Extension « ${data.name} » ajoutée en veille !` : `« ${data.name} » ajouté en veille !`);
   };
 
   return (
-    <Modal open onClose={onClose} title="Ajouter un jeu à venir" width={600}>
+    <Modal open onClose={onClose} title="Ajouter une sortie à venir" width={600}>
       {mode === "choose" && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: 5 }}>
+            {[{ k: "game", t: "🎲 Un jeu" }, { k: "extension", t: "🧩 Une extension" }].map((o) => (
+              <button key={o.k} type="button" onClick={() => { setKind(o.k); if (o.k === "game") { setBaseGameId(null); setBaseUpcomingId(null); } }}
+                style={{ flex: 1, padding: "9px 10px", border: "none", borderRadius: 9, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14,
+                  background: kind === o.k ? C.purple : "transparent", color: kind === o.k ? "#fff" : C.navy }}>
+                {o.t}
+              </button>
+            ))}
+          </div>
+          {kind === "extension" && (
+            <>
+              <p style={{ fontSize: 13, color: "#6e6256", margin: 0, lineHeight: 1.55 }}>
+                Une extension à venir suit son propre chemin : dès qu'un membre déclare la posséder, elle <b>rejoint la fiche du jeu de base</b> dans la ludothèque, et sa fiche de veille s'efface <b>{UPCOMING_EXT_GRACE_DAYS} jours plus tard</b>.
+              </p>
+              <BaseGamePicker games={games} upcoming={upcoming}
+                baseGameId={baseGameId} baseUpcomingId={baseUpcomingId}
+                onPick={(gid, uid) => { setBaseGameId(gid); setBaseUpcomingId(uid); }} />
+            </>
+          )}
           <p style={{ fontSize: 14, color: "#5e5346", margin: "0 0 6px", lineHeight: 1.55 }}>
-            Comment souhaitez-vous ajouter ce jeu à venir ?
+            Comment souhaitez-vous {kind === "extension" ? "ajouter cette extension" : "ajouter ce jeu à venir"} ?
           </p>
-          <button onClick={() => setMode("bgg")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: "pointer", textAlign: "left" }}>
+          <button disabled={baseMissing} onClick={() => setMode("bgg")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: baseMissing ? "not-allowed" : "pointer", textAlign: "left", opacity: baseMissing ? .5 : 1 }}>
             <span style={{ width: 44, height: 44, borderRadius: 11, background: "#ff5100", display: "grid", placeItems: "center" }}><Globe size={22} color="#fff" /></span>
             <span style={{ flex: 1 }}>
               <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Rechercher sur BoardGameGeek</span>
               <span style={{ display: "block", fontSize: 12.5, color: "#9c8d79" }}>Fiche pré-remplie (image, mécaniques, joueurs, durée)</span>
             </span>
           </button>
-          <button onClick={() => setMode("manual")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: "pointer", textAlign: "left" }}>
+          <button disabled={baseMissing} onClick={() => setMode("manual")} style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: "2px solid #ece2d0", borderRadius: 14, background: "#fff", cursor: baseMissing ? "not-allowed" : "pointer", textAlign: "left", opacity: baseMissing ? .5 : 1 }}>
             <span style={{ width: 44, height: 44, borderRadius: 11, background: C.teal, display: "grid", placeItems: "center" }}><Edit3 size={20} color="#fff" /></span>
             <span style={{ flex: 1 }}>
               <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>Saisie manuelle</span>
@@ -12516,7 +13604,7 @@ function ManualUpcomingForm({ onBack, onDone, initialName = "" }) {
 
 /* ---- Fiche détaillée d'un jeu À venir ---- */
 function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
-  const { upcoming, users, games, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, addUpcomingComment, updateUpcomingComment, removeUpcomingComment, askConfirm } = useApp();
+  const { upcoming, users, games, currentUser, setHype, setIntent, removeUpcoming, updateUpcoming, importUpcomingToLudo, importUpcomingExtension, addUpcomingComment, updateUpcomingComment, removeUpcomingComment, askConfirm } = useApp();
   const u = upcoming.find((x) => x.id === upcId);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -12526,6 +13614,9 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
   if (!u) return <Modal open onClose={onClose} title="Fiche introuvable"><p>Cette fiche n'existe plus ou a été retirée (le jeu est probablement passé en ludothèque).</p></Modal>;
 
   const { avg, count } = upcomingStats(u);
+  const isExt = u.kind === "extension";
+  const base = resolveUpcomingBase(u, games, upcoming);
+  const daysLeft = extGraceDaysLeft(u);
   const myHype = currentUser ? (u.hypes?.[currentUser.id] || 0) : 0;
   const myIntent = currentUser ? u.intents?.[currentUser.id] : null;
   // Détail des votants pour la transparence : qui a mis quel thermomètre, qui veut quoi
@@ -12543,12 +13634,16 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
     setCommentText("");
   };
 
+  // (lot AA) Une extension ne crée pas de fiche : elle rejoint celle du jeu de
+  // base. Deux chemins, un seul bouton — l'utilisateur n'a pas à savoir lequel.
   const importMe = async () => {
     setBusy(true);
-    const res = await importUpcomingToLudo(u.id);
+    const res = isExt ? await importUpcomingExtension(u.id) : await importUpcomingToLudo(u.id);
     setBusy(false);
     if (res?.error) { setToast(res.error); return; }
-    setToast("Ajouté à votre ludothèque !");
+    setToast(isExt
+      ? `Extension ajoutée à ${base && base.name ? `« ${base.name} »` : "votre ludothèque"} !`
+      : "Ajouté à votre ludothèque !");
     onClose();
   };
 
@@ -12565,6 +13660,7 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
             {u.time && <Badge color={C.amber}><Clock size={12} /> {u.time} min</Badge>}
             {u.newPrice != null && <Badge color={C.purple}><Euro size={12} /> {u.newPrice.toFixed(2).replace(".", ",")} €</Badge>}
             <ReleaseBadge u={u} big />
+            {isExt && <ExtensionBadge baseName={base ? base.name : ""} big />}
             {u.source && u.source !== "manuel" && <Badge color={C.purple}><Globe size={12} /> {u.source}</Badge>}
           </div>
           {u.mechanics && u.mechanics.length > 0 && (
@@ -12575,6 +13671,24 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
           <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "8px 0 0" }}>Ajouté par {u.createdByName}</p>
         </div>
       </div>
+
+      {isExt && (
+        <div style={{ background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}33`, borderRadius: 13, padding: "12px 16px", marginBottom: 18, fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
+          <b style={{ color: C.purple, fontFamily: "'Fredoka',sans-serif" }}>🧩 Une extension, pas un jeu.</b>{" "}
+          {base && base.kind === "ludo"
+            ? <>Elle se rattache à <b style={{ color: C.navy }}>{base.name}</b>, déjà dans la ludothèque. Dès que vous cliquez sur « Je l'ai&nbsp;! », elle <b>rejoint la fiche de ce jeu</b> — aucune fiche de jeu n'est créée en double.</>
+            : base && base.kind === "upcoming"
+              ? <>Elle se rattache à <b style={{ color: C.navy }}>{base.name}</b>, qui n'est pas encore dans la ludothèque. La bascule attendra que quelqu'un y fasse entrer le jeu de base{base.ready ? " — c'est désormais le cas" : ""}.</>
+              : <>Son jeu de base n'est plus renseigné : reliez-la depuis « Modifier la fiche » avant de pouvoir la déclarer.</>}
+          <span style={{ display: "block", marginTop: 6, color: "#8a7c6a" }}>
+            {daysLeft == null
+              ? <>Contrairement à un jeu, cette fiche ne disparaît pas sur des notes : elle reste ici jusqu'à ce qu'un membre la possède, puis encore <b>{UPCOMING_EXT_GRACE_DAYS} jours</b>.</>
+              : daysLeft > 0
+                ? <>Déjà déclarée possédée : cette fiche quitte la veille dans <b>{daysLeft} jour{daysLeft > 1 ? "s" : ""}</b>.</>
+                : <>Déjà déclarée possédée : cette fiche quitte la veille d'un instant à l'autre.</>}
+          </span>
+        </div>
+      )}
 
       {u.desc && <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 18, whiteSpace: "pre-line" }}>{u.desc}</p>}
 
@@ -12690,7 +13804,9 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
       {/* Actions */}
       {currentUser && (
         <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-          <Btn variant="teal" size="md" onClick={importMe} disabled={busy}><Plus size={16} /> Je l'ai ! L'ajouter à ma ludothèque</Btn>
+          <Btn variant="teal" size="md" onClick={importMe} disabled={busy}>
+            <Plus size={16} /> {isExt ? `Je l'ai ! L'ajouter${base && base.name ? ` à « ${base.name} »` : ""}` : "Je l'ai ! L'ajouter à ma ludothèque"}
+          </Btn>
           <Btn variant="soft" size="md" onClick={() => setEditing(true)}><Edit3 size={15} /> Modifier la fiche</Btn>
           <Btn variant="ghost" size="md" onClick={async () => {
             if (!(await askConfirm({ title: "Supprimer cette fiche ?", message: "La fiche de veille, ses envies et ses commentaires seront supprimés pour tous les membres. Action définitive.", confirmLabel: "Supprimer" }))) return;
@@ -12749,12 +13865,14 @@ function UpcomingDetailModal({ upcId, onClose, onAuth, setToast }) {
 
 /* ---- Modale : modifier une fiche À venir ---- */
 function EditUpcomingModal({ u, onClose, setToast }) {
-  const { updateUpcoming } = useApp();
+  const { updateUpcoming, games, upcoming } = useApp();
+  const isExt = u.kind === "extension";
   const [f, setF] = useState({
     name: u.name || "", year: u.year || "", min: u.min || "", max: u.max || "", time: u.time || "",
     mechanics: u.mechanics || [], desc: u.desc || "", img: u.img || "", ludumUrl: u.ludumUrl || "",
     newPrice: u.newPrice != null ? String(u.newPrice) : "",
     releaseDate: u.releaseDate || "", released: !!u.released, voReleased: !!u.voReleased,
+    baseGameId: u.baseGameId || null, baseUpcomingId: u.baseUpcomingId || null,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -12768,6 +13886,7 @@ function EditUpcomingModal({ u, onClose, setToast }) {
       time: Number(f.time) || null, mechanics: f.mechanics, desc: f.desc, img: f.img, ludumUrl: f.ludumUrl,
       newPrice: f.newPrice === "" ? null : Number(f.newPrice),
       releaseDate: f.releaseDate || null, released: !!f.released, voReleased: !!f.voReleased,
+      ...(isExt ? { baseGameId: f.baseGameId, baseUpcomingId: f.baseUpcomingId } : {}),
     });
     setBusy(false);
     if (res?.error) { setErr(res.error); return; }
@@ -12776,8 +13895,16 @@ function EditUpcomingModal({ u, onClose, setToast }) {
   };
 
   return (
-    <Modal open onClose={onClose} title="Modifier la fiche" width={600}>
-      <Field label="Nom du jeu *"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+    <Modal open onClose={onClose} title={isExt ? "Modifier l'extension" : "Modifier la fiche"} width={600}>
+      <Field label={isExt ? "Nom de l'extension *" : "Nom du jeu *"}><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+      {/* (lot AA) Rattachement : c'est ici qu'on répare une extension orpheline,
+          ou qu'on la fait passer de la fiche À venir du jeu de base à sa fiche
+          de ludothèque une fois celle-ci créée. */}
+      {isExt && (
+        <BaseGamePicker games={games} upcoming={(upcoming || []).filter((x) => x.id !== u.id)}
+          baseGameId={f.baseGameId} baseUpcomingId={f.baseUpcomingId}
+          onPick={(gid, uid) => setF({ ...f, baseGameId: gid, baseUpcomingId: uid })} />
+      )}
       <Field label="Image"><ImageField value={f.img} onChange={(v) => setF({ ...f, img: v })} /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Année de sortie"><TextInput type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></Field>
@@ -18197,7 +19324,7 @@ function Shell() {
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
-      const valid = ["accueil", "soirees", "ludotheque", "chrono", "ma-ludo", "a-venir", "locations", "guide"];
+      const valid = ["accueil", "soirees", "ludotheque", "chrono", "ma-ludo", "a-venir", "web-jeux", "locations", "guide"];
       return u && valid.includes(u) ? u : "accueil";
     } catch (e) { return "accueil"; }
   });
@@ -18239,6 +19366,7 @@ function Shell() {
         {page === "chrono" && <ChronoPage onAuth={(m) => setAuth(m)} setPage={setPage} />}
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
         {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
+        {page === "web-jeux" && <WebGamesPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
         {page === "decideur" && currentUser && <DeciderPage setToast={setToast} />}
         {page === "guide" && <GuidePage />}
@@ -18321,11 +19449,11 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) { .aladj-spark { animation: none; opacity: .5; } }
         .aladj-bounce { animation: bounce 1s ease-in-out infinite; }
         .aladj-burger { display: none !important; }
-        @media (max-width: 860px) {
+        @media (max-width: 1080px) {
           .aladj-desktop-nav { display: none !important; }
           .aladj-burger { display: grid !important; }
         }
-        @media (min-width: 861px) { .aladj-mobile-menu { display: none !important; } }
+        @media (min-width: 1081px) { .aladj-mobile-menu { display: none !important; } }
         /* (lot X) Une tablette en portrait est large (jusqu'a 1024 px) mais la
            colonne laterale de 340 px y etrangle la ludotheque, et les deux Top 20
            n'y tiennent pas en hauteur. On empile donc en portrait aussi. */
