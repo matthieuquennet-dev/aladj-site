@@ -7062,7 +7062,11 @@ function GuidePage() {
         },
         {
           q: "Qui a fabriqué le jeu",
-          a: <p style={{ margin: 0 }}>La fiche d'un jeu nomme <b>les membres qui l'ont construit</b>, avec leur rôle (code, illustrations, règles…). Un clic sur un nom ouvre son profil. Ce sont eux, avec les administrateurs, qui reçoivent les messages de la discussion : quand vous écrivez, vous savez exactement à qui.</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Une <b>petite ligne sous chaque vignette</b> nomme ceux qui ont construit le jeu, du plus impliqué au moins impliqué — le premier nom est mis en avant, les suivants s'effacent progressivement. Trois noms au plus y tiennent ; le survol donne la liste complète avec les rôles.</p>
+            <p style={{ margin: "0 0 8px" }}>La <b>fiche détaillée</b>, elle, ouvre sur un encart qui les nomme tous, <b>numérotés dans l'ordre d'importance</b>, avec leur photo et leur rôle (code, illustrations, règles…). Un clic sur un nom ouvre son profil.</p>
+            <p style={{ margin: 0 }}>Ce sont eux, avec les administrateurs, qui <b>reçoivent une notification</b> à chaque message de la discussion : quand vous écrivez, vous savez exactement à qui. <b>Côté administrateurs</b>, « Modifier cette fiche » permet d'ajouter un membre, de préciser son rôle et de le <b>monter ou descendre dans le classement</b> avec deux flèches — l'ordre de la liste est celui qui s'affiche partout.</p>
+          </>,
         },
         {
           q: "Tout modifier, côté administrateurs",
@@ -7656,8 +7660,21 @@ function WebGameRendezVous({ webGameId, onAuth, setToast, compact }) {
 }
 
 /* ---- Vignette d'une application ---- */
+/* (lot AB ter) Les auteurs d'un jeu, dans l'ordre ou les administrateurs les
+   ont classes : le premier nomme est celui qui a le plus porte le jeu. On en
+   montre trois au plus sur une vignette -- au-dela, la ligne cesserait d'etre
+   une ligne. L'infobulle, elle, donne la liste complete avec les roles. */
+function webGameCreditsLine(credits) {
+  const list = credits || [];
+  if (!list.length) return null;
+  const titre = "Ont fabriqué ce jeu, par ordre d'importance : "
+    + list.map((c, i) => `${i + 1}. ${c.name}${c.role ? ` (${c.role})` : ""}`).join(" · ");
+  return { list, titre, visibles: list.slice(0, 3), reste: Math.max(0, list.length - 3) };
+}
+
 function WebGameCard({ w, onOpen }) {
   const dev = w.status !== "live";
+  const credits = webGameCreditsLine(w.credits);
   return (
     <button onClick={onOpen} style={{
       width: "100%", flex: 1, textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0",
@@ -7690,6 +7707,31 @@ function WebGameCard({ w, onOpen }) {
             <Badge color={C.purple}><Calendar size={11} /> {w.releaseNote || `vers ${formatDateFr(w.releaseDate)}`}</Badge>
           )}
         </div>
+
+        {/* (lot AB ter) Qui l'a fait. Le premier nom est celui qui a le plus
+            porte le jeu : il est mis en avant, les suivants s'effacent
+            progressivement. L'ordre EST le classement. */}
+        {credits && (
+          <div title={credits.titre}
+            style={{ marginTop: 11, paddingTop: 10, borderTop: "1px dashed #ece2d0",
+              display: "flex", alignItems: "baseline", gap: 6, fontSize: 11.5, lineHeight: 1.45, minWidth: 0 }}>
+            <span style={{ flexShrink: 0, color: "#b6a78f" }}>🛠️</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {credits.visibles.map((c, i) => (
+                <span key={c.userId}>
+                  {i > 0 && <span style={{ color: "#c3b49b" }}> · </span>}
+                  <span style={{
+                    fontFamily: "'Fredoka',sans-serif",
+                    fontWeight: i === 0 ? 700 : 600,
+                    fontSize: i === 0 ? 12.5 : 11.5,
+                    color: i === 0 ? C.navy : (i === 1 ? "#6e6256" : "#9c8d79"),
+                  }}>{c.name}</span>
+                </span>
+              ))}
+              {credits.reste > 0 && <span style={{ color: "#9c8d79" }}> et {credits.reste} autre{credits.reste > 1 ? "s" : ""}</span>}
+            </span>
+          </div>
+        )}
       </div>
     </button>
   );
@@ -7947,7 +7989,7 @@ function WebGameChatStrip({ w, count, onOpen }) {
 
 /* ---- Fiche détaillée d'une application ---- */
 function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
-  const { currentUser, updateWebGame } = useApp();
+  const { currentUser, updateWebGame, users } = useApp();
   const [editing, setEditing] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatCount, setChatCount] = useState(null);
@@ -7981,6 +8023,57 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
 
       {w.subtitle && <p style={{ fontFamily: "'Fredoka',sans-serif", color: w.accent, fontSize: 16, margin: "0 0 14px", fontWeight: 700 }}>{w.subtitle}</p>}
 
+      {/* (lot AB ter) LES AUTEURS, en tete de fiche.
+          Un jeu edite par une association est l'oeuvre de quelques personnes :
+          les nommer n'est pas un detail, et cela ne doit pas se meriter en
+          faisant defiler la page. Le classement est celui qu'ont fixe les
+          administrateurs -- le numero 1 est celui qui a le plus porte le jeu.
+          Ce sont aussi les destinataires des messages de la discussion : le
+          dire ici evite d'ecrire dans le vide. */}
+      {(w.credits || []).length > 0 && (
+        <div style={{ background: `${w.accent || C.teal}0f`, border: `1.5px solid ${w.accent || C.teal}44`,
+          borderRadius: 16, padding: "14px 16px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <Wrench size={17} color={w.accent || C.teal} />
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15.5 }}>
+              {(w.credits || []).length > 1 ? "Ils ont fabriqué ce jeu" : "Il a fabriqué ce jeu"}
+            </span>
+            {(w.credits || []).length > 1 && <span style={{ fontSize: 12.5, color: "#8a7c6a" }}>· par ordre d'importance</span>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+            {(w.credits || []).map((c, i) => {
+              const u = (users || []).find((x) => x.id === c.userId);
+              return (
+                <button key={c.userId} type="button" onClick={() => setViewMember(c.userId)} title={`Voir le profil de ${c.name}`}
+                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", minWidth: 0,
+                    background: "#fff", border: `1px solid ${i === 0 ? `${w.accent || C.teal}55` : "#ece2d0"}`,
+                    borderRadius: 12, padding: "8px 12px", cursor: "pointer", font: "inherit" }}>
+                  <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0,
+                    background: i === 0 ? (w.accent || C.teal) : "rgba(26,58,92,.07)",
+                    color: i === 0 ? "#fff" : "#9c8d79", display: "grid", placeItems: "center",
+                    fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5 }}>{i + 1}</span>
+                  <span style={{ width: 32, height: 32, borderRadius: 9, overflow: "hidden", flexShrink: 0,
+                    background: w.accent || C.teal, color: "#fff", display: "grid", placeItems: "center",
+                    fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14 }}>
+                    {u?.avatar ? <img src={u.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : (c.name || "?")[0].toUpperCase()}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5, overflowWrap: "anywhere" }}>{c.name}</span>
+                    {c.role && <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.4, overflowWrap: "anywhere" }}>{c.role}</span>}
+                  </span>
+                  <ChevronRight size={16} color="#b6a78f" style={{ flexShrink: 0 }} />
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#6e6256", lineHeight: 1.55 }}>
+            <MessageCircle size={13} style={{ verticalAlign: "-2px" }} />{" "}
+            {(w.credits || []).length > 1 ? "Ce sont elles" : "C'est elle"} qui {(w.credits || []).length > 1 ? "reçoivent" : "reçoit"} une
+            notification à chaque message déposé dans la discussion de ce jeu.
+          </p>
+        </div>
+      )}
+
       {bloc("🎯", "Le principe", w.description)}
       {bloc("📏", "Les règles", w.rules)}
       {bloc("🎮", "Comment ça marche", w.howTo)}
@@ -7996,27 +8089,6 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
           <b style={{ color: "#8a6a1f", fontFamily: "'Fredoka',sans-serif" }}>🔧 Pas encore ouvert au public.</b>{" "}
           {w.releaseNote || (w.releaseDate ? `Sortie envisagée vers ${formatDateFr(w.releaseDate)}.` : "La date de sortie n'est pas encore arrêtée.")}
           {" "}Le lien sera publié ici dès que le jeu sera prêt — inutile de le chercher ailleurs, il bouge encore.
-        </div>
-      )}
-
-      {/* (lot AB) Qui a fabrique ce jeu. Un jeu edite par une association est
-          l'oeuvre de quelques personnes : les nommer n'est pas un detail. */}
-      {(w.credits || []).length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
-            🛠️ Qui l'a fabriqué
-          </h4>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(w.credits || []).map((c) => (
-              <button key={c.userId} type="button" onClick={() => setViewMember(c.userId)} title={`Voir le profil de ${c.name}`}
-                style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#fff", border: "1.5px solid #ece2d0",
-                  borderRadius: 999, padding: "6px 13px", cursor: "pointer", font: "inherit" }}>
-                <span style={{ width: 24, height: 24, borderRadius: 7, background: w.accent || C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{(c.name || "?")[0].toUpperCase()}</span>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5 }}>{c.name}</span>
-                {c.role && <span style={{ fontSize: 12, color: "#8a7c6a" }}>{c.role}</span>}
-              </button>
-            ))}
-          </div>
         </div>
       )}
 
@@ -8146,11 +8218,25 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
 
       {/* Les membres qui ont fabrique le jeu : ils sont credites sur la fiche,
           et prevenus de chaque message depose dans la discussion. */}
-      <Field label="Qui a fabriqué ce jeu" hint="Ces membres apparaissent sur la fiche et reçoivent une notification à chaque message de la discussion.">
+      <Field label="Qui a fabriqué ce jeu"
+        hint="L'ordre de cette liste est celui de l'affichage : le premier est celui qui a le plus porté le jeu. Ces membres apparaissent sous la vignette et en tête de la fiche, et reçoivent une notification à chaque message de la discussion.">
         {credits.length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7, marginBottom: 9 }}>
             {credits.map((c, i) => (
-              <div key={c.userId} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, padding: "7px 10px", flexWrap: "wrap" }}>
+              <div key={c.userId} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${i === 0 ? `${C.teal}55` : "#ece2d0"}`, borderRadius: 11, padding: "7px 10px", flexWrap: "wrap" }}>
+                {/* Le classement se fait a la main : deux fleches, et le rang
+                    saute aux yeux. Le premier porte la couleur de l'asso. */}
+                <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0,
+                  background: i === 0 ? C.teal : "rgba(26,58,92,.07)", color: i === 0 ? "#fff" : "#9c8d79",
+                  display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5 }}>{i + 1}</span>
+                <span style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                  <button type="button" disabled={i === 0} title="Monter dans le classement" aria-label="Monter dans le classement"
+                    onClick={() => setCredits(credits.map((x, j) => (j === i - 1 ? credits[i] : j === i ? credits[i - 1] : x)))}
+                    style={{ width: 26, height: 16, borderRadius: 5, border: "1px solid #e6dcc9", background: "#fff", color: C.navy, fontSize: 9, lineHeight: 1, cursor: i === 0 ? "default" : "pointer", opacity: i === 0 ? 0.3 : 1, display: "grid", placeItems: "center", padding: 0 }}>▲</button>
+                  <button type="button" disabled={i === credits.length - 1} title="Descendre dans le classement" aria-label="Descendre dans le classement"
+                    onClick={() => setCredits(credits.map((x, j) => (j === i + 1 ? credits[i] : j === i ? credits[i + 1] : x)))}
+                    style={{ width: 26, height: 16, borderRadius: 5, border: "1px solid #e6dcc9", background: "#fff", color: C.navy, fontSize: 9, lineHeight: 1, cursor: i === credits.length - 1 ? "default" : "pointer", opacity: i === credits.length - 1 ? 0.3 : 1, display: "grid", placeItems: "center", padding: 0 }}>▼</button>
+                </span>
                 <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, minWidth: 90 }}>{c.name}</span>
                 <TextInput value={c.role} placeholder="Son rôle : code, illustrations, règles…" style={{ flex: 1, minWidth: 140 }}
                   onChange={(e) => setCredits(credits.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)))} />
