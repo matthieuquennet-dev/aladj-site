@@ -1330,7 +1330,7 @@ function AppProvider({ children }) {
       // car cette jointure échoue si la clé étrangère n'est pas détectée par Supabase.
       // On reconstitue les noms côté application via une table de correspondance.
       const [{ data: profiles }, { data: gamesRows }, { data: ratings }, { data: eventsRows }, { data: eps }, { data: guests }, { data: comments }, { data: gameComments }, { data: placesRows }, { data: gameOwners }, { data: extsRows }, { data: extOwners }, { data: loansRows }, { data: weightsRows }, { data: eventGamesRows }, { data: upcRows }, { data: hypeRows }, { data: intentRows }, { data: upcCommentsRows }, { data: discRows }, { data: notifRows }, { data: dismissedRows }, { data: hhMembers }, { data: hhInvites }, { data: gamePlaysRows }, { data: gppRows }, { data: epdRows }, { data: mechRows }, { data: wishRows }, { data: sugRows }, { data: sugVoteRows }, { data: loanReqRows }, { data: loanReqOwnerRows }, { data: convRows }, { data: convMemberRows }, { data: avgDurRows }] = await Promise.all([
-        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child").order("name"),
+        supabase.from("profiles").select("id,name,role,is_admin,banned,share_library,share_wishlist,avatar_url,city,bio,bgg_url,okkazeo_url,fav_mechanics,hated_mechanics,fav_colors,featured_badges,top_games,retro_emails,decideur_until,birth_day,birth_month,birth_year,is_child,pwd_temp_at").order("name"),
         fetchAllRows("games", "id,name,year,min_players,max_players,play_time,mechanics,image_url,source,owner_id,new_price,shared,created_at,ludum_url,score_direction,is_coop,coop_target", ["id"]),
         fetchAllRows("ratings", "*", ["game_id", "user_id"]),
         supabase.from("events").select("*"),
@@ -1509,7 +1509,10 @@ function AppProvider({ children }) {
         });
       });
 
-      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, shareWishlist: p.share_wishlist !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true })));
+      setUsers((profiles || []).map((p) => ({ id: p.id, name: p.name, role: (p.decideur_until && new Date(p.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: p.decideur_until || null, admin: p.is_admin, banned: p.banned === true, shareLibrary: p.share_library !== false, shareWishlist: p.share_wishlist !== false, avatar: p.avatar_url || "", city: p.city || "", bio: p.bio || "", bggUrl: p.bgg_url || "", okkazeoUrl: p.okkazeo_url || "", favMechanics: p.fav_mechanics || [], hatedMechanics: p.hated_mechanics || [], favColors: p.fav_colors || [], featuredBadges: p.featured_badges || [], topGames: p.top_games || [], birthDay: p.birth_day || null, birthMonth: p.birth_month || null, birthYear: p.birth_year || null, isChild: p.is_child === true,
+        // (lot AC) Un mot de passe temporaire attend-il encore d'etre remplace ?
+        // Sert a l'encart d'administration de la fiche du membre.
+        pwdTempAt: p.pwd_temp_at || null })));
       const mappedGames = (gamesRows || []).map((g) => mapGame(g, ratingsByGame, nameById, commentsByGame, ownersByGame, extsByGame, roleById, playCountByGame, discoveriesByGame, avgDurByGame));
       // index id->jeu pour résoudre les jeux joués dans mapEvent
       const gamesIndexById = {};
@@ -1820,7 +1823,10 @@ function AppProvider({ children }) {
       setCurrentUser(null);
       return;
     }
-    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, shareWishlist: data.share_wishlist !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, isChild: data.is_child === true, momentsSeenAt: data.moments_seen_at || null });
+    if (data) setCurrentUser({ id: data.id, name: data.name, role: (data.decideur_until && new Date(data.decideur_until) > new Date()) ? "decideur" : "membre", decideurUntil: data.decideur_until || null, admin: data.is_admin, banned: data.banned === true, shareLibrary: data.share_library !== false, shareWishlist: data.share_wishlist !== false, avatar: data.avatar_url || "", city: data.city || "", bio: data.bio || "", bggUrl: data.bgg_url || "", okkazeoUrl: data.okkazeo_url || "", favMechanics: data.fav_mechanics || [], hatedMechanics: data.hated_mechanics || [], favColors: data.fav_colors || [], featuredBadges: data.featured_badges || [], topGames: data.top_games || [], retroEmails: data.retro_emails !== false, birthDay: data.birth_day || null, birthMonth: data.birth_month || null, birthYear: data.birth_year || null, isChild: data.is_child === true, momentsSeenAt: data.moments_seen_at || null,
+      // (lot AC) Renseigne tant qu'un administrateur a pose un mot de passe
+      // temporaire sur ce compte, et que le membre n'en a pas choisi un autre.
+      pwdTempAt: data.pwd_temp_at || null });
   }, [authUser]);
   useEffect(() => { loadCurrentUser(); }, [loadCurrentUser]);
 
@@ -1917,8 +1923,41 @@ function AppProvider({ children }) {
     }
     const { error } = await supabase.auth.updateUser({ password: newPwd });
     if (error) return { error: error.message };
+    // (lot AC) Un mot de passe choisi par le membre lui-meme n'a plus rien de
+    // temporaire : le marqueur pose par l'administrateur tombe de lui-meme,
+    // quel que soit le chemin emprunte pour arriver ici.
+    if (currentUser?.id) {
+      try {
+        await supabase.from("profiles").update({ pwd_temp_at: null }).eq("id", currentUser.id);
+        await loadCurrentUser();
+      } catch (e) { /* sans gravite : la fenetre se refermera au prochain essai */ }
+    }
     return {};
-  }, []);
+  }, [currentUser, loadCurrentUser]);
+
+  /* (lot AC) Poser un mot de passe temporaire sur le compte d'un membre.
+     Le travail se fait cote serveur, dans api/admin-password.js : changer le
+     mot de passe d'autrui exige la cle de service de Supabase, qui n'a rien a
+     faire dans un navigateur. Le site ne fait ici que transmettre la demande,
+     signee du jeton de session de l'administrateur. */
+  const adminSetTempPassword = useCallback(async (userId) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return { error: "Votre session a expiré. Reconnectez-vous, puis recommencez." };
+      const rep = await fetch("/api/admin-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ userId }),
+      });
+      const json = await rep.json().catch(() => ({}));
+      if (!rep.ok) return { error: json.error || `Le serveur a répondu ${rep.status}.` };
+      await loadData();
+      return json;
+    } catch (e) {
+      return { error: "Le serveur n'a pas répondu : " + ((e && e.message) || e) };
+    }
+  }, [currentUser, loadData]);
 
   const logout = useCallback(async () => { await supabase.auth.signOut(); setCurrentUser(null); }, []);
 
@@ -3893,6 +3932,7 @@ function AppProvider({ children }) {
     deleteWebGameMessage, pinWebGameMessage,
     reload: loadData,
     resetPassword, updatePassword, passwordRecovery, setPasswordRecovery,
+    adminSetTempPassword,
     chrono, openChrono, closeChrono,
     askConfirm,
   };
@@ -5695,6 +5735,156 @@ function PasswordChangeField() {
   );
 }
 
+/* =============================================================================
+   MOT DE PASSE TEMPORAIRE, POSE PAR UN ADMINISTRATEUR
+   -----------------------------------------------------------------------------
+   Le dernier recours, quand le lien recu par courriel n'aboutit pas -- ce qui
+   arrive plus souvent qu'on ne le croit : ouvert depuis un autre navigateur
+   que celui d'ou il a ete demande, ou depuis le navigateur integre d'une
+   application de messagerie, il ne reconnecte personne. Certains antivirus
+   visitent meme le lien avant son destinataire, ce qui consomme le jeton a
+   usage unique et rend le lien mort a l'arrivee.
+
+   Ici, aucun lien : un mot de passe a saisir sur l'ecran de connexion
+   ordinaire. Le membre le recoit par courriel, et l'administrateur l'a sous
+   les yeux pour pouvoir le donner autrement -- sur Signal, ou de vive voix, ce
+   qui est encore le plus sur.
+
+   Il n'est affiche qu'une fois, et n'est stocke nulle part : Supabase ne garde
+   que son empreinte. Perdu, il faut en generer un autre -- ce qui est normal.
+   ============================================================================= */
+function AdminTempPasswordField({ member }) {
+  const { adminSetTempPassword, askConfirm } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [fait, setFait] = useState(null);   // { password, name, email, mailSent }
+  const [copie, setCopie] = useState(false);
+
+  const lancer = async () => {
+    setErr("");
+    const ok = await askConfirm({
+      title: `Donner un mot de passe temporaire à ${member?.name} ?`,
+      message: "Son mot de passe actuel cessera immédiatement de fonctionner. Le nouveau lui sera envoyé par e-mail et s'affichera ici, une seule fois. Il devra en choisir un autre dès sa prochaine connexion.",
+      confirmLabel: "Générer",
+    });
+    if (!ok) return;
+    setBusy(true);
+    const res = await adminSetTempPassword(member.id);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setFait(res);
+  };
+
+  return (
+    <Field label="Mot de passe temporaire"
+      hint="À n'utiliser que si le lien « mot de passe oublié » n'aboutit pas. Son mot de passe actuel cessera aussitôt de fonctionner.">
+      {fait ? (
+        <div style={{ background: "rgba(232,163,23,.1)", border: `1.5px solid ${C.amber}66`, borderRadius: 13, padding: 14 }}>
+          <div style={{ fontSize: 13.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 10 }}>
+            Voici le mot de passe de <b>{fait.name}</b>. <b>Il ne s'affichera plus jamais</b> — notez-le
+            ou copiez-le maintenant.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <span style={{ fontFamily: "'Courier New',monospace", fontWeight: 700, fontSize: 21, letterSpacing: 2,
+              background: C.navy, color: "#fff", borderRadius: 11, padding: "10px 16px", userSelect: "all" }}>
+              {fait.password}
+            </span>
+            <Btn size="sm" variant="soft" onClick={async () => {
+              try { await navigator.clipboard.writeText(fait.password); setCopie(true); } catch (e) { setCopie(false); }
+            }}>
+              {copie ? <><Check size={14} /> Copié</> : <><Copy size={14} /> Copier</>}
+            </Btn>
+          </div>
+          <div style={{ fontSize: 13, color: "#6e6256", lineHeight: 1.6 }}>
+            {fait.mailSent
+              ? <>Il vient aussi de lui être envoyé à <b>{fait.email}</b>. Donnez-le-lui tout de même sur Signal : c'est plus sûr qu'un courriel qui peut se perdre.</>
+              : <><b style={{ color: C.red }}>L'envoi par e-mail a échoué</b>{fait.email ? <> (vers {fait.email})</> : <> — ce compte n'a pas d'adresse e-mail</>}. Transmettez-le vous-même, par Signal ou de vive voix.</>}
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.55 }}>
+            À sa connexion, le site lui demandera d'en choisir un autre et ne le laissera rien faire d'autre avant.
+          </p>
+        </div>
+      ) : (
+        <>
+          {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 10 }}>{err}</div>}
+          {member?.pwdTempAt && (
+            <div style={{ background: "rgba(232,163,23,.1)", border: `1.5px solid ${C.amber}55`, color: "#8a6a1f", padding: "9px 13px", borderRadius: 11, fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
+              Un mot de passe temporaire est déjà en attente sur ce compte : il n'en a pas encore choisi un autre.
+            </div>
+          )}
+          <Btn variant="soft" size="sm" onClick={lancer} disabled={busy}>
+            {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Lock size={14} /> Générer un mot de passe temporaire</>}
+          </Btn>
+        </>
+      )}
+    </Field>
+  );
+}
+
+/* La fenetre que l'on ne peut pas fermer.
+   Un mot de passe pose par quelqu'un d'autre ne doit pas s'installer : tant
+   qu'il n'en a pas choisi un, le membre ne va pas plus loin. Une seule sortie
+   est laissee ouverte -- se deconnecter -- parce qu'enfermer quelqu'un sans
+   issue n'est jamais la bonne facon de faire. */
+function TempPasswordGate() {
+  const { updatePassword, logout } = useApp();
+  const [pwd, setPwd] = useState("");
+  const [pwd2, setPwd2] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useScrollLock(true);
+
+  const submit = async () => {
+    setErr("");
+    if (pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
+    if (pwd !== pwd2) { setErr("Les deux mots de passe ne correspondent pas."); return; }
+    setBusy(true);
+    const res = await updatePassword(pwd);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    // Le marqueur est leve par updatePassword : la fenetre disparait d'elle-meme.
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1400, background: "rgba(18,41,63,.72)", backdropFilter: "blur(5px)",
+      display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 16px", overflowY: "auto" }}>
+      <div style={{ background: C.paper, borderRadius: 22, width: "100%", maxWidth: 460, border: "1px solid #ece2d0",
+        boxShadow: "0 30px 80px rgba(18,41,63,.35)", padding: 26 }}>
+        <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(232,163,23,.14)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}>
+          <Lock size={28} color={C.amber} />
+        </div>
+        <h3 style={{ margin: "0 0 10px", textAlign: "center", fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21 }}>
+          Choisissez votre mot de passe
+        </h3>
+        <p style={{ fontSize: 14, color: "#6e6256", lineHeight: 1.6, margin: "0 0 16px", textAlign: "center" }}>
+          Celui avec lequel vous venez de vous connecter a été <b>généré par un administrateur</b>.
+          Donnez-vous-en un que vous êtes seul à connaître : c'est la dernière étape.
+        </p>
+        <div style={{ position: "relative", marginBottom: 10 }}>
+          <TextInput type={show ? "text" : "password"} value={pwd} onChange={(e) => setPwd(e.target.value)} autoFocus
+            placeholder="Nouveau mot de passe (6 caractères minimum)" autoComplete="new-password" style={{ paddingRight: 44 }} />
+          <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Masquer" : "Afficher"}
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+            {show ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        </div>
+        <TextInput type={show ? "text" : "password"} value={pwd2} onChange={(e) => setPwd2(e.target.value)}
+          placeholder="Confirmer le mot de passe" autoComplete="new-password"
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+        {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginTop: 12 }}>{err}</div>}
+        <Btn full size="lg" variant="teal" onClick={submit} disabled={busy} style={{ marginTop: 14 }}>
+          {busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer et continuer</>}
+        </Btn>
+        <button type="button" onClick={logout}
+          style={{ background: "none", border: "none", color: "#9c8d79", cursor: "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13.5, padding: 10, display: "block", margin: "6px auto 0" }}>
+          Me déconnecter et revenir plus tard
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---- Modale : édition de son propre profil ---- */
 // member : membre a modifier. Absent = mon propre profil.
 // Un administrateur peut ouvrir n'importe quel profil depuis le trombinoscope
@@ -5859,10 +6049,11 @@ function ProfileEditModal({ onClose, member }) {
         )}
       </Field>
 
-      {/* (lot AB bis) On ne modifie ici QUE son propre mot de passe : un
-          administrateur qui corrige la fiche de quelqu'un d'autre n'a rien a
-          faire de ce cote-la. */}
-      {!asAdmin && <PasswordChangeField />}
+      {/* (lot AB bis) On ne modifie ici QUE son propre mot de passe.
+          (lot AC) Sur la fiche de quelqu'un d'autre, un administrateur ne
+          change pas le mot de passe : il en depose un temporaire, que le
+          membre devra remplacer des sa connexion. */}
+      {asAdmin ? <AdminTempPasswordField member={member} /> : <PasswordChangeField />}
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer mon profil</>}</Btn>
@@ -7297,7 +7488,17 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Il ouvre maintenant directement l'écran <b>« Nouveau mot de passe »</b> à l'arrivée sur le site. Si vous retombiez auparavant sur la page d'accueil sans rien pouvoir faire, c'est corrigé.</p>
             <p style={{ margin: "0 0 8px" }}>Un lien de réinitialisation ne sert qu'<b>une seule fois</b>, et pas au-delà d'<b>une heure</b>. Passé ce délai, l'écran vous le dit clairement : redemandez-en un depuis « Mot de passe oublié ? ». Ouvrez-le de préférence <b>sur le même appareil et dans le même navigateur</b> que celui d'où vous l'avez demandé.</p>
             <p style={{ margin: "0 0 8px" }}>Une fois le nouveau mot de passe enregistré, vous êtes connecté dans la foulée : rien d'autre à faire.</p>
-            <p style={{ margin: 0 }}><b>Et si l'écran ne s'ouvre toujours pas ?</b> Le lien vous aura quand même reconnecté. Dans ce cas, passez par <b>votre nom en haut à droite → « Mot de passe » → « Choisir un nouveau mot de passe »</b> : ce chemin-là ne dépend d'aucun courriel et fonctionne toujours. Il vaut aussi pour les comptes créés avec Google, qui n'ont jamais eu de mot de passe.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Et si l'écran ne s'ouvre toujours pas ?</b> Le lien vous aura quand même reconnecté. Dans ce cas, passez par <b>votre nom en haut à droite → « Mot de passe » → « Choisir un nouveau mot de passe »</b> : ce chemin-là ne dépend d'aucun courriel et fonctionne toujours. Il vaut aussi pour les comptes créés avec Google, qui n'ont jamais eu de mot de passe.</p>
+            <p style={{ margin: 0 }}><b>Et si le lien ne vous reconnecte même pas ?</b> Cela arrive : un lien de réinitialisation ne fonctionne que dans <b>le navigateur d'où il a été demandé</b>. Ouvert depuis le navigateur intégré de Gmail, ou sur un autre appareil, il échoue. Certains antivirus visitent même le lien avant vous, ce qui l'épuise avant votre arrivée. Demandez alors un <b>mot de passe temporaire</b> à un administrateur (voir ci-dessous) : il n'y a aucun lien à ouvrir.</p>
+          </>,
+        },
+        {
+          q: "Le mot de passe temporaire (administrateurs)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Quand un membre n'arrive plus à se connecter et que le lien « mot de passe oublié » n'y change rien, un administrateur peut lui <b>donner un mot de passe temporaire</b>. Il n'y a alors <b>aucun lien à ouvrir</b> : le membre le saisit sur l'écran de connexion ordinaire.</p>
+            <p style={{ margin: "0 0 8px" }}>Le chemin : ouvrez sa fiche depuis le <b>trombinoscope</b>, cliquez sur <b>« Modifier »</b>, puis sur <b>« Générer un mot de passe temporaire »</b>. Le mot de passe s'affiche <b>une seule fois</b> — copiez-le — et part en même temps par e-mail au membre. Donnez-le-lui aussi sur Signal : c'est plus sûr qu'un courriel qui peut se perdre.</p>
+            <p style={{ margin: "0 0 8px" }}>Son ancien mot de passe cesse aussitôt de fonctionner. Et dès qu'il se connecte, une <b>fenêtre qu'il ne peut pas fermer</b> lui demande d'en choisir un à lui : « temporaire » veut donc dire ce que cela veut dire.</p>
+            <p style={{ margin: 0 }}>Rien de tout cela ne se fait en silence : le membre est prévenu par e-mail, et <b>l'association reçoit une trace</b> indiquant quel administrateur est intervenu, sur quel compte et quand — sans le mot de passe, qui n'apparaît dans aucun de ces courriels. Poser un mot de passe sur le compte d'autrui, c'est pouvoir s'y connecter : cela se sait.</p>
           </>,
         },
         {
@@ -20601,6 +20802,11 @@ function Shell() {
       <Footer setPage={setPage} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} setToast={setToast} />}
       {passwordRecovery && <ResetPasswordModal />}
+      {/* (lot AC) Rien d'autre ne peut se faire tant qu'un mot de passe pose
+          par un administrateur n'a pas ete remplace. On laisse toutefois
+          l'ecran de reinitialisation passer devant : les deux menent au meme
+          endroit, inutile de les empiler. */}
+      {!passwordRecovery && currentUser?.pwdTempAt && <TempPasswordGate />}
       {bannedNotice && (
         <Modal open onClose={() => setBannedNotice(false)} title="Accès suspendu" width={440}>
           <div style={{ textAlign: "center", padding: "8px 4px" }}>
