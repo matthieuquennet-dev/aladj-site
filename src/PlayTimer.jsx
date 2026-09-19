@@ -3144,6 +3144,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       // fine se rate une fois sur deux.
       // `highlight` : tuile mise en avant sans etre "active" -- une action qu'on
       // doit reperer du premier coup d'oeil au milieu des autres.
+      // (lot AB) Le nom du joueur doit se lire EN ENTIER : sur une tablette la
+      // place ne manque pas, le couper n'avait aucune raison d'etre. On reduit
+      // donc la taille au fur et a mesure qu'il s'allonge, et il peut passer
+      // sur deux lignes.
+      const nameSize = (nm) => {
+        const L = String(nm || '').length;
+        if (L <= 10) return 'clamp(19px,2.05vw,34px)';
+        if (L <= 16) return 'clamp(17px,1.7vw,28px)';
+        if (L <= 24) return 'clamp(15px,1.4vw,23px)';
+        return 'clamp(13px,1.15vw,19px)';
+      };
+
       const tile = (icon, label, on, onClick, tint, highlight) => (
         <button onClick={onClick} style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5,
@@ -3186,7 +3198,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               ? <img src={game.image_url} alt="" style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, objectFit: 'cover', flex: '0 0 auto' }} />
               : <span style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(20px,2.1vw,32px)', color: C.navy, lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div title={game?.name || ''} style={{ fontFamily: TITLE, fontWeight: 600,
+                fontSize: 'clamp(20px,2.1vw,32px)', color: C.navy, lineHeight: 1.15,
+                display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
+                overflow: 'hidden', overflowWrap: 'anywhere' }}>
                 {game?.name || 'Partie en cours'}
               </div>
               <div style={{ fontSize: 'clamp(12px,1.05vw,16px)', color: '#9c8d79', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -3232,11 +3247,12 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
                   {/* Identite */}
                   <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    gap: 6, width: 'clamp(112px,12vw,208px)', marginLeft: active ? 0 : 6 }}>
+                    gap: 6, width: 'clamp(134px,15vw,272px)', marginLeft: active ? 0 : 6 }}>
                     <Avatar name={p.name} url={p.avatar_url} color={hex} size={78} />
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(19px,2.05vw,34px)',
-                      lineHeight: 1.1, color: ink, textAlign: 'center', maxWidth: '100%',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    <span title={p.name} style={{ fontFamily: TITLE, fontWeight: 600, fontSize: nameSize(p.name),
+                      lineHeight: 1.14, color: ink, textAlign: 'center', maxWidth: '100%',
+                      display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
+                      overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</span>
                     {p.team != null && !oneTeamTable && (
                       <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .4,
                         color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
@@ -3452,7 +3468,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={38} />
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                    {/* (lot AB) Le nom tient sur deux lignes plutot que d'etre coupe. */}
+                    <div title={p.name} style={{ fontWeight: 700, lineHeight: 1.2,
+                      display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
+                      overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</div>
                     <div style={{ fontSize: 11, color: `${C.navy}88`, display: 'flex', gap: 6, alignItems: 'center' }}>
                       <span onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
                         style={{ width: 11, height: 11, borderRadius: 3, background: hexFor(p), border: '1px solid rgba(0,0,0,.15)', cursor: 'pointer', flexShrink: 0 }} />
@@ -3460,25 +3479,46 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                       {!p.auth_user_id && <span>sans tel</span>}
                     </div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
-                    style={{ border: `1.5px solid ${C.amber}`, background: '#FDF4E0', color: '#8a6a1f', borderRadius: 999,
-                      padding: '5px 11px', fontFamily: TITLE, fontWeight: 600, fontSize: 15, cursor: 'pointer', flexShrink: 0 }}>
-                    {p.score || 0} pt{Math.abs(p.score || 0) > 1 ? 's' : ''}
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }} onClick={(e) => e.stopPropagation()}>
-                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, true); }} disabled={i === 0}
-                      style={{ ...orderBtn, opacity: i === 0 ? 0.3 : 1 }} aria-label="Monter dans l'ordre">▲</button>
-                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, false); }} disabled={i === players.length - 1}
-                      style={{ ...orderBtn, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
-                  </div>
                   {isHost && players.length > 1 && (
                     <button onClick={(e) => { e.stopPropagation(); removePlayer(p); }} title={`Retirer ${p.name}`}
                       style={{ border: 'none', background: 'transparent', color: C.red, cursor: 'pointer',
                         fontSize: 17, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>✕</button>
                   )}
                 </div>
-                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, marginTop: 6, color: active ? hexFor(p) : C.navy }}>
-                  {fmt(shown(p.id))}
+
+                {/* (lot AB) ZONE DE SCORE : un moins, le score, un plus.
+                    Un appui sur − ou + compte un point, sans ouvrir la
+                    calculatrice -- c'est le geste le plus frequent de toute une
+                    partie. Le score lui-meme ouvre le pave pour les cas moins
+                    simples. Les fleches d'ordre des joueurs sont descendues plus
+                    bas : elles ne sont plus collees au score, on ne les touche
+                    donc plus par megarde. */}
+                <div onClick={(e) => e.stopPropagation()}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                  <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
+                    aria-label={`Retirer un point a ${p.name}`} title="−1 point"
+                    style={{ ...scoreStepBtn, borderColor: `${C.red}66`, color: C.red, background: '#fdecee' }}>−</button>
+                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
+                    style={{ flex: 1, minWidth: 0, border: `1.5px solid ${C.amber}`, background: '#FDF4E0', color: '#8a6a1f',
+                      borderRadius: 12, padding: '9px 10px', fontFamily: TITLE, fontWeight: 600, fontSize: 19, cursor: 'pointer' }}>
+                    {p.score || 0} <span style={{ fontSize: 13 }}>pt{Math.abs(p.score || 0) > 1 ? 's' : ''}</span>
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
+                    aria-label={`Ajouter un point a ${p.name}`} title="+1 point"
+                    style={{ ...scoreStepBtn, borderColor: `${C.teal}66`, color: C.teal, background: '#e8f4f4' }}>+</button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+                  <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, color: active ? hexFor(p) : C.navy }}>
+                    {fmt(shown(p.id))}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={(e) => e.stopPropagation()}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: .5, textTransform: 'uppercase', color: `${C.navy}66` }}>ordre</span>
+                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, true); }} disabled={i === 0}
+                      style={{ ...orderBtn, width: 34, height: 28, fontSize: 12, opacity: i === 0 ? 0.3 : 1 }} aria-label="Monter dans l'ordre">▲</button>
+                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, false); }} disabled={i === players.length - 1}
+                      style={{ ...orderBtn, width: 34, height: 28, fontSize: 12, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
+                  </div>
                 </div>
               </div>
             );
@@ -4306,15 +4346,28 @@ function ScoreDirPicker({ value, onChange, saved, compact }) {
 export const ScorePad = React.memo(function ScorePad({ name, initialScore, onClose, onApply }) {
   const [entry, setEntry] = useState('');
   const [op, setOp] = useState(null); // null = saisie directe | '+' | '-'
-  const cur = initialScore || 0;
+  // (lot AB) Ajouts rapides : le cumul des appuis sur +1 / +5 / +10 / +50 et
+  // leurs contraires. Il s'ajoute au score de depart et se voit aussitot a
+  // l'ecran ; la touche de validation envoie le total, comme pour une saisie
+  // au clavier. On peut donc enchainer +10 puis +5 sans rouvrir le pave.
+  const [bonus, setBonus] = useState(0);
+  const cur = (initialScore || 0) + bonus;
   const n = entry === '' ? null : (parseInt(entry, 10) || 0);
   const preview = op
     ? (n == null ? cur : (op === '+' ? cur + n : cur - n))
     : (n == null ? cur : n);
   const press = (d) => setEntry((e) => (e + d).replace(/^0+(?=\d)/, '').slice(0, 6));
   const back = () => setEntry((e) => e.slice(0, -1));
-  const clearAll = () => { setEntry(''); setOp(null); };
+  const clearAll = () => { setEntry(''); setOp(null); setBonus(0); };
   const pickOp = (o) => setOp((prev) => (prev === o ? null : o));
+  // Un chiffre deja tape n'est jamais perdu : il est d'abord replie dans le
+  // total, puis l'ajout rapide s'applique par-dessus.
+  const bump = (d) => {
+    const pending = preview - cur;
+    setBonus((b) => b + pending + d);
+    setEntry(''); setOp(null);
+  };
+  const QUICK = [1, 5, 10, 50];
 
   const keyBase = {
     border: 'none', borderRadius: 14, padding: '15px 0', fontFamily: TITLE, fontWeight: 600,
@@ -4335,12 +4388,20 @@ export const ScorePad = React.memo(function ScorePad({ name, initialScore, onClo
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(26,58,92,.55)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 380 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy }}>{name}</div>
-          <div style={{ fontSize: 13, color: `${C.navy}99`, fontWeight: 700 }}>Score actuel : {cur}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, minWidth: 0 }}>{name}</div>
+          <div style={{ fontSize: 13, color: `${C.navy}99`, fontWeight: 700, textAlign: 'right', flex: '0 0 auto' }}>
+            {bonus === 0 ? 'Score actuel' : 'Total en cours'} : {cur}
+            {bonus !== 0 && (
+              <span style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: bonus > 0 ? C.teal : C.red }}>
+                {bonus > 0 ? `+${bonus}` : bonus} depuis l'ouverture
+              </span>
+            )}
+          </div>
         </div>
         <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 10 }}>
           Saisis un score puis valide, ou appuie sur + / − pour ajouter ou retrancher des points.
+          Les boutons du bas comptent tout seuls, sans passer par le clavier.
         </div>
 
         {/* Ecran de la calculatrice */}
@@ -4378,6 +4439,24 @@ export const ScorePad = React.memo(function ScorePad({ name, initialScore, onClo
             onClick={() => onApply(preview)}
             aria-label="Valider le score"
             style={{ ...keyBase, background: '#2FA24F', color: C.white, boxShadow: '0 3px 0 rgba(0,0,0,0.15)' }}>✓</button>
+        </div>
+
+        {/* (lot AB) Les ajouts qui reviennent sans cesse autour d'une table.
+            Un appui = l'operation faite, tout de suite, sur le total affiche.
+            Ils se cumulent librement ; il ne reste qu'a valider avec ✓. */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: .6, textTransform: 'uppercase',
+            color: `${C.navy}88`, marginBottom: 7 }}>Compter vite</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {QUICK.map((v) => (
+              <K key={`plus${v}`} label={`+${v}`} on={() => bump(v)} aria={`Ajouter ${v} point${v > 1 ? 's' : ''}`}
+                st={{ background: `${C.teal}1a`, color: C.teal, fontSize: 19, padding: '13px 0' }} />
+            ))}
+            {QUICK.map((v) => (
+              <K key={`moins${v}`} label={`−${v}`} on={() => bump(-v)} aria={`Retrancher ${v} point${v > 1 ? 's' : ''}`}
+                st={{ background: `${C.red}1a`, color: C.red, fontSize: 19, padding: '13px 0' }} />
+            ))}
+          </div>
         </div>
 
         <button onClick={onClose} style={{ ...btnGhost, width: '100%', marginTop: 12, textAlign: 'center' }}>Annuler</button>
@@ -4459,4 +4538,13 @@ const btnPrimary = { ...btnBase, background: '#1E8A8A', color: '#fff' };
 const btnSecondary = { ...btnBase, background: '#1A3A5C12', color: '#1A3A5C' };
 const btnDanger = { ...btnBase, background: '#B5283A', color: '#fff' };
 const btnGhost = { background: 'transparent', border: 'none', color: '#1A3A5C99', fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: "'Nunito', sans-serif" };
+// (lot AB) Boutons − / + poses de part et d'autre du score, vue telephone.
+// Larges et bien separes : on doit pouvoir compter un point d'un pouce, sans
+// regarder, et sans risquer de toucher une fleche d'ordre.
+const scoreStepBtn = {
+  width: 52, height: 42, flex: '0 0 auto', borderRadius: 12, borderStyle: 'solid', borderWidth: 1.5,
+  fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 24, lineHeight: 1,
+  cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
+  touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+};
 const orderBtn = { width: 28, height: 22, border: '1px solid #1A3A5C22', background: '#fff', borderRadius: 7, color: '#1A3A5C', fontSize: 10, lineHeight: 1, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0 };
