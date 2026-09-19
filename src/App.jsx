@@ -25,6 +25,45 @@ const LOGO_URL = "data:image/webp;base64,UklGRrpJAABXRUJQVlA4WAoAAAAQAAAAsgAAlQA
 // Le jeton doit correspondre à la variable CALENDAR_TOKEN configurée sur Vercel.
 const CALENDAR_FEED_URL = "https://aladj.fr/api/calendar?k=51d278fd6d41a8632b8065ceb56ece3c";
 
+/* =============================================================================
+   LIEN « MOT DE PASSE OUBLIE »
+   -----------------------------------------------------------------------------
+   Le courriel envoye par Supabase ramene sur le site avec un marqueur dans
+   l'adresse : le notre (?reset=1, ajoute par resetPassword ci-dessous) ou celui
+   de Supabase (type=recovery). Il faut le lire TOUT DE SUITE, au chargement du
+   module : quelques instants plus tard, la bibliotheque a deja nettoye
+   l'adresse et il n'y a plus rien a lire — c'est exactement ce qui faisait
+   atterrir les membres sur la page d'accueil, sans aucun moyen de changer leur
+   mot de passe.
+   ============================================================================= */
+const RECOVERY_IN_URL = (() => {
+  if (typeof window === "undefined") return false;
+  try {
+    const q = new URLSearchParams(window.location.search || "");
+    const h = new URLSearchParams(String(window.location.hash || "").replace(/^#\/?/, ""));
+    return q.get("reset") === "1" || q.get("type") === "recovery" || h.get("type") === "recovery";
+  } catch (e) { return false; }
+})();
+// L'ecran ne s'ouvre qu'une fois : un rendu supplementaire ne doit pas le
+// faire reapparaitre apres que le membre l'a referme.
+let RECOVERY_SHOWN = false;
+
+/* Efface le marqueur de l'adresse, une fois Supabase passe dessus. Sans cela,
+   un simple rafraichissement rouvrirait l'ecran de nouveau mot de passe.
+   Les autres parametres du site (notamment ?chrono=CODE) sont preserves. */
+function clearRecoveryMarker() {
+  if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
+  try {
+    const url = new URL(window.location.href);
+    ["reset", "type", "code", "token_hash", "access_token", "refresh_token",
+      "expires_in", "expires_at", "token_type", "error", "error_description"]
+      .forEach((k) => url.searchParams.delete(k));
+    const hash = String(url.hash || "");
+    const cleanedHash = /type=recovery|access_token=/.test(hash) ? "" : hash;
+    window.history.replaceState({}, "", url.pathname + url.search + cleanedHash);
+  } catch (e) { /* sans gravite : le marqueur restera, c'est tout */ }
+}
+
 // Palette de couleurs de jeu (pions/plateaux). label = nom affiché, hex = pastille.
 const GAME_COLORS = [
   { key: "rouge",   label: "Rouge",   hex: "#D64545" },
@@ -224,9 +263,134 @@ const DEFAULT_MECHANIC_SUGGESTIONS = [
 let MECHANIC_SUGGESTIONS = DEFAULT_MECHANIC_SUGGESTIONS;
 let MECH_DB_ALIASES = {};
 
+/* =============================================================================
+   RESUME AUTOMATIQUE D'UN JEU, CENTRE SUR SES MECANIQUES
+   -----------------------------------------------------------------------------
+   Rien n'est invente ni recopie d'ailleurs : la phrase est composee a partir de
+   ce que porte deja la fiche du jeu (ses mecaniques, son mode cooperatif, sa
+   tablee, sa duree). Elle est donc juste par construction, s'affiche
+   instantanement et fonctionne hors ligne, sans aucun appel exterieur.
+
+   Elle ne remplace pas la description du jeu : elle repond a la seule question
+   que se pose celui qui ne connait pas le titre propose et doit pourtant voter
+   -- « concretement, qu'est-ce qu'on y fait ? »
+
+   Pour enrichir un resume, il suffit d'ajouter la mecanique a ce dictionnaire :
+   la cle est le nom de la mecanique, normalise (minuscules, sans accents).
+   ============================================================================= */
+const MECH_GIST = {
+  "draft de cartes": "choisit une carte dans une main que l’on passe ensuite à son voisin",
+  "placement d'ouvriers": "pose ses ouvriers sur les actions convoitées, en prenant la place des autres",
+  "pose de tuiles": "agrandit un paysage commun en posant ses tuiles au bon endroit",
+  "des": "lance les dés et tire le meilleur parti de ce qui sort",
+  "gestion de ressources": "transforme ses ressources en points, sans jamais en avoir assez",
+  "deck-building": "améliore peu à peu son propre paquet de cartes",
+  "controle de zone": "dispute des territoires en occupant plus de terrain que l’adversaire",
+  "encheres": "mise pour emporter ce que l’on convoite, au juste prix",
+  "bluff": "fait croire ce que l’on veut, et tâche de lire les autres",
+  "combat": "affronte directement ses adversaires",
+  "set collection": "réunit des séries d’objets pour marquer",
+  "programmation": "prévoit ses actions à l’avance, puis assume ce qui en sort",
+  "deduction": "recoupe des indices pour éliminer les possibilités",
+  "narration": "raconte une histoire au fil de la partie",
+  "memoire": "retient ce que l’on a vu passer",
+  "stop ou encore": "décide quand s’arrêter, avant de tout perdre",
+  "combos": "enchaîne des effets qui se déclenchent les uns les autres",
+  "negociation": "discute, échange et promet pour s’en sortir",
+  "strategie": "réfléchit à long terme, en laissant peu de place au hasard",
+  "familial": "joue avec des règles simples, accessibles à toute la tablée",
+  "ambiance": "joue pour rire, vite et à beaucoup",
+  "roles caches": "ignore qui est dans son camp, et le découvre en jouant",
+  "enquete": "mène une enquête et finit par désigner un coupable",
+  "jeu en equipe": "joue par équipes, chacune marquant ensemble",
+  "placement": "choisit où poser ses pièces, avant que la place ne manque",
+  "gestion": "administre ce que l’on possède pour en tirer le plus possible",
+  "roll'n'write": "lance des dés et coche sa propre feuille",
+  "flip'n'write": "retourne des cartes et coche sa propre feuille",
+  "jeu de plis": "remporte des plis, carte après carte",
+  "jeu de defausse": "se débarrasse de ses cartes avant les autres",
+  "jeu de cartes": "joue ses cartes au bon moment",
+  "jcc": "constitue son paquet à partir de sa propre collection",
+  "jce": "fait évoluer son paquet au fil des extensions",
+  "enfants": "joue avec des règles pensées pour les enfants",
+  "party game": "joue vite, à beaucoup, et surtout pour rire",
+  "escape game": "résout des énigmes pour sortir avant la fin du temps",
+  "legacy": "modifie durablement le jeu d’une partie à l’autre",
+  "gestion de main": "choisit quelles cartes garder, et quand les jouer",
+  "majorite": "cherche à être le plus présent là où cela rapporte",
+  "course": "va plus vite que les autres jusqu’à l’arrivée",
+  "exploration": "découvre le plateau au fur et à mesure",
+  "construction de moteur": "monte une machine à points qui s’emballe en fin de partie",
+  "tuiles a connecter": "relie des tuiles pour former des chemins",
+  "paris": "parie sur ce qui va arriver",
+  "mise": "engage des jetons sur ce que l’on croit",
+  "asymetrique": "joue un camp dont les pouvoirs n’ont rien à voir avec ceux des autres",
+  "temps reel": "joue en même temps que tout le monde, contre la montre",
+  "adresse / dexterite": "joue avec les doigts autant qu’avec la tête",
+  "quiz / culture": "répond à des questions de culture générale",
+};
+
+const GIST_KEYS = Object.keys(MECH_GIST);
+function mechGist(m) {
+  const k = normMech(m);
+  if (!k) return null;
+  if (MECH_GIST[k]) return MECH_GIST[k];
+  // Les listes d'un site vivant ne sont jamais parfaitement alignees :
+  // « JCC (jeu de cartes a collectionner) » doit retrouver « jcc ».
+  const hit = GIST_KEYS.find((x) => k.startsWith(x) || x.startsWith(k));
+  return hit ? MECH_GIST[hit] : null;
+}
+
+/* Enumere a la francaise : « a », « a et b », « a, b et c ». */
+function frList(arr) {
+  const a = (arr || []).filter(Boolean);
+  if (a.length === 0) return "";
+  if (a.length === 1) return a[0];
+  return a.slice(0, -1).join(", ") + " et " + a[a.length - 1];
+}
+
+/* La phrase affichee sous une suggestion. null quand la fiche ne dit
+   vraiment rien -- mieux vaut l'avouer que meubler. */
+function gameMechanicsSummary(g) {
+  if (!g) return null;
+  const mechs = (g.mechanics || []).filter(Boolean);
+  const isCoopMech = (m) => normMech(m).startsWith("cooperatif");
+  const coop = g.isCoop === true || mechs.some(isCoopMech);
+  const others = mechs.filter((m) => !isCoopMech(m));
+
+  const parts = [];
+  if (coop) parts.push("Coopératif : toute la table gagne ou perd ensemble.");
+
+  const gists = [];
+  others.forEach((m) => {
+    const gi = mechGist(m);
+    if (gi && gists.indexOf(gi) === -1) gists.push(gi);
+  });
+
+  if (gists.length === 1) parts.push("On y " + gists[0] + ".");
+  else if (gists.length >= 2) parts.push("On y " + gists[0] + ", et l’on " + gists[1] + ".");
+
+  // Les mecaniques que le dictionnaire ne connait pas ne sont pas perdues :
+  // elles sont citees telles quelles, ce qui reste une information utile.
+  const restes = others.filter((m) => !mechGist(m)).slice(0, 3);
+  if (gists.length === 0 && restes.length > 0) {
+    parts.push("Mécaniques annoncées : " + frList(restes.map((m) => String(m).toLowerCase())) + ".");
+  } else if (restes.length > 0) {
+    parts.push("Aussi : " + frList(restes.map((m) => String(m).toLowerCase())) + ".");
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join(" ");
+}
+
 /* ---------- Mecaniques particulieres (composeur de tablee) ---------- */
 // Normalise une mecanique pour comparaison : minuscules, sans accents.
 const normMech = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+/* Normalisation d'une recherche de titre : minuscules, sans accents, sans
+   ponctuation ni espaces. « L'Age de pierre » trouve donc « lagedepierre »,
+   et l'on n'a plus a se demander ou se placent les apostrophes ou les tirets. */
+const normTitle = (s) => (s || "").toLowerCase().normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 // Un jeu est « pour enfants » s'il porte la mecanique « Enfants ».
 const isKidsGame = (g) => (g?.mechanics || []).some((m) => normMech(m).startsWith("enfant"));
 // Jeux « one shot » : une fois joues, l'interet retombe (l'histoire est connue).
@@ -1186,7 +1350,8 @@ function AppProvider({ children }) {
       // (lot AA) Applications de jeu en ligne. Chargees a part du gros
       // Promise.all ci-dessus : ces tables sont petites, et si la migration
       // n'a pas encore ete jouee, leur absence ne doit rien casser d'autre.
-      const [{ data: webGameRows }, { data: webSessRows }, { data: webSignRows }] = await Promise.all([
+      const [{ data: webGameRows }, { data: webSessRows }, { data: webSignRows },
+        { data: webCreditRows }, { data: webMsgRows }] = await Promise.all([
         supabase.from("web_games").select("*").order("sort_order").order("name"),
         currentUserIdRef.current
           ? supabase.from("web_game_sessions").select("*").order("starts_at")
@@ -1194,6 +1359,10 @@ function AppProvider({ children }) {
         currentUserIdRef.current
           ? supabase.from("web_game_signups").select("*")
           : Promise.resolve({ data: [] }),
+        // (lot AB) Ceux qui ont fabrique le jeu, et le poids de son fil de
+        // discussion. Les deux se lisent sans compte : la page est une vitrine.
+        supabase.from("web_game_credits").select("*").order("sort_order"),
+        supabase.from("web_game_messages").select("id,web_game_id"),
       ]);
 
       // Liste des mecaniques geree par les admins. Si la table est vide ou
@@ -1453,8 +1622,18 @@ function AppProvider({ children }) {
       // (lot AA) Catalogue des applications de jeu, rendez-vous et inscrits.
       const signupsBySession = {};
       (webSignRows || []).forEach((r) => { (signupsBySession[r.session_id] ||= []).push(r.user_id); });
+      const creditsByGame = {};
+      (webCreditRows || []).forEach((r) => {
+        (creditsByGame[r.web_game_id] ||= []).push({
+          userId: r.user_id, name: nameById[r.user_id] || "Membre",
+          role: r.role || "", sortOrder: r.sort_order || 0,
+        });
+      });
+      const msgCountByGame = {};
+      (webMsgRows || []).forEach((r) => { msgCountByGame[r.web_game_id] = (msgCountByGame[r.web_game_id] || 0) + 1; });
       setWebGames((webGameRows || []).map((w) => ({
         id: w.id, slug: w.slug, name: w.name, status: w.status || "dev",
+        subtitle: w.subtitle || "",
         tagline: w.tagline || "", description: w.description || "", rules: w.rules || "",
         howTo: w.how_to || "", tips: w.tips || "",
         min: w.min_players || null, max: w.max_players || null, time: w.play_time || null,
@@ -1462,6 +1641,8 @@ function AppProvider({ children }) {
         releaseDate: w.release_date || null, releaseNote: w.release_note || "",
         url: w.url || "", img: w.image_url || "", accent: w.accent || "",
         sortOrder: w.sort_order || 0,
+        credits: (creditsByGame[w.id] || []).slice().sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name, "fr")),
+        msgCount: msgCountByGame[w.id] || 0,
       })));
       setWebSessions((webSessRows || []).map((r) => ({
         id: r.id, webGameId: r.web_game_id, hostId: r.host_id,
@@ -1554,9 +1735,24 @@ function AppProvider({ children }) {
   /* ---- Session + écoute des changements d'auth ---- */
   useEffect(() => {
     if (!isConfigured) { setFatalError("config"); setReady(true); return; }
-    let sub;
+    // L'ecoute des changements de session est posee AVANT le moindre await :
+    // Supabase annonce « PASSWORD_RECOVERY » des les toutes premieres
+    // millisecondes, pendant qu'il lit le lien recu par courriel. En
+    // s'abonnant seulement apres le chargement des donnees, on arrivait
+    // systematiquement trop tard et l'ecran de nouveau mot de passe ne
+    // s'ouvrait jamais.
+    const sub = supabase.auth.onAuthStateChange((_e, sess) => {
+      setAuthUser(sess?.user || null);
+      if (_e === "PASSWORD_RECOVERY") { RECOVERY_SHOWN = true; setPasswordRecovery(true); }
+    });
+    // Deuxieme filet : le marqueur lu dans l'adresse au chargement du module.
+    // Il suffit a lui seul, meme si l'evenement n'arrive pas (selon le mode de
+    // lien configure dans Supabase, il n'arrive pas toujours).
+    if (RECOVERY_IN_URL && !RECOVERY_SHOWN) { RECOVERY_SHOWN = true; setPasswordRecovery(true); }
     (async () => {
       const { data: { session } } = await supabase.auth.getSession();
+      // A cet instant Supabase a fini de lire l'adresse : on peut la nettoyer.
+      if (RECOVERY_IN_URL) clearRecoveryMarker();
       setAuthUser(session?.user || null);
       // On renseigne l'identifiant tout de suite, sans attendre que le profil
       // soit charge : loadData s'en sert pour decider s'il interroge les tables
@@ -1567,7 +1763,6 @@ function AppProvider({ children }) {
       currentUserIdRef.current = uid;
       await loadData();
       setReady(true);
-      sub = supabase.auth.onAuthStateChange((_e, sess) => { setAuthUser(sess?.user || null); if (_e === 'PASSWORD_RECOVERY') setPasswordRecovery(true); });
     })();
     return () => sub?.data?.subscription?.unsubscribe();
   }, [loadData]);
@@ -1668,14 +1863,25 @@ function AppProvider({ children }) {
   // Envoi d'un lien de reinitialisation du mot de passe.
   const resetPassword = useCallback(async (email) => {
     if (!email || !email.trim()) return { error: "Indiquez votre adresse e-mail." };
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+    // Le marqueur ?reset=1 est le notre : il ne depend d'aucun reglage de
+    // Supabase et survit a tous les formats de lien. C'est lui qui garantit
+    // que l'ecran de nouveau mot de passe s'ouvre a l'arrivee.
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/?reset=1`,
+    });
     if (error) return { error: error.message };
     return {};
   }, []);
 
   // Definition d'un nouveau mot de passe (apres avoir suivi le lien recu par e-mail).
   const updatePassword = useCallback(async (newPwd) => {
-    if (!newPwd || newPwd.length < 6) return { error: "Le mot de passe doit faire au moins 6 caracteres." };
+    if (!newPwd || newPwd.length < 6) return { error: "Le mot de passe doit faire au moins 6 caractères." };
+    // Sans session ouverte, Supabase renvoie un message technique incomprehensible.
+    // On dit plutot ce qui s'est passe, et quoi faire.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      return { error: "Ce lien a expiré ou a déjà servi. Demandez-en un nouveau depuis « Mot de passe oublié ? » sur l'écran de connexion." };
+    }
     const { error } = await supabase.auth.updateUser({ password: newPwd });
     if (error) return { error: error.message };
     return {};
@@ -2739,6 +2945,16 @@ function AppProvider({ children }) {
     const fields = {};
     if (patch.name !== undefined) fields.name = String(patch.name || "").trim();
     if (patch.status !== undefined) fields.status = patch.status;
+    // (lot AB) Un champ laisse vide revient au texte livre avec le site :
+    // c'est la raison d'etre du null ici, et non une valeur perdue.
+    if (patch.subtitle !== undefined) fields.subtitle = String(patch.subtitle || "").trim() || null;
+    if (patch.accent !== undefined) fields.accent = String(patch.accent || "").trim() || null;
+    if (patch.languages !== undefined) {
+      const langs = Array.isArray(patch.languages)
+        ? patch.languages
+        : String(patch.languages || "").split(",");
+      fields.languages = langs.map((l) => String(l).trim()).filter(Boolean).slice(0, 8);
+    }
     if (patch.tagline !== undefined) fields.tagline = patch.tagline || null;
     if (patch.description !== undefined) fields.description = patch.description || null;
     if (patch.rules !== undefined) fields.rules = patch.rules || null;
@@ -2761,6 +2977,106 @@ function AppProvider({ children }) {
     await loadData();
     return {};
   }, [currentUser, loadData]);
+
+  /* (lot AB) Les membres qui ont fabrique le jeu.
+     Ils apparaissent sur sa fiche et sont prevenus de chaque message deposé
+     dans sa discussion — c'est a eux que s'adressent les demandes et les
+     remerciements. La liste est remplacee d'un bloc : c'est plus simple a
+     comprendre qu'une suite d'ajouts et de retraits, et la table est minuscule. */
+  const setWebGameCredits = useCallback(async (webGameId, rows) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    const clean = (rows || [])
+      .filter((r) => r && r.userId)
+      .filter((r, i, arr) => arr.findIndex((x) => x.userId === r.userId) === i)
+      .slice(0, 20)
+      .map((r, i) => ({
+        web_game_id: webGameId, user_id: r.userId,
+        role: String(r.role || "").trim() || null, sort_order: i,
+      }));
+    const { error: eDel } = await supabase.from("web_game_credits").delete().eq("web_game_id", webGameId);
+    if (eDel) return { error: eDel.message };
+    if (clean.length) {
+      const { error } = await supabase.from("web_game_credits").insert(clean);
+      if (error) return { error: error.message };
+    }
+    await loadData();
+    return {};
+  }, [currentUser, loadData]);
+
+  /* Le fil de discussion d'un jeu en ligne.
+     Ouvert a tous, connectes comme visiteurs : celui qui tombe sur un bug doit
+     pouvoir le dire sans avoir a creer un compte. Les messages ne transitent
+     pas par loadData (ils sont nombreux et changent vite) : chaque fil se
+     charge tout seul quand on l'ouvre. */
+  const fetchWebGameMessages = useCallback(async (webGameId) => {
+    const { data, error } = await supabase.from("web_game_messages")
+      .select("*").eq("web_game_id", webGameId)
+      .order("pinned", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(300);
+    if (error) return { error: error.message, rows: [] };
+    const ids = [...new Set((data || []).map((r) => r.author_id).filter(Boolean))];
+    let byId = {};
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("id,name,avatar_url").in("id", ids);
+      (profs || []).forEach((p) => { byId[p.id] = p; });
+    }
+    return {
+      rows: (data || []).map((r) => ({
+        id: r.id, webGameId: r.web_game_id, authorId: r.author_id || null,
+        authorName: r.author_id ? (byId[r.author_id]?.name || "Membre") : (r.author_name || "Visiteur"),
+        authorAvatar: r.author_id ? (byId[r.author_id]?.avatar_url || "") : "",
+        isGuest: !r.author_id,
+        content: r.content || "", kind: r.kind || "message", pinned: r.pinned === true,
+        createdAt: r.created_at, updatedAt: r.updated_at || null,
+      })),
+    };
+  }, []);
+
+  const postWebGameMessage = useCallback(async (webGameId, d) => {
+    const content = String(d?.content || "").trim();
+    if (content.length < 2) return { error: "Écrivez d'abord votre message." };
+    if (content.length > 4000) return { error: "Message trop long (4 000 caractères au maximum)." };
+    const guest = String(d?.authorName || "").trim();
+    if (!currentUser && guest.length < 2) return { error: "Indiquez le prénom ou le nom sous lequel vous écrivez." };
+    const { error } = await supabase.from("web_game_messages").insert({
+      web_game_id: webGameId,
+      author_id: currentUser ? currentUser.id : null,
+      author_name: currentUser ? null : guest.slice(0, 60),
+      content, kind: d?.kind || "message",
+    });
+    if (error) {
+      if (/ALADJ_TOO_MANY_MESSAGES/.test(error.message)) {
+        return { error: "Trop de messages d'affilée depuis ce navigateur. Patientez quelques minutes — ou connectez-vous, la limite ne s'applique qu'aux visiteurs." };
+      }
+      return { error: error.message };
+    }
+    return {};
+  }, [currentUser]);
+
+  const updateWebGameMessage = useCallback(async (id, content) => {
+    const txt = String(content || "").trim();
+    if (txt.length < 2) return { error: "Le message ne peut pas être vide." };
+    const { data, error } = await supabase.from("web_game_messages")
+      .update({ content: txt.slice(0, 4000), updated_at: new Date().toISOString() })
+      .eq("id", id).select("id");
+    if (error) return { error: error.message };
+    if (!data || data.length === 0) return { error: "Modification impossible : ce message n'est pas le vôtre." };
+    return {};
+  }, []);
+
+  const deleteWebGameMessage = useCallback(async (id) => {
+    const { error } = await supabase.from("web_game_messages").delete().eq("id", id);
+    if (error) return { error: error.message };
+    return {};
+  }, []);
+
+  const pinWebGameMessage = useCallback(async (id, pinned) => {
+    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    const { error } = await supabase.from("web_game_messages").update({ pinned: !!pinned }).eq("id", id);
+    if (error) return { error: error.message };
+    return {};
+  }, [currentUser]);
 
   // Proposer un rendez-vous pour jouer à une application, et s'y inscrire.
   const addWebSession = useCallback(async (webGameId, d) => {
@@ -3540,6 +3856,8 @@ function AppProvider({ children }) {
     addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
     importUpcomingExtension,
     webGames, webSessions, updateWebGame, addWebSession, removeWebSession, toggleWebSignup, webSessionToEvent,
+    setWebGameCredits, fetchWebGameMessages, postWebGameMessage, updateWebGameMessage,
+    deleteWebGameMessage, pinWebGameMessage,
     reload: loadData,
     resetPassword, updatePassword, passwordRecovery, setPasswordRecovery,
     chrono, openChrono, closeChrono,
@@ -5906,6 +6224,14 @@ function GuidePage() {
       icon: "📚", title: "La ludothèque",
       items: [
         {
+          q: "Chercher un jeu dans la ludothèque de quelqu'un",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>La fiche d'un membre affiche toute sa ludothèque, classée par ses notes. Au-delà de quelques dizaines de boîtes, la parcourir des yeux ne veut plus rien dire — et certains en possèdent <b>plus de mille trois cents</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Un <b>champ de recherche</b> est donc posé juste au-dessus de la grille : tapez le nom d'un jeu, et vous savez immédiatement s'il l'a. Accents, apostrophes et tirets sont ignorés — « lage de pierre » trouve « L'Âge de pierre ».</p>
+            <p style={{ margin: 0 }}>La recherche regarde aussi le nom des <b>extensions</b> : « auberges » retrouve <i>Carcassonne</i>. Et si le jeu n'est pas à son nom mais à celui de son foyer, il apparaît quand même, dans la <b>ludothèque familiale</b> juste en dessous.</p>
+          </>,
+        },
+        {
           q: "Trouver un jeu",
           a: <p style={{ margin: 0 }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>,
         },
@@ -6157,6 +6483,21 @@ function GuidePage() {
       icon: "📅", title: "Les moments jeux",
       items: [
         {
+          q: "Voir le profil de ceux qui se sont inscrits",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans la fiche d'un moment jeux, les <b>noms des inscrits sont cliquables</b> : un clic ouvre le profil du membre — sa ludothèque, ses jeux les plus joués, son top 10, ses mécaniques préférées et ses couleurs.</p>
+            <p style={{ margin: 0 }}>C'est utile avant de venir : on sait avec qui l'on va jouer, ce qu'il aime, et ce qu'on pourrait lui proposer. Le nom de celui qui a <b>proposé le moment</b> et celui des <b>membres invités en attente</b> s'ouvrent de la même façon.</p>
+          </>,
+        },
+        {
+          q: "Les jeux suggérés : voter sans connaître le jeu",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Chaque jeu suggéré porte désormais un <b>court résumé de ses mécaniques</b>, du genre « On y recoupe des indices pour éliminer les possibilités, et l'on améliore peu à peu son propre paquet de cartes. »</p>
+            <p style={{ margin: "0 0 8px" }}>Ce résumé est <b>composé automatiquement à partir de la fiche du jeu</b> : ses mécaniques, son mode coopératif, sa tablée, sa durée. Rien n'est inventé ni recopié d'ailleurs — et comme tout vient du site, l'affichage est instantané et fonctionne même hors connexion.</p>
+            <p style={{ margin: 0 }}>Conséquence directe : <b>plus une fiche de jeu est renseignée, plus son résumé est parlant</b>. Si un jeu affiche « Aucune mécanique renseignée », c'est une invitation à compléter sa fiche dans la ludothèque.</p>
+          </>,
+        },
+        {
           q: "Proposer un moment et comprendre le quorum",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Page <b>Moments jeux</b> → « Proposer un moment jeux » (ou cliquez directement un jour libre du calendrier). Choisissez présentiel ou <b>en ligne sur Board Game Arena</b> — les jeux BGA sont gratuits pour tous grâce au compte premium de l'association.</p>
@@ -6377,6 +6718,26 @@ function GuidePage() {
       icon: "⏱️", title: "Le chronomètre",
       items: [
         {
+          q: "Compter les points : − et + sur la carte du joueur",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sur téléphone, la carte de chaque joueur porte une <b>zone de score à elle seule</b> : un bouton <b>−</b>, le score, un bouton <b>+</b>. Chaque appui compte un point, <b>sans ouvrir la calculatrice</b> — c'est le geste le plus fréquent d'une partie, il devait être le plus simple.</p>
+            <p style={{ margin: "0 0 8px" }}>Le score lui-même reste cliquable : il ouvre la calculatrice pour tout ce qui ne se compte pas un par un.</p>
+            <p style={{ margin: 0 }}>Les <b>flèches ▲▼ qui changent l'ordre des joueurs</b> ont quitté cette zone : elles sont descendues sur la ligne du dessous, à côté du chrono. On ne les touche donc plus par mégarde en comptant les points.</p>
+          </>,
+        },
+        {
+          q: "La calculatrice : +1, +5, +10, +50",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sous le clavier de la calculatrice, huit boutons comptent tout seuls : <b>+1, +5, +10, +50</b> et leurs contraires. Un appui applique l'opération <b>immédiatement au total affiché</b> ; il n'y a ni chiffre à taper, ni opérateur à choisir.</p>
+            <p style={{ margin: "0 0 8px" }}>Ils se <b>cumulent</b> : +10 puis +5 font +15. Le haut de la fenêtre affiche en permanence le total en cours et ce qui a été ajouté depuis l'ouverture. On valide l'ensemble avec <b>✓</b>, et <b>C</b> annule tout pour revenir au score de départ.</p>
+            <p style={{ margin: 0 }}>Rien n'est perdu au passage : un chiffre déjà tapé est replié dans le total avant que le bouton ne s'applique.</p>
+          </>,
+        },
+        {
+          q: "Vue tablette : les noms s'affichent en entier",
+          a: <p style={{ margin: 0 }}>Un nom un peu long n'est plus coupé en vue tablette : il <b>passe sur deux lignes</b> et sa taille s'ajuste toute seule. La place ne manquait pas sur une dalle posée au milieu de la table — il n'y avait aucune raison de tronquer. Le <b>titre du jeu</b>, dans le bandeau, obéit à la même règle.</p>,
+        },
+        {
           q: "L'onglet « Chrono » : la page dédiée",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le chronomètre a désormais son <b>onglet à lui</b> dans le menu, juste après la Ludothèque. On y trouve, tout en haut, les deux seules choses dont on a besoin autour d'une table : <b>Lancer un chronomètre</b> et <b>Rejoindre une partie</b> avec son code.</p>
@@ -6549,6 +6910,28 @@ function GuidePage() {
       icon: "🎮", title: "Nos jeux en ligne",
       items: [
         {
+          q: "La discussion d'un jeu : idées, annonces, remerciements",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque jeu — <b>disponible comme en développement</b> — une bande <b>« Discussion »</b> ouvre le fil dédié à ce jeu. On y trouve le même bouton dans sa fiche détaillée.</p>
+            <p style={{ margin: "0 0 8px" }}>Le fil sert à trois choses à la fois, volontairement mêlées : <b>demander une amélioration</b> ou signaler ce qui ne va pas, <b>annoncer les modifications à venir</b>, et <b>remercier ceux qui fabriquent</b> l'application. Chaque message porte une étiquette (💡 idée, 🙏 merci, 📣 annonce, 💬 autre) pour s'y retrouver d'un coup d'œil.</p>
+            <p style={{ margin: "0 0 8px" }}>Il est <b>ouvert à tous, même sans compte</b> : quelqu'un qui tombe sur un bug doit pouvoir le dire sur-le-champ. Un visiteur laisse simplement un nom ; un membre connecté signe de son profil. Un garde-fou limite les visiteurs à trois messages en cinq minutes, pour tenir le spam à distance.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque message <b>prévient par notification les créateurs du jeu et les administrateurs</b> du site. Une notification cliquée ramène à l'onglet « Jeux en ligne ».</p>
+            <p style={{ margin: 0 }}>Chacun peut <b>modifier ou supprimer ses propres messages</b>. Les administrateurs peuvent en outre <b>épingler</b> un message en haut du fil — pratique pour une annonce importante — et modérer ce qui n'aurait rien à y faire.</p>
+          </>,
+        },
+        {
+          q: "Qui a fabriqué le jeu",
+          a: <p style={{ margin: 0 }}>La fiche d'un jeu nomme <b>les membres qui l'ont construit</b>, avec leur rôle (code, illustrations, règles…). Un clic sur un nom ouvre son profil. Ce sont eux, avec les administrateurs, qui reçoivent les messages de la discussion : quand vous écrivez, vous savez exactement à qui.</p>,
+        },
+        {
+          q: "Tout modifier, côté administrateurs",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>« Modifier cette fiche », en bas de chaque jeu, permet désormais de reprendre <b>la totalité de la présentation</b> : le nom, le <b>sous-titre</b>, l'<b>accroche</b> de la vignette, <b>« Le principe »</b>, <b>« Les règles »</b>, <b>« Comment ça marche »</b> et <b>« Quelques conseils »</b> — plus les langues, la couleur d'accent, la miniature, l'état, la date de sortie, l'adresse, la tablée, la durée et l'ordre d'affichage.</p>
+            <p style={{ margin: "0 0 8px" }}>Un champ <b>laissé vide revient au texte livré avec le site</b> : un bouton « Revenir au texte d'origine » le vide en un clic. Aucun texte n'est donc perdu, jamais.</p>
+            <p style={{ margin: 0 }}>Le même écran sert à <b>créditer les membres</b> qui ont participé à la construction du jeu : cherchez un nom, ajoutez-le, précisez son rôle.</p>
+          </>,
+        },
+        {
           q: "L'association édite ses propres jeux",
           a: <>
             <p style={{ margin: "0 0 8px" }}>L'ALADJ ne fait plus seulement jouer : elle <b>fabrique des jeux</b>. Ce sont des <b>applications web</b> — on les ouvre d'un lien, sans magasin d'applications, sans téléchargement et sans rien payer. Elles ont leur onglet, <b>« Jeux en ligne »</b>, entre « À venir » et le chrono.</p>
@@ -6688,6 +7071,14 @@ function GuidePage() {
           a: <p style={{ margin: 0 }}>Utilisez « Mot de passe oublié ? » sur l'écran de connexion. Si vous vous étiez inscrit avec Google, reconnectez-vous avec le bouton Google. En dernier recours, écrivez à <a href="mailto:aladj50200@gmail.com" style={{ color: C.teal, fontWeight: 700 }}>aladj50200@gmail.com</a>.</p>,
         },
         {
+          q: "Le lien « mot de passe oublié » ne fait rien",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Il ouvre maintenant directement l'écran <b>« Nouveau mot de passe »</b> à l'arrivée sur le site. Si vous retombiez auparavant sur la page d'accueil sans rien pouvoir faire, c'est corrigé.</p>
+            <p style={{ margin: "0 0 8px" }}>Un lien de réinitialisation ne sert qu'<b>une seule fois</b>, et pas au-delà d'<b>une heure</b>. Passé ce délai, l'écran vous le dit clairement : redemandez-en un depuis « Mot de passe oublié ? ». Ouvrez-le de préférence <b>sur le même appareil et dans le même navigateur</b> que celui d'où vous l'avez demandé.</p>
+            <p style={{ margin: 0 }}>Une fois le nouveau mot de passe enregistré, vous êtes connecté dans la foulée : rien d'autre à faire.</p>
+          </>,
+        },
+        {
           q: "La sauvegarde des données (administrateurs)",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>listes d'envie</b>, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
@@ -6805,7 +7196,7 @@ function mergeWebGame(w) {
   return {
     ...w,
     name: pick(w.name, d.name) || w.slug,
-    subtitle: d.subtitle || "",
+    subtitle: pick(w.subtitle, d.subtitle),
     accent: pick(w.accent, d.accent) || C.teal,
     tagline: pick(w.tagline, d.tagline),
     description: pick(w.description, d.description),
@@ -7127,12 +7518,13 @@ function WebGameCard({ w, onOpen }) {
   const dev = w.status !== "live";
   return (
     <button onClick={onOpen} style={{
-      width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 20,
+      width: "100%", flex: 1, textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0",
+      borderRadius: "20px 20px 0 0",
       overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)",
       transition: "transform .15s, box-shadow .2s", display: "flex", flexDirection: "column",
     }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 14px 32px rgba(18,41,63,.14)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 14px 32px rgba(18,41,63,.14)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
       <div style={{ position: "relative", aspectRatio: "16 / 10", overflow: "hidden" }}>
         <WebGameArt w={w} />
         <div style={{ position: "absolute", top: 10, left: 10 }}>
@@ -7161,10 +7553,263 @@ function WebGameCard({ w, onOpen }) {
   );
 }
 
+/* =============================================================================
+   LA DISCUSSION D'UN JEU EN LIGNE
+   -----------------------------------------------------------------------------
+   Une application de jeu ne se termine jamais : elle se corrige, elle
+   s'etoffe, elle deçoit parfois. Ce fil est l'endroit ou tout cela se dit.
+
+   Il sert a trois choses, volontairement melangees plutot que separees en
+   trois onglets : demander une amelioration, annoncer ce qui arrive, et
+   remercier ceux qui fabriquent. Ce sont les trois faces d'une meme
+   conversation, et les voir ensemble vaut mieux que les ranger.
+
+   Il est ouvert a tous, meme sans compte : celui qui tombe sur un bug doit
+   pouvoir le signaler sur-le-champ, sans creer de compte pour cela. Un
+   visiteur signe d'un nom qu'il choisit ; un membre connecte signe de son
+   profil. Chaque message previent les administrateurs du site et les membres
+   credites sur le jeu.
+   ============================================================================= */
+const WEB_MSG_KINDS = [
+  { k: "idea", label: "Une idée, une amélioration", short: "Idée", icon: "💡", color: C.teal },
+  { k: "thanks", label: "Un merci aux créateurs", short: "Merci", icon: "🙏", color: C.purple },
+  { k: "news", label: "Une annonce sur le jeu", short: "Annonce", icon: "📣", color: C.amber },
+  { k: "message", label: "Autre chose", short: "Message", icon: "💬", color: "#8a7c6a" },
+];
+const webMsgKind = (k) => WEB_MSG_KINDS.find((x) => x.k === k) || WEB_MSG_KINDS[3];
+
+function WebGameChat({ w, onClose, onAuth, setToast = () => {}, onCount }) {
+  const { currentUser, fetchWebGameMessages, postWebGameMessage, updateWebGameMessage,
+    deleteWebGameMessage, pinWebGameMessage, askConfirm } = useApp();
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [content, setContent] = useState("");
+  const [kind, setKind] = useState("idea");
+  const [guestName, setGuestName] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  // Annoncer une modification a venir, c'est parler AU NOM du jeu : reserve a
+  // ceux qui le fabriquent et aux administrateurs.
+  const isCredited = !!currentUser && (w.credits || []).some((c) => c.userId === currentUser.id);
+  const canAnnounce = !!currentUser && (currentUser.admin === true || isCredited);
+  const kinds = WEB_MSG_KINDS.filter((x) => x.k !== "news" || canAnnounce);
+
+  const load = useCallback(async () => {
+    const res = await fetchWebGameMessages(w.id);
+    if (res.error) { setErr(res.error); setRows([]); return; }
+    setErr("");
+    setRows(res.rows);
+    if (onCount) onCount(res.rows.length);
+  }, [fetchWebGameMessages, w.id, onCount]);
+  useEffect(() => { load(); }, [load]);
+
+  const submit = async () => {
+    setBusy(true); setErr("");
+    const res = await postWebGameMessage(w.id, { content, kind, authorName: guestName });
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setContent("");
+    setToast("Message publié — les créateurs du jeu sont prévenus.");
+    await load();
+  };
+
+  const saveEdit = async () => {
+    setBusy(true); setErr("");
+    const res = await updateWebGameMessage(editId, editText);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    setEditId(null); setEditText("");
+    await load();
+  };
+
+  const remove = async (m) => {
+    const ok = await askConfirm({
+      title: "Supprimer ce message ?",
+      message: "Il disparaîtra de la discussion pour tout le monde. Action définitive.",
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    const res = await deleteWebGameMessage(m.id);
+    if (res?.error) { setErr(res.error); return; }
+    await load();
+  };
+
+  const mine = (m) => !!currentUser && m.authorId === currentUser.id;
+  const canTouch = (m) => mine(m) || !!currentUser?.admin;
+
+  return (
+    <Modal open onClose={onClose} title={`Discussion — ${w.name}`} width={680}>
+      <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "#6e6256", lineHeight: 1.6 }}>
+        C'est ici qu'on demande une <b>amélioration</b>, qu'on signale ce qui ne va pas, qu'on annonce
+        les <b>modifications à venir</b> — et qu'on dit merci à ceux qui fabriquent le jeu.
+        Chaque message prévient <b>les créateurs de l'application et les administrateurs</b> du site.
+        {!currentUser && <> Pas besoin de compte : laissez simplement un nom.</>}
+      </p>
+
+      {(w.credits || []).length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: "rgba(30,138,138,.08)",
+          border: `1px solid ${C.teal}33`, borderRadius: 12, padding: "9px 13px", marginBottom: 14, fontSize: 13 }}>
+          <Wrench size={15} color={C.teal} />
+          <span style={{ color: "#5e5346" }}>Vous écrivez à</span>
+          {(w.credits || []).map((c) => (
+            <span key={c.userId} style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy }}>
+              {c.name}{c.role ? <span style={{ fontWeight: 400, color: "#8a7c6a" }}> ({c.role})</span> : null}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* --- Ecrire --- */}
+      <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 14, padding: 14, marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+          {kinds.map((o) => {
+            const on = kind === o.k;
+            return (
+              <button key={o.k} type="button" onClick={() => setKind(o.k)}
+                style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif",
+                  fontWeight: 600, fontSize: 12.5, border: `2px solid ${on ? o.color : "#e6dcc9"}`,
+                  background: on ? `${o.color}1a` : "#fff", color: on ? o.color : "#8a7c6a" }}>
+                {o.icon} {o.label}
+              </button>
+            );
+          })}
+        </div>
+        {!currentUser && (
+          <Field label="Votre nom" hint="Pour que les créateurs sachent à qui ils répondent. Deux caractères suffisent.">
+            <TextInput value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Prénom, pseudo…" maxLength={60} />
+          </Field>
+        )}
+        <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={3} maxLength={4000}
+          placeholder={kind === "thanks" ? "Ce que vous avez aimé…" : kind === "news" ? "Ce qui change bientôt…" : "Ce qui pourrait être mieux, ou ce qui ne marche pas…"}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif" }} />
+        {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 13px", borderRadius: 10, fontSize: 13, fontWeight: 600, margin: "10px 0 0" }}>{err}</div>}
+        <div style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <Btn variant="teal" onClick={submit} disabled={busy || content.trim().length < 2}>
+            {busy ? <Loader2 size={16} className="aladj-spin" /> : <><MessageCircle size={16} /> Publier</>}
+          </Btn>
+          {!currentUser && (
+            <button type="button" onClick={() => { onClose(); onAuth("login"); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13 }}>
+              …ou connectez-vous pour signer de votre profil
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* --- Lire --- */}
+      {rows === null ? (
+        <div style={{ color: "#a89a86", fontSize: 14, padding: "8px 0" }}>Chargement de la discussion…</div>
+      ) : rows.length === 0 ? (
+        <EmptyHint icon={MessageCircle} text="Personne n'a encore rien écrit. Lancez la discussion : une idée, une remarque, un merci." />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+          {rows.map((m) => {
+            const kd = webMsgKind(m.kind);
+            const edited = m.updatedAt && m.createdAt && new Date(m.updatedAt).getTime() - new Date(m.createdAt).getTime() > 2000;
+            return (
+              <div key={m.id} style={{ background: m.pinned ? "rgba(232,163,23,.09)" : "#fff",
+                border: `1px solid ${m.pinned ? `${C.amber}66` : "#efe6d6"}`, borderRadius: 14, padding: "11px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: `${kd.color}1a`, color: kd.color,
+                    borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11.5 }}>
+                    {kd.icon} {kd.short}
+                  </span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: mine(m) ? C.teal : C.navy, fontSize: 13.5 }}>
+                    {m.authorName}{mine(m) ? " (vous)" : ""}
+                  </span>
+                  {m.isGuest && <span style={{ fontSize: 11, color: "#b6a78f" }}>visiteur</span>}
+                  {!m.isGuest && <DeciderCrownFor id={m.authorId} size={12} />}
+                  {m.pinned && <span style={{ fontSize: 11, fontWeight: 700, color: "#8a6a1f" }}>épinglé</span>}
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 11.5, color: "#b6a78f" }}>{timeAgoFr(m.createdAt)}</span>
+                </div>
+                {editId === m.id ? (
+                  <div>
+                    <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} maxLength={4000}
+                      style={{ ...inputStyle, resize: "vertical", marginBottom: 8, fontFamily: "'Nunito',sans-serif" }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn size="sm" variant="teal" onClick={saveEdit} disabled={busy}><Check size={14} /> Enregistrer</Btn>
+                      <Btn size="sm" variant="soft" onClick={() => { setEditId(null); setEditText(""); }}>Annuler</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                      {m.content}{edited && <span style={{ fontSize: 11, color: "#b6a78f", fontStyle: "italic" }}> (modifié)</span>}
+                    </div>
+                    {(canTouch(m) || currentUser?.admin) && (
+                      <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                        {canTouch(m) && mine(m) && (
+                          <button onClick={() => { setEditId(m.id); setEditText(m.content); }}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontFamily: "'Nunito',sans-serif", fontWeight: 700 }}>
+                            <Edit3 size={13} /> Modifier
+                          </button>
+                        )}
+                        {currentUser?.admin && (
+                          <button onClick={async () => { const r = await pinWebGameMessage(m.id, !m.pinned); if (r?.error) setErr(r.error); else await load(); }}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "#8a6a1f", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontFamily: "'Nunito',sans-serif", fontWeight: 700 }}>
+                            📌 {m.pinned ? "Désépingler" : "Épingler en haut"}
+                          </button>
+                        )}
+                        {canTouch(m) && (
+                          <button onClick={() => remove(m)}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontFamily: "'Nunito',sans-serif", fontWeight: 700 }}>
+                            <Trash2 size={13} /> Supprimer
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* La zone posee sous chaque jeu : un clic, et la discussion s'ouvre. */
+function WebGameChatStrip({ w, count, onOpen }) {
+  const n = count == null ? (w.msgCount || 0) : count;
+  return (
+    <button type="button" onClick={onOpen} title={`Ouvrir la discussion de ${w.name}`}
+      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+        border: "1px solid #ece2d0", borderTop: "none", borderRadius: "0 0 20px 20px",
+        background: "rgba(30,138,138,.07)", padding: "11px 16px", textAlign: "left",
+        fontFamily: "'Nunito',sans-serif" }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(30,138,138,.14)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(30,138,138,.07)"; }}>
+      <MessageCircle size={17} color={C.teal} style={{ flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5 }}>
+          Discussion
+        </span>
+        <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", lineHeight: 1.4 }}>
+          {n > 0
+            ? `${n} message${n > 1 ? "s" : ""} — idées, retours, remerciements`
+            : "Une idée, un bug, un merci ? Écrivez aux créateurs."}
+        </span>
+      </span>
+      {n > 0 && (
+        <span style={{ flexShrink: 0, background: C.teal, color: "#fff", borderRadius: 999, minWidth: 24,
+          padding: "2px 8px", textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5 }}>{n}</span>
+      )}
+      <ChevronRight size={16} color="#b6a78f" style={{ flexShrink: 0 }} />
+    </button>
+  );
+}
+
 /* ---- Fiche détaillée d'une application ---- */
 function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
   const { currentUser, updateWebGame } = useApp();
   const [editing, setEditing] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatCount, setChatCount] = useState(null);
+  const [viewMember, setViewMember] = useState(null);
   const dev = w.status !== "live";
 
   const bloc = (icon, titre, texte) => (texte ? (
@@ -7212,7 +7857,45 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
         </div>
       )}
 
+      {/* (lot AB) Qui a fabrique ce jeu. Un jeu edite par une association est
+          l'oeuvre de quelques personnes : les nommer n'est pas un detail. */}
+      {(w.credits || []).length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+            🛠️ Qui l'a fabriqué
+          </h4>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(w.credits || []).map((c) => (
+              <button key={c.userId} type="button" onClick={() => setViewMember(c.userId)} title={`Voir le profil de ${c.name}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#fff", border: "1.5px solid #ece2d0",
+                  borderRadius: 999, padding: "6px 13px", cursor: "pointer", font: "inherit" }}>
+                <span style={{ width: 24, height: 24, borderRadius: 7, background: w.accent || C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{(c.name || "?")[0].toUpperCase()}</span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5 }}>{c.name}</span>
+                {c.role && <span style={{ fontSize: 12, color: "#8a7c6a" }}>{c.role}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Zone de discussion, accessible depuis la fiche comme depuis la liste. */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ borderRadius: 16, overflow: "hidden", border: "1px solid #ece2d0" }}>
+          <div style={{ padding: "12px 16px", background: "#fff", fontSize: 13.5, color: "#6e6256", lineHeight: 1.6 }}>
+            <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy }}>💬 Parler de ce jeu.</b>{" "}
+            Une amélioration à demander, un bug à signaler, un merci à adresser — ou simplement
+            savoir ce qui va changer : tout se passe dans la discussion du jeu.
+          </div>
+          <WebGameChatStrip w={w} count={chatCount} onOpen={() => setChatOpen(true)} />
+        </div>
+      </div>
+
       <WebGameRendezVous webGameId={w.id} onAuth={onAuth} setToast={setToast} compact />
+
+      {chatOpen && (
+        <WebGameChat w={w} onClose={() => setChatOpen(false)} onAuth={onAuth} setToast={setToast} onCount={setChatCount} />
+      )}
+      {viewMember && <MemberLibraryModal memberId={viewMember} onClose={() => setViewMember(null)} setToast={setToast} onAuth={onAuth} />}
 
       {currentUser?.admin && (
         <div style={{ marginTop: 18, borderTop: "1px solid #f0e8d8", paddingTop: 14 }}>
@@ -7227,25 +7910,59 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
 
 /* ---- Réglages d'une application, côté administrateurs ---- */
 function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
+  const { users, setWebGameCredits } = useApp();
   const [f, setF] = useState({
     name: w.name || "", status: w.status || "dev",
+    subtitle: w.subtitle || "", tagline: w.tagline || "", description: w.description || "",
+    rules: w.rules || "", howTo: w.howTo || "", tips: w.tips || "",
+    languages: (w.languages || []).join(", "), accent: w.accent || "",
     releaseDate: w.releaseDate || "", releaseNote: w.releaseNote || "",
     url: w.url || "", min: w.min || "", max: w.max || "", time: w.time || "",
     sortOrder: w.sortOrder || 0, img: w.img || "",
   });
+  // (lot AB) Les membres credites, modifiables ici meme.
+  const [credits, setCredits] = useState(() => (w.credits || []).map((c) => ({ userId: c.userId, name: c.name, role: c.role || "" })));
+  const [creditQ, setCreditQ] = useState("");
   // Aperçu tel qu'il apparaîtra sur la vignette : on regarde le résultat, pas le champ.
   const apercu = { ...w, img: f.img };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  const creditHits = useMemo(() => {
+    const q = normTitle(creditQ);
+    if (!q) return [];
+    const deja = new Set(credits.map((c) => c.userId));
+    return (users || []).filter((u) => !deja.has(u.id) && normTitle(u.name).includes(q)).slice(0, 6);
+  }, [users, creditQ, credits]);
+
   const submit = async () => {
     setBusy(true); setErr("");
     const res = await onSave(w.id, f);
+    if (!res?.error) {
+      const rc = await setWebGameCredits(w.id, credits);
+      if (rc?.error) { setBusy(false); setErr(rc.error); return; }
+    }
     setBusy(false);
     if (res?.error) { setErr(res.error); return; }
     if (setToast) setToast("Fiche mise à jour.");
     onCancel();
   };
+
+  // Un champ de texte long, avec son bouton de retour au texte d'origine :
+  // laisse vide, le site reaffiche celui qui est livre avec lui.
+  const texte = (key, label, hint, rows = 4) => (
+    <Field label={label} hint={hint}>
+      <textarea value={f[key]} onChange={(e) => setF({ ...f, [key]: e.target.value })} rows={rows} maxLength={6000}
+        style={{ ...inputStyle, resize: "vertical", fontFamily: "'Nunito',sans-serif", lineHeight: 1.6 }} />
+      {f[key] && (
+        <div style={{ marginTop: 6 }}>
+          <Btn size="sm" variant="soft" onClick={() => setF({ ...f, [key]: "" })}>
+            <RotateCcw size={13} /> Revenir au texte d'origine
+          </Btn>
+        </div>
+      )}
+    </Field>
+  );
 
   return (
     <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: 14 }}>
@@ -7264,6 +7981,57 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
             <Btn size="sm" variant="soft" onClick={() => setF({ ...f, img: "" })}>
               <RotateCcw size={13} /> Revenir au dessin d'origine
             </Btn>
+          </div>
+        )}
+      </Field>
+
+      {/* (lot AB) TOUTE la presentation est modifiable ici : c'est le site de
+          l'association, pas une plaquette figee dans le code. Un champ laisse
+          vide revient au texte livre avec le site. */}
+      <Field label="Sous-titre" hint="La ligne colorée juste sous le nom. Ex. « Bureau des affaires singulières »."><TextInput value={f.subtitle} onChange={(e) => setF({ ...f, subtitle: e.target.value })} /></Field>
+      {texte("tagline", "Accroche", "Une phrase, celle qui s'affiche sur la vignette de l'onglet.", 2)}
+      {texte("description", "🎯 Le principe", "Ce qu'on y fait, en quelques lignes. Les retours à la ligne sont conservés.", 6)}
+      {texte("rules", "📏 Les règles", "Les points de règle essentiels, un par ligne.", 6)}
+      {texte("howTo", "🎮 Comment ça marche", "Modes de jeu, nombre de niveaux, langues, façons d'y jouer.", 6)}
+      {texte("tips", "💡 Quelques conseils", "Ce qu'on aurait aimé savoir avant sa première partie.", 6)}
+      <Field label="Langues" hint="Séparées par des virgules. Ex. « Français, English »."><TextInput value={f.languages} onChange={(e) => setF({ ...f, languages: e.target.value })} /></Field>
+      <Field label="Couleur d'accent" hint="Code hexadécimal, ex. #1E8A8A. Laissez vide pour la couleur d'origine.">
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <TextInput value={f.accent} onChange={(e) => setF({ ...f, accent: e.target.value })} placeholder="#1E8A8A" style={{ flex: 1 }} />
+          <span style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, border: "1px solid #ece2d0", background: /^#[0-9a-fA-F]{6}$/.test(f.accent) ? f.accent : "#fff" }} />
+        </div>
+      </Field>
+
+      {/* Les membres qui ont fabrique le jeu : ils sont credites sur la fiche,
+          et prevenus de chaque message depose dans la discussion. */}
+      <Field label="Qui a fabriqué ce jeu" hint="Ces membres apparaissent sur la fiche et reçoivent une notification à chaque message de la discussion.">
+        {credits.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7, marginBottom: 9 }}>
+            {credits.map((c, i) => (
+              <div key={c.userId} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, padding: "7px 10px", flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, minWidth: 90 }}>{c.name}</span>
+                <TextInput value={c.role} placeholder="Son rôle : code, illustrations, règles…" style={{ flex: 1, minWidth: 140 }}
+                  onChange={(e) => setCredits(credits.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)))} />
+                <button type="button" onClick={() => setCredits(credits.filter((_, j) => j !== i))} title="Retirer"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 4, display: "grid", placeItems: "center" }}><X size={16} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ position: "relative" }}>
+          <Search size={16} color="#b6a78f" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+          <TextInput value={creditQ} onChange={(e) => setCreditQ(e.target.value)} placeholder="Ajouter un membre…" style={{ paddingLeft: 38 }} />
+        </div>
+        {creditHits.length > 0 && (
+          <div style={{ background: "#fff", border: "1px solid #ece2d0", borderRadius: 11, marginTop: 5, overflow: "hidden" }}>
+            {creditHits.map((u) => (
+              <button key={u.id} type="button"
+                onClick={() => { setCredits([...credits, { userId: u.id, name: u.name, role: "" }]); setCreditQ(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: "8px 11px", font: "inherit" }}>
+                <Plus size={14} color={C.teal} />
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{u.name}</span>
+              </button>
+            ))}
           </div>
         )}
       </Field>
@@ -7306,6 +8074,11 @@ function WebGamesPage({ onAuth, setToast }) {
   const { webGames, currentUser } = useApp();
   const [openId, setOpenId] = useState(null);
   const [howTo, setHowTo] = useState(false);
+  // (lot AB) Discussion ouverte depuis la liste, et compteurs rafraichis sans
+  // recharger tout le site : un message poste ne doit pas couter un aller-retour
+  // sur l'ensemble des donnees.
+  const [chatId, setChatId] = useState(null);
+  const [counts, setCounts] = useState({});
 
   const all = useMemo(() => (webGames || [])
     .filter((w) => w.status !== "hidden" || currentUser?.admin)
@@ -7321,7 +8094,12 @@ function WebGamesPage({ onAuth, setToast }) {
         ? <div style={{ marginTop: 22 }}><EmptyHint icon={Gamepad2} text={vide} /></div>
         : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20, marginTop: 26 }}>
-            {liste.map((w) => <WebGameCard key={w.id} w={w} onOpen={() => setOpenId(w.id)} />)}
+            {liste.map((w) => (
+              <div key={w.id} style={{ display: "flex", flexDirection: "column" }}>
+                <WebGameCard w={w} onOpen={() => setOpenId(w.id)} />
+                <WebGameChatStrip w={w} count={counts[w.id]} onOpen={() => setChatId(w.id)} />
+              </div>
+            ))}
           </div>
         )}
     </section>
@@ -7374,6 +8152,13 @@ function WebGamesPage({ onAuth, setToast }) {
       </p>
 
       {opened && <WebGameDetailModal w={opened} onClose={() => setOpenId(null)} onAuth={onAuth} setToast={setToast} />}
+      {chatId && (() => {
+        const jeu = all.find((x) => x.id === chatId);
+        return jeu ? (
+          <WebGameChat w={jeu} onClose={() => setChatId(null)} onAuth={onAuth} setToast={setToast}
+            onCount={(n) => setCounts((c) => (c[jeu.id] === n ? c : { ...c, [jeu.id]: n }))} />
+        ) : null;
+      })()}
       {howTo && <PwaHowToModal onClose={() => setHowTo(false)} />}
     </div>
   );
@@ -8324,6 +9109,11 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
   const [gameOpen, setGameOpen] = useState(null); // fiche jeu ouverte depuis le top 10
   const [upcOpen, setUpcOpen] = useState(null);   // fiche « À venir » ouverte depuis la liste d'envie
   const [editOpen, setEditOpen] = useState(false); // modification du profil (administrateurs)
+  // (lot AB) Recherche dans la ludothèque du membre. Au-delà de quelques
+  // dizaines de boîtes, parcourir la grille des yeux ne veut plus rien dire —
+  // et certains en possèdent plus de mille trois cents. La question posée est
+  // presque toujours la même : « est-ce qu'il a ce jeu-là ? »
+  const [libQuery, setLibQuery] = useState("");
   const { games, users, plays, events, upcoming, beltByGame, householdByUser, currentUser } = useApp();
   const member = users.find((u) => u.id === memberId);
   // ludothèque triée par note du membre (du mieux noté au moins bien), puis alphabétique
@@ -8369,6 +9159,21 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
     games.forEach((g) => (g.extensions || []).forEach((x) => { if ((x.ownerIds || []).includes(memberId)) n++; }));
     return n;
   })();
+
+  /* La recherche porte sur le titre du jeu ET sur le nom de ses extensions :
+     « Carcassonne : les auberges » se trouve aussi bien en cherchant
+     « auberge » qu'en cherchant « carcassonne ». Accents, apostrophes et
+     tirets sont ignorés — on tape comme on parle. */
+  const libQ = normTitle(libQuery);
+  const matchGame = useCallback((g) => {
+    if (!libQ) return true;
+    if (normTitle(g.name).includes(libQ)) return true;
+    return (g.extensions || []).some((x) => normTitle(x.name).includes(libQ));
+  }, [libQ]);
+  const shownGames = libQ ? theirGames.filter(matchGame) : theirGames;
+  const shownFamGames = libQ ? famGames.filter(matchGame) : famGames;
+  const nothingFound = !!libQ && shownGames.length === 0 && shownFamGames.length === 0;
+
   return (
     <Modal open onClose={onClose} title={member ? member.name : "Membre"} width={640}>
       {member && (
@@ -8509,12 +9314,40 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
       <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "0 0 12px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
         Sa ludothèque ({theirGames.length}{theirExtCount > 0 ? ` + ${theirExtCount} ${theirExtCount > 1 ? "extensions" : "extension"}` : ""}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· classée par ses notes</span>
       </h4>
+
+      {/* (lot AB) « Est-ce qu'il a ce jeu-là ? » — la réponse en trois lettres. */}
+      {(theirGames.length > 0 || famGames.length > 0) && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={16} color="#b6a78f" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+            <TextInput value={libQuery} onChange={(ev) => setLibQuery(ev.target.value)}
+              placeholder="Possède-t-il ce jeu ? Tapez son nom…" style={{ paddingLeft: 38, paddingRight: libQuery ? 38 : 12 }} />
+            {libQuery && (
+              <button type="button" onClick={() => setLibQuery("")} title="Effacer la recherche"
+                style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+                <X size={16} />
+              </button>
+            )}
+          </div>
+          {libQ && (
+            <div style={{ fontSize: 12.5, color: nothingFound ? C.red : C.teal, fontWeight: 700, marginTop: 7 }}>
+              {nothingFound
+                ? <>Aucun jeu ne correspond à « {libQuery.trim()} » — ni dans sa ludothèque, ni dans celle de son foyer.</>
+                : <>{shownGames.length + shownFamGames.length} jeu{shownGames.length + shownFamGames.length > 1 ? "x" : ""} trouvé{shownGames.length + shownFamGames.length > 1 ? "s" : ""}
+                    {shownGames.length > 0 && shownFamGames.length > 0 ? ` (${shownGames.length} à son nom, ${shownFamGames.length} dans son foyer)` : ""}
+                    {" "}· la recherche regarde aussi les extensions.</>}
+            </div>
+          )}
+        </div>
+      )}
       {famNames.length > 0 && (
         <p style={{ margin: "-4px 0 12px", fontSize: 13, color: "#8a7c6a" }}>
           👨‍👩‍👧 Partage une ludothèque familiale avec <b style={{ color: C.navy }}>{famNames.join(", ")}</b>.
         </p>
       )}
-      {theirGames.length === 0 && famGames.length === 0 ? (
+      {libQ && shownGames.length === 0 && shownFamGames.length > 0 ? (
+        <p style={{ margin: "0 0 4px", fontSize: 13.5, color: "#6e6256" }}>Rien à son nom, mais son <b>foyer</b> possède ce que vous cherchez — voyez juste en dessous.</p>
+      ) : libQ && shownGames.length === 0 ? null : theirGames.length === 0 && famGames.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#a89a86" }}>
           <Gamepad2 size={40} style={{ opacity: .4, marginBottom: 12 }} />
           <p style={{ fontSize: 14.5 }}>Ce membre n'a pas encore ajouté de jeu.</p>
@@ -8523,7 +9356,7 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
         <p style={{ margin: "0 0 4px", fontSize: 13.5, color: "#6e6256" }}>Ce membre n'a pas de jeu à son nom, mais il joue avec la <b>ludothèque familiale</b> ci-dessous.</p>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, maxHeight: "55vh", overflowY: "auto", padding: 2 }}>
-          {theirGames.map((g) => {
+          {shownGames.map((g) => {
             const myRating = g.ratings?.[memberId] || 0;
             return (
               <button key={g.id} type="button" onClick={() => setGameOpen(g.id)} title={`Ouvrir la fiche de ${g.name}`}
@@ -8552,14 +9385,14 @@ function MemberLibraryModal({ memberId, onClose, setToast = () => {}, onAuth = (
       )}
 
       {/* Ludothèque familiale : les jeux des autres membres du foyer, en petites vignettes */}
-      {famGames.length > 0 && (
+      {shownFamGames.length > 0 && (
         <>
           <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15, margin: "18px 0 4px", borderTop: "1px solid #f0e8d8", paddingTop: 16 }}>
-            👨‍👩‍👧 Sa ludothèque familiale ({famGames.length}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux {famNames.length === 1 ? "de " + famNames[0] : "de son foyer"}</span>
+            👨‍👩‍👧 Sa ludothèque familiale ({libQ ? `${shownFamGames.length} sur ${famGames.length}` : famGames.length}) <span style={{ fontWeight: 400, fontSize: 12.5, color: "#9c8d79" }}>· les jeux {famNames.length === 1 ? "de " + famNames[0] : "de son foyer"}</span>
           </h4>
           <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "#9c8d79" }}>Ces jeux ne sont pas à son nom, mais il y a accès au quotidien.</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, maxHeight: "40vh", overflowY: "auto", padding: 2 }}>
-            {famGames.map((g) => (
+            {shownFamGames.map((g) => (
               <button key={g.id} type="button" onClick={() => setGameOpen(g.id)} title={`Ouvrir la fiche de ${g.name}`}
                 style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ece2d0", borderRadius: 12, padding: "7px 9px", cursor: "pointer", textAlign: "left", minWidth: 0, font: "inherit" }}
                 onMouseEnter={(ev) => ev.currentTarget.style.background = "rgba(30,138,138,.06)"} onMouseLeave={(ev) => ev.currentTarget.style.background = "#fff"}>
@@ -10135,6 +10968,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
   const [showGuest, setShowGuest] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  // (lot AB) Profil d'un inscrit, ouvert depuis la liste des participants.
+  // On voit qui vient ; on doit pouvoir voir qui c'est.
+  const [viewMember, setViewMember] = useState(null);
   const [commentText, setCommentText] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
@@ -10258,8 +11094,15 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               const isSelf = !!currentUser && p.id === currentUser.id;
               return (
                 <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,138,138,.1)", padding: "6px 12px", borderRadius: 999 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{p.name[0].toUpperCase()}</span>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{p.name}</span><DeciderCrownFor id={p.id} size={12} /><ChildPacifierFor id={p.id} size={12} />
+                  {/* (lot AB) Le nom ouvre le profil : sa ludotheque, ses jeux
+                      les plus joues, ses couleurs preferees. De quoi savoir avec
+                      qui on va jouer — et ce qu'on pourrait lui proposer. */}
+                  <button type="button" onClick={() => setViewMember(p.id)} title={`Voir le profil de ${p.name}`}
+                    style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer", font: "inherit", minWidth: 0, textAlign: "left" }}>
+                    <span style={{ width: 24, height: 24, borderRadius: 7, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{p.name[0].toUpperCase()}</span>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, textDecoration: "underline", textDecorationColor: "rgba(30,138,138,.45)", textUnderlineOffset: 3 }}>{p.name}</span>
+                  </button>
+                  <DeciderCrownFor id={p.id} size={12} /><ChildPacifierFor id={p.id} size={12} />
                   <ColorPrefs colors={(users.find((u) => u.id === p.id) || {}).favColors} />
                   {canRemovePlayer && (
                     <button onClick={async () => {
@@ -10288,8 +11131,19 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               const xColor = memberPending ? "#b88a2e" : "#a07ab0";
               return (
                 <span key={g.id} style={{ display: "flex", alignItems: "center", gap: 7, background: chipBg, padding: "6px 12px", borderRadius: 999 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: 7, background: sqBg, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
+                  {/* Un membre invite en attente a, lui aussi, un profil. */}
+                  {memberPending ? (
+                    <button type="button" onClick={() => setViewMember(g.memberId)} title={`Voir le profil de ${g.name}`}
+                      style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer", font: "inherit", minWidth: 0, textAlign: "left" }}>
+                      <span style={{ width: 24, height: 24, borderRadius: 7, background: sqBg, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{g.name[0].toUpperCase()}</span>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, textDecoration: "underline", textDecorationColor: "rgba(232,163,23,.5)", textUnderlineOffset: 3 }}>{g.name}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <span style={{ width: 24, height: 24, borderRadius: 7, background: sqBg, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>{g.name[0].toUpperCase()}</span>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5 }}>{g.name}</span>
+                    </>
+                  )}
                   {memberPending && <span style={{ fontSize: 10.5, color: "#b88a2e", fontWeight: 700 }}>en attente</span>}
                   {canRemoveGuest && <button onClick={() => removeGuest(g.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: xColor, display: "grid", placeItems: "center" }}><X size={14} /></button>}
                 </span>
@@ -10314,7 +11168,13 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
           {e.notes && <div style={{ background: "rgba(232,163,23,.1)", borderRadius: 13, padding: "12px 16px", marginBottom: 18, fontSize: 14, color: "#6e5e42", lineHeight: 1.5 }}><b style={{ fontFamily: "'Fredoka',sans-serif", color: C.amber }}>Note :</b> {e.notes}</div>}
 
-          <div style={{ fontSize: 13, color: "#9c8d79", marginBottom: 16 }}>Proposée par <b style={{ color: C.navy }}>{e.hostName}</b></div>
+          <div style={{ fontSize: 13, color: "#9c8d79", marginBottom: 16 }}>
+            Proposée par{" "}
+            <button type="button" onClick={() => setViewMember(e.hostId)} title={`Voir le profil de ${e.hostName}`}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit", color: C.navy, fontWeight: 700, textDecoration: "underline", textDecorationColor: "rgba(30,138,138,.45)", textUnderlineOffset: 3 }}>
+              {e.hostName}
+            </button>
+          </div>
 
           {currentUser && expired && (
             <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
@@ -10408,6 +11268,7 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
       </div>
       {showEdit && <EditEventModal e={e} onClose={() => setShowEdit(false)} onSave={async (patch) => { await updateEvent(e.id, patch); setShowEdit(false); }} />}
       {showPlace && linkedPlace && <PlaceInfoModal place={linkedPlace} onClose={() => setShowPlace(false)} />}
+      {viewMember && <MemberLibraryModal memberId={viewMember} onClose={() => setViewMember(null)} onAuth={onAuth} />}
     </div>
   );
 }
@@ -10545,12 +11406,13 @@ function EventGameSuggestions({ e, canSuggest, canManage }) {
       </div>
       <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "#9c8d79", lineHeight: 1.5 }}>
         Ce qu'on aimerait sortir ce jour-là. Chaque inscrit dit son envie, et le total classe les jeux — de quoi arriver avec une idée du programme.
+        Sous chaque jeu, <b>un résumé de ses mécaniques</b> composé à partir de sa fiche : on peut voter sans connaître le titre.
       </p>
 
       {list.length === 0 && !adding && <span style={{ color: "#a89a86", fontSize: 13.5 }}>Aucun jeu suggéré pour l'instant.</span>}
 
       {list.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 12, marginBottom: adding ? 14 : 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(164px, 1fr))", gap: 12, marginBottom: adding ? 14 : 0 }}>
           {list.map((s) => {
             const mine = currentUser ? (s.votes.find((v) => v.userId === currentUser.id)?.value ?? null) : null;
             const sugGame = (games || []).find((g) => g.id === s.gameId) || null;
@@ -10590,6 +11452,26 @@ function EventGameSuggestions({ e, canSuggest, canManage }) {
                   <div style={{ fontSize: 10.5, color: "#a89a86", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>proposé par {s.addedByName}</div>
                   {/* (lot W) De quoi juger sur pièce : la tablée qu'il faut et le temps qu'il prend */}
                   {sugGame && <div style={{ marginTop: 4 }}><GameQuickFacts g={sugGame} size={10} /></div>}
+                  {/* (lot AB) Et de quoi voter en connaissance de cause : une
+                      phrase composée à partir des mécaniques de la fiche, pour
+                      ceux qui ne connaissent pas le jeu proposé. */}
+                  {sugGame && (() => {
+                    const resume = gameMechanicsSummary(sugGame);
+                    if (!resume) {
+                      return (
+                        <div style={{ fontSize: 10.5, color: "#c3b49b", lineHeight: 1.35, marginTop: 5, fontStyle: "italic" }}>
+                          Aucune mécanique renseignée sur sa fiche.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div title={resume}
+                        style={{ fontSize: 10.5, color: "#6e6256", lineHeight: 1.38, marginTop: 5,
+                          display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 5, overflow: "hidden" }}>
+                        {resume}
+                      </div>
+                    );
+                  })()}
                   {canSuggest && (
                     <div style={{ display: "flex", gap: 3, marginTop: 7 }}>
                       {SUGGESTION_VOTE_OPTIONS.map((o) => {
@@ -18792,6 +19674,7 @@ function MyLudoPage({ setToast, setPage }) {
                     else if (n.linkKind === "poll" || n.linkKind === "idea") setPage("decideur");
                     else if (n.linkKind === "event") setPage("soirees");
                     else if (n.linkKind === "loan") setPage("locations");
+                    else if (n.linkKind === "webgame") setPage("web-jeux");
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
                     background: n.read ? "#fff" : "rgba(30,138,138,.1)", border: n.read ? "1px solid #ece2d0" : `1px solid ${C.teal}`,
@@ -19279,6 +20162,15 @@ function ResetPasswordModal() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  // Le lien a-t-il bien ouvert une session ? Si non, rien ne sert de saisir
+  // un mot de passe : on le dit tout de suite plutot qu'apres coup.
+  const [linkOk, setLinkOk] = useState(null);
+  useEffect(() => {
+    let go = true;
+    supabase.auth.getSession().then(({ data }) => { if (go) setLinkOk(!!data?.session); });
+    return () => { go = false; };
+  }, []);
+  const close = () => { clearRecoveryMarker(); setPasswordRecovery(false); };
   const submit = async () => {
     setErr("");
     if (pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
@@ -19290,16 +20182,22 @@ function ResetPasswordModal() {
     setDone(true);
   };
   return (
-    <Modal open onClose={() => setPasswordRecovery(false)} title="Nouveau mot de passe" width={460}>
+    <Modal open onClose={close} title="Nouveau mot de passe" width={460}>
       {done ? (
         <div style={{ textAlign: "center", padding: "6px 4px" }}>
           <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center", margin: "0 auto 16px" }}><Check size={28} color={C.teal} /></div>
           <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.6, marginBottom: 20 }}>Ton mot de passe a bien été mis à jour, et tu es maintenant connecté !</p>
-          <Btn full variant="teal" size="lg" onClick={() => setPasswordRecovery(false)}>Continuer</Btn>
+          <Btn full variant="teal" size="lg" onClick={close}>Continuer</Btn>
         </div>
       ) : (
         <>
           <p style={{ fontSize: 14, color: "#6e6256", margin: "0 0 14px", lineHeight: 1.5 }}>Choisis un nouveau mot de passe pour ton compte.</p>
+          {linkOk === false && (
+            <div style={{ background: "rgba(232,163,23,.12)", border: `1.5px solid ${C.amber}66`, color: "#8a6a1f", padding: "10px 14px", borderRadius: 11, fontSize: 13.5, lineHeight: 1.55, marginBottom: 14 }}>
+              Ce lien semble <b>expiré ou déjà utilisé</b> : un lien de réinitialisation ne sert qu'une fois, et pas au-delà d'une heure.
+              Fermez cette fenêtre et redemandez-en un depuis <b>« Mot de passe oublié ? »</b>.
+            </div>
+          )}
           <Field label="Nouveau mot de passe" hint="Au moins 6 caractères.">
             <div style={{ position: "relative" }}>
               <TextInput type={show ? "text" : "password"} value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="••••••••" style={{ paddingRight: 44 }} />
