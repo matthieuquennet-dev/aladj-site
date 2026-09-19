@@ -48,6 +48,30 @@ const RECOVERY_IN_URL = (() => {
 // faire reapparaitre apres que le membre l'a referme.
 let RECOVERY_SHOWN = false;
 
+/* Troisieme filet, et le plus sur des trois.
+   Au moment ou l'on demande un lien, ce navigateur retient qu'il attend un
+   nouveau mot de passe. Quand la session s'ouvre ensuite — quelle que soit la
+   forme du lien, que Supabase ait emis son evenement ou non, que l'adresse ait
+   ete nettoyee ou non — on sait pourquoi le membre est la, et l'ecran
+   s'affiche. Le marqueur expire au bout d'une heure, comme le lien lui-meme. */
+const RESET_FLAG = "aladj.motdepasse.demande";
+const RESET_TTL_MS = 60 * 60 * 1000;
+function markResetRequested() {
+  try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(RESET_FLAG, String(Date.now())); }
+  catch (e) { /* navigation privee : on s'en passe, les deux autres filets restent */ }
+}
+function resetRequestedRecently() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const v = Number(window.localStorage.getItem(RESET_FLAG) || 0);
+    return Number.isFinite(v) && v > 0 && Date.now() - v < RESET_TTL_MS;
+  } catch (e) { return false; }
+}
+function clearResetRequest() {
+  try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.removeItem(RESET_FLAG); }
+  catch (e) { /* sans gravite */ }
+}
+
 /* Efface le marqueur de l'adresse, une fois Supabase passe dessus. Sans cela,
    un simple rafraichissement rouvrirait l'ecran de nouveau mot de passe.
    Les autres parametres du site (notamment ?chrono=CODE) sont preserves. */
@@ -1754,6 +1778,12 @@ function AppProvider({ children }) {
       // A cet instant Supabase a fini de lire l'adresse : on peut la nettoyer.
       if (RECOVERY_IN_URL) clearRecoveryMarker();
       setAuthUser(session?.user || null);
+      // Le lien a bien ouvert une session, et ce navigateur attendait un
+      // nouveau mot de passe : c'est tout ce qu'il faut savoir.
+      if (session && !RECOVERY_SHOWN && resetRequestedRecently()) {
+        RECOVERY_SHOWN = true;
+        setPasswordRecovery(true);
+      }
       // On renseigne l'identifiant tout de suite, sans attendre que le profil
       // soit charge : loadData s'en sert pour decider s'il interroge les tables
       // personnelles. Sans cela, le tout premier chargement les ignore et les
@@ -1869,6 +1899,7 @@ function AppProvider({ children }) {
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/?reset=1`,
     });
+    if (!error) markResetRequested();
     if (error) return { error: error.message };
     return {};
   }, []);
@@ -1880,7 +1911,9 @@ function AppProvider({ children }) {
     // On dit plutot ce qui s'est passe, et quoi faire.
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      return { error: "Ce lien a expiré ou a déjà servi. Demandez-en un nouveau depuis « Mot de passe oublié ? » sur l'écran de connexion." };
+      // Ce message sert aux deux chemins : le lien recu par courriel et le
+      // changement depuis son profil. Il doit donc rester juste dans les deux cas.
+      return { error: "Votre session a expiré. Reconnectez-vous — ou, si vous arrivez d'un lien reçu par courriel, redemandez-en un depuis « Mot de passe oublié ? »." };
     }
     const { error } = await supabase.auth.updateUser({ password: newPwd });
     if (error) return { error: error.message };
@@ -5387,6 +5420,25 @@ function Navbar({ page, setPage, onAuth }) {
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
+  /* (lot AB bis) L'en-tete tient sur UNE seule ligne, quelle que soit la
+     largeur. Auparavant la rangee se repliait : sur un iPad, « Connexion » et
+     « Adherer » basculaient sur une deuxieme ligne et l'en-tete formait un gros
+     bloc. Les onglets defilent donc horizontalement quand ils sont trop
+     nombreux (le cas d'un membre decisionnaire, qui en a dix), et un degrade
+     au bord droit signale qu'il en reste a voir. */
+  const navRef = useRef(null);
+  const [navOverflow, setNavOverflow] = useState(false);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return undefined;
+    const check = () => setNavOverflow(el.scrollWidth > el.clientWidth + 2);
+    check();
+    // Les polices Fredoka/Nunito arrivent apres le premier rendu et changent
+    // les largeurs : on remesure une fois qu'elles sont posees.
+    const t = setTimeout(check, 400);
+    window.addEventListener("resize", check);
+    return () => { clearTimeout(t); window.removeEventListener("resize", check); };
+  }, [items.length, currentUser?.id]);
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
   // La part « possession declaree a mon nom » reste comptee tant que le membre
   // n'a pas repondu, meme s'il a deja lu la notification correspondante.
@@ -5401,45 +5453,52 @@ function Navbar({ page, setPage, onAuth }) {
       position: "sticky", top: 0, zIndex: 500, background: "rgba(251,247,239,.86)", backdropFilter: "blur(12px)",
       borderBottom: "1px solid #ece2d0",
     }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <button onClick={() => setPage("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0 }} title="Accueil">
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "nowrap" }}>
+        <button onClick={() => setPage("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0, flexShrink: 0 }} title="Accueil">
           <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 48, width: "auto", display: "block" }} />
         </button>
 
-        <nav style={{ display: "flex", gap: 4, marginLeft: 12, flexWrap: "wrap" }} className="aladj-desktop-nav">
+        <nav ref={navRef} className="aladj-desktop-nav aladj-nav-scroll"
+          style={{
+            display: "flex", gap: 3, marginLeft: 8, flexWrap: "nowrap",
+            flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden",
+            scrollbarWidth: "none", msOverflowStyle: "none", scrollBehavior: "smooth",
+            WebkitMaskImage: navOverflow ? "linear-gradient(to right, #000 calc(100% - 26px), transparent)" : undefined,
+            maskImage: navOverflow ? "linear-gradient(to right, #000 calc(100% - 26px), transparent)" : undefined,
+          }}>
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
             const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
             return (
               <button key={n.key} onClick={() => setPage(n.key)} style={{
-                position: "relative",
-                display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 11, border: "none",
-                cursor: "pointer", fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 14.5,
+                position: "relative", flexShrink: 0, whiteSpace: "nowrap",
+                display: "flex", alignItems: "center", gap: 6, padding: "8px 11px", borderRadius: 11, border: "none",
+                cursor: "pointer", fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 14,
                 background: active ? C.navy : "transparent", color: active ? "#fff" : C.navy, transition: "background .15s",
               }}>
-                <Icon size={17} /> {n.label}
+                <Icon size={16} /> {n.label}
                 {badgeCount > 0 && <span style={{ position: "absolute", top: 3, right: 5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "grid", placeItems: "center" }}>{badgeCount}</span>}
               </button>
             );
           })}
         </nav>
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }} className="aladj-desktop-nav">
+        <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="aladj-desktop-nav">
           {currentUser ? (
             <>
-              <button onClick={() => setEditProfile(true)} title="Modifier mon profil" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 11, background: "rgba(30,138,138,.1)", border: "none", cursor: "pointer" }}>
-                <span style={{ width: 28, height: 28, borderRadius: 8, overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14 }}>
+              <button onClick={() => setEditProfile(true)} title="Modifier mon profil" style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 10px", borderRadius: 11, background: "rgba(30,138,138,.1)", border: "none", cursor: "pointer", maxWidth: 190 }}>
+                <span style={{ width: 26, height: 26, borderRadius: 8, overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
                   {currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : currentUser.name[0].toUpperCase()}
                 </span>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14 }}>{currentUser.name}</span>
-                {currentUser.role === "decideur" && <Crown size={15} color={C.amber} />}
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentUser.name}</span>
+                {currentUser.role === "decideur" && <Crown size={15} color={C.amber} style={{ flexShrink: 0 }} />}
               </button>
-              <Btn variant="ghost" size="sm" onClick={logout}><LogOut size={15} /> Sortir</Btn>
+              <Btn variant="ghost" size="sm" onClick={logout} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><LogOut size={15} /> Sortir</Btn>
             </>
           ) : (
             <>
-              <Btn variant="ghost" size="sm" onClick={() => onAuth("login")}><LogIn size={15} /> Connexion</Btn>
-              <Btn variant="amber" size="sm" onClick={() => onAuth("register")}><UserPlus size={15} /> Adhérer</Btn>
+              <Btn variant="ghost" size="sm" onClick={() => onAuth("login")} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><LogIn size={15} /> Connexion</Btn>
+              <Btn variant="amber" size="sm" onClick={() => onAuth("register")} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><UserPlus size={15} /> Adhérer</Btn>
             </>
           )}
         </div>
@@ -5489,6 +5548,82 @@ function Navbar({ page, setPage, onAuth }) {
     </header>
     {editProfile && <ProfileEditModal onClose={() => setEditProfile(false)} />}
     </>
+  );
+}
+
+/* =============================================================================
+   CHANGER SON MOT DE PASSE, DEPUIS SON PROFIL
+   -----------------------------------------------------------------------------
+   Un lien recu par courriel reconnecte toujours, mais il ne garantit pas
+   d'avoir eu l'occasion d'en choisir un nouveau : selon la facon dont le
+   navigateur, le client de messagerie ou Supabase transforment l'adresse,
+   l'ecran dedie peut ne pas s'ouvrir. On ne peut donc pas faire reposer la
+   chose sur lui seul.
+
+   Ici, aucune dependance : on est connecte, on choisit son mot de passe, c'est
+   fini. C'est le chemin qu'on peut toujours prendre — et celui qu'il faut
+   indiquer a qui n'arrive pas a s'en sortir autrement.
+
+   Vaut aussi pour les comptes crees avec Google, qui n'ont jamais eu de mot de
+   passe : cet ecran leur en donne un, et la connexion par courriel devient
+   possible en plus de la connexion Google.
+   ============================================================================= */
+function PasswordChangeField() {
+  const { updatePassword } = useApp();
+  const [open, setOpen] = useState(false);
+  const [pwd, setPwd] = useState("");
+  const [pwd2, setPwd2] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    setErr("");
+    if (pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
+    if (pwd !== pwd2) { setErr("Les deux mots de passe ne correspondent pas."); return; }
+    setBusy(true);
+    const res = await updatePassword(pwd);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    clearResetRequest();
+    setPwd(""); setPwd2(""); setDone(true);
+  };
+
+  return (
+    <Field label="Mot de passe" hint="Vous pouvez en choisir un nouveau à tout moment, sans passer par un courriel.">
+      {done ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(30,138,138,.1)", border: `1.5px solid ${C.teal}44`, borderRadius: 12, padding: "11px 14px", fontSize: 13.5, color: "#5e5346" }}>
+          <Check size={17} color={C.teal} style={{ flexShrink: 0 }} />
+          <span>Votre mot de passe a été changé. Il est valable dès maintenant, sur tous vos appareils.</span>
+        </div>
+      ) : !open ? (
+        <Btn variant="soft" size="sm" onClick={() => { setOpen(true); setErr(""); }}>
+          <Lock size={14} /> Choisir un nouveau mot de passe
+        </Btn>
+      ) : (
+        <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 13, padding: 13 }}>
+          <div style={{ position: "relative", marginBottom: 9 }}>
+            <TextInput type={show ? "text" : "password"} value={pwd} onChange={(e) => setPwd(e.target.value)}
+              placeholder="Nouveau mot de passe (6 caractères minimum)" autoComplete="new-password" style={{ paddingRight: 44 }} />
+            <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Masquer" : "Afficher"}
+              style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+              {show ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+          <TextInput type={show ? "text" : "password"} value={pwd2} onChange={(e) => setPwd2(e.target.value)}
+            placeholder="Confirmer le mot de passe" autoComplete="new-password"
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+          {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 13px", borderRadius: 10, fontSize: 13, fontWeight: 600, marginTop: 9 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <Btn size="sm" variant="teal" onClick={submit} disabled={busy || !pwd || !pwd2}>
+              {busy ? <Loader2 size={14} className="aladj-spin" /> : <><Check size={14} /> Enregistrer</>}
+            </Btn>
+            <Btn size="sm" variant="soft" onClick={() => { setOpen(false); setPwd(""); setPwd2(""); setErr(""); }}>Annuler</Btn>
+          </div>
+        </div>
+      )}
+    </Field>
   );
 }
 
@@ -5655,6 +5790,11 @@ function ProfileEditModal({ onClose, member }) {
           </div>
         )}
       </Field>
+
+      {/* (lot AB bis) On ne modifie ici QUE son propre mot de passe : un
+          administrateur qui corrige la fiche de quelqu'un d'autre n'a rien a
+          faire de ce cote-la. */}
+      {!asAdmin && <PasswordChangeField />}
 
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
       <Btn full size="lg" onClick={save} disabled={busy}>{busy ? <Loader2 size={18} className="aladj-spin" /> : <><Check size={18} /> Enregistrer mon profil</>}</Btn>
@@ -7075,7 +7215,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Il ouvre maintenant directement l'écran <b>« Nouveau mot de passe »</b> à l'arrivée sur le site. Si vous retombiez auparavant sur la page d'accueil sans rien pouvoir faire, c'est corrigé.</p>
             <p style={{ margin: "0 0 8px" }}>Un lien de réinitialisation ne sert qu'<b>une seule fois</b>, et pas au-delà d'<b>une heure</b>. Passé ce délai, l'écran vous le dit clairement : redemandez-en un depuis « Mot de passe oublié ? ». Ouvrez-le de préférence <b>sur le même appareil et dans le même navigateur</b> que celui d'où vous l'avez demandé.</p>
-            <p style={{ margin: 0 }}>Une fois le nouveau mot de passe enregistré, vous êtes connecté dans la foulée : rien d'autre à faire.</p>
+            <p style={{ margin: "0 0 8px" }}>Une fois le nouveau mot de passe enregistré, vous êtes connecté dans la foulée : rien d'autre à faire.</p>
+            <p style={{ margin: 0 }}><b>Et si l'écran ne s'ouvre toujours pas ?</b> Le lien vous aura quand même reconnecté. Dans ce cas, passez par <b>votre nom en haut à droite → « Mot de passe » → « Choisir un nouveau mot de passe »</b> : ce chemin-là ne dépend d'aucun courriel et fonctionne toujours. Il vaut aussi pour les comptes créés avec Google, qui n'ont jamais eu de mot de passe.</p>
           </>,
         },
         {
@@ -20170,7 +20311,7 @@ function ResetPasswordModal() {
     supabase.auth.getSession().then(({ data }) => { if (go) setLinkOk(!!data?.session); });
     return () => { go = false; };
   }, []);
-  const close = () => { clearRecoveryMarker(); setPasswordRecovery(false); };
+  const close = () => { clearRecoveryMarker(); clearResetRequest(); setPasswordRecovery(false); };
   const submit = async () => {
     setErr("");
     if (pwd.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
@@ -20372,6 +20513,10 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) { .aladj-spark { animation: none; opacity: .5; } }
         .aladj-bounce { animation: bounce 1s ease-in-out infinite; }
         .aladj-burger { display: none !important; }
+        /* (lot AB bis) Les onglets defilent au doigt quand ils sont trop
+           nombreux : aucune barre de defilement ne doit s'afficher pour autant,
+           elle epaissirait l'en-tete d'une dizaine de pixels. */
+        .aladj-nav-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
         @media (max-width: 1080px) {
           .aladj-desktop-nav { display: none !important; }
           .aladj-burger { display: grid !important; }
