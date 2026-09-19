@@ -3225,11 +3225,38 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
           {/* Cartes joueurs : identite / score / chrono */}
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 'clamp(8px,1vw,14px)', marginBottom: 'clamp(8px,1vw,14px)' }}>
-            {players.map((p) => {
+            {players.map((p, i) => {
               const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
               const clickable = gamePhase === 'play';
               const hex = hexFor(p);
               const ink = active ? readableOn(hex) : C.navy;
+              /* (lot AB ter) Deux familles de boutons, deux allures, pour qu'on
+                 ne les confonde jamais du coin de l'oeil :
+                   - compter un point : de gros carres teintes rouge ou vert,
+                     colles au score, au centre de la carte ;
+                   - changer l'ordre des joueurs : de petites touches neutres,
+                     cernees, posees tout a droite contre le chrono.
+                 Sur une carte active (fond colore), les deux passent en blanc
+                 translucide pour rester lisibles. */
+              const stepBtn = (tint) => ({
+                width: 'clamp(50px,4.4vw,74px)', height: 'clamp(50px,4.4vw,74px)', flex: '0 0 auto',
+                borderRadius: 16, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
+                fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(26px,2.3vw,40px)', lineHeight: 1,
+                border: `2px solid ${active ? 'rgba(255,255,255,.55)' : `${tint}66`}`,
+                background: active ? 'rgba(255,255,255,.20)' : `${tint}14`,
+                color: active ? ink : tint,
+                touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+              });
+              const ordBtn = (off) => ({
+                width: 'clamp(40px,3.2vw,54px)', height: 'clamp(27px,2.1vw,36px)', flex: '0 0 auto',
+                borderRadius: 10, padding: 0, display: 'grid', placeItems: 'center',
+                cursor: off ? 'default' : 'pointer', opacity: off ? 0.3 : 1,
+                border: `2px solid ${active ? 'rgba(255,255,255,.45)' : '#E7DCC7'}`,
+                background: active ? 'rgba(255,255,255,.16)' : '#fff',
+                color: active ? ink : `${C.navy}99`,
+                fontSize: 'clamp(11px,1vw,15px)', lineHeight: 1,
+                touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+              });
               return (
                 <div key={p.id}
                   onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
@@ -3259,24 +3286,51 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     )}
                   </div>
 
-                  {/* Score, au centre et en tres grand */}
-                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Modifier le score"
-                    style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
-                      padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(52px, ${n <= 4 ? '7.4vw' : '4.8vw'}, 128px)`,
-                      lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
-                    <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
-                      opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
-                  </button>
+                  {/* Score, au centre et en tres grand, encadre de ses deux
+                      boutons : un appui = un point, sans ouvrir la calculatrice.
+                      Le nombre lui-meme ouvre le pave pour le reste. */}
+                  <div onClick={(e) => e.stopPropagation()}
+                    style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', gap: 'clamp(8px,1vw,18px)' }}>
+                    <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
+                      aria-label={`Retirer un point a ${p.name}`} title="−1 point" style={stepBtn(C.red)}>−</button>
+                    <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
+                      style={{ flex: '0 1 auto', minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+                        padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(44px, ${n <= 4 ? '6.2vw' : '4.1vw'}, 112px)`,
+                        lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
+                      <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
+                        opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
+                      aria-label={`Ajouter un point a ${p.name}`} title="+1 point" style={stepBtn(C.teal)}>+</button>
+                  </div>
 
-                  {/* Chrono du joueur, a droite */}
-                  <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-                    justifyContent: 'center', gap: 3, width: 'clamp(118px,12vw,224px)' }}>
-                    <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,3.15vw,58px)',
-                      lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
-                    {active
-                      ? <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
-                      : <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
+                  {/* Ordre des joueurs et chrono, a droite.
+                      Les fleches sont posees CONTRE le temps, et non sous le
+                      score : on ne les touche donc pas en comptant les points,
+                      et la carte garde exactement la meme hauteur. */}
+                  <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                    gap: 'clamp(7px,.8vw,13px)', width: 'clamp(162px,15vw,290px)' }}>
+                    {players.length > 1 && (
+                      <div onClick={(e) => e.stopPropagation()}
+                        style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 auto' }}>
+                        <button onClick={(e) => { e.stopPropagation(); if (i > 0) movePlayer(p.id, true); }}
+                          disabled={i === 0} title={`Faire jouer ${p.name} plus tot`} aria-label="Monter dans l'ordre des joueurs"
+                          style={ordBtn(i === 0)}>▲</button>
+                        <button onClick={(e) => { e.stopPropagation(); if (i < players.length - 1) movePlayer(p.id, false); }}
+                          disabled={i === players.length - 1} title={`Faire jouer ${p.name} plus tard`} aria-label="Descendre dans l'ordre des joueurs"
+                          style={ordBtn(i === players.length - 1)}>▼</button>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+                      justifyContent: 'center', gap: 3, minWidth: 0 }}>
+                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,3.15vw,58px)',
+                        lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
+                      {active
+                        ? <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
+                        : <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
+                    </div>
                   </div>
 
                   {/* Pastille de couleur */}
