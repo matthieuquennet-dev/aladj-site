@@ -5413,6 +5413,17 @@ function isDecideur(u) {
   return !!u && (u.role === "decideur" || u.admin === true);
 }
 
+/* Les deux fleches qui font defiler la rangee d'onglets. Posees PAR-DESSUS les
+   extremites de la rangee, sur le fond creme de l'en-tete, avec une ombre
+   portee de la meme couleur : l'onglet qu'elles recouvrent s'estompe au lieu
+   d'etre coupe net, ce qui dit bien qu'il y a quelque chose au-dela. */
+const navArrowStyle = {
+  position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 3,
+  width: 28, height: 34, borderRadius: 10, padding: 0,
+  border: "1px solid #e6dcc9", background: "rgba(251,247,239,.97)", color: C.navy,
+  display: "grid", placeItems: "center", cursor: "pointer",
+};
+
 function Navbar({ page, setPage, onAuth }) {
   const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, myOwnershipPending, reload, personalReady } = useApp();
   const [refreshing, setRefreshing] = useState(false);
@@ -5420,25 +5431,66 @@ function Navbar({ page, setPage, onAuth }) {
   const [open, setOpen] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
   const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
-  /* (lot AB bis) L'en-tete tient sur UNE seule ligne, quelle que soit la
-     largeur. Auparavant la rangee se repliait : sur un iPad, « Connexion » et
-     « Adherer » basculaient sur une deuxieme ligne et l'en-tete formait un gros
-     bloc. Les onglets defilent donc horizontalement quand ils sont trop
-     nombreux (le cas d'un membre decisionnaire, qui en a dix), et un degrade
-     au bord droit signale qu'il en reste a voir. */
+  /* (lot AB bis, complete par le lot AB quater) L'en-tete tient sur UNE seule
+     ligne, quelle que soit la largeur : auparavant la rangee se repliait et,
+     sur un iPad, « Connexion » et « Adherer » basculaient sur une deuxieme
+     ligne, formant un gros bloc.
+
+     Mais une ligne unique ne suffit pas : un membre decisionnaire a dix
+     onglets, qui ne tiennent dans aucune largeur raisonnable. Ils defilent
+     donc horizontalement — et surtout, ce defilement se VOIT et se COMMANDE :
+     deux fleches apparaissent aux extremites des qu'il reste quelque chose a
+     atteindre. Un simple degrade ne suffisait pas : rien n'indiquait qu'on
+     pouvait faire glisser la rangee, et le masque CSS employe pour le dessiner
+     empechait le defilement au doigt sur certaines versions de Safari. */
   const navRef = useRef(null);
-  const [navOverflow, setNavOverflow] = useState(false);
+  const [navScroll, setNavScroll] = useState({ gauche: false, droite: false });
+
+  const mesureNav = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const reste = el.scrollWidth - el.clientWidth;
+    setNavScroll({ gauche: el.scrollLeft > 4, droite: reste > 4 && el.scrollLeft < reste - 4 });
+  }, []);
+
   useEffect(() => {
     const el = navRef.current;
     if (!el) return undefined;
-    const check = () => setNavOverflow(el.scrollWidth > el.clientWidth + 2);
-    check();
+    mesureNav();
     // Les polices Fredoka/Nunito arrivent apres le premier rendu et changent
     // les largeurs : on remesure une fois qu'elles sont posees.
-    const t = setTimeout(check, 400);
-    window.addEventListener("resize", check);
-    return () => { clearTimeout(t); window.removeEventListener("resize", check); };
-  }, [items.length, currentUser?.id]);
+    const t = setTimeout(mesureNav, 400);
+    el.addEventListener("scroll", mesureNav, { passive: true });
+    window.addEventListener("resize", mesureNav);
+    return () => {
+      clearTimeout(t);
+      el.removeEventListener("scroll", mesureNav);
+      window.removeEventListener("resize", mesureNav);
+    };
+  }, [mesureNav, items.length, currentUser?.id]);
+
+  // Une fleche fait glisser la rangee d'un peu moins d'une largeur d'ecran :
+  // on garde ainsi un onglet ou deux en commun d'un ecran a l'autre, et l'on
+  // ne perd pas le fil.
+  const glisserNav = (sens) => {
+    const el = navRef.current;
+    if (!el) return;
+    const pas = Math.max(160, Math.round(el.clientWidth * 0.7));
+    if (el.scrollBy) el.scrollBy({ left: sens * pas, behavior: "smooth" });
+    else el.scrollLeft += sens * pas;
+  };
+
+  // L'onglet ouvert est toujours ramene sous les yeux : on ne se demande
+  // jamais ou l'on se trouve dans une rangee qui deborde.
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el || !el.querySelector) return;
+    const btn = el.querySelector('[data-nav-actif="1"]');
+    if (!btn) return;
+    const cible = Math.max(0, btn.offsetLeft - (el.clientWidth - btn.offsetWidth) / 2);
+    if (el.scrollTo) el.scrollTo({ left: cible, behavior: "smooth" });
+    else el.scrollLeft = cible;
+  }, [page]);
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
   // La part « possession declaree a mon nom » reste comptee tant que le membre
   // n'a pas repondu, meme s'il a deja lu la notification correspondante.
@@ -5458,19 +5510,27 @@ function Navbar({ page, setPage, onAuth }) {
           <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 48, width: "auto", display: "block" }} />
         </button>
 
-        <nav ref={navRef} className="aladj-desktop-nav aladj-nav-scroll"
+        <div className="aladj-desktop-nav"
+          style={{ position: "relative", flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", marginLeft: 8 }}>
+        {/* Fleche de gauche : visible seulement s'il y a quelque chose derriere. */}
+        {navScroll.gauche && (
+          <button type="button" onClick={() => glisserNav(-1)} title="Voir les onglets precedents" aria-label="Voir les onglets précédents"
+            style={{ ...navArrowStyle, left: 0, boxShadow: "10px 0 14px 6px rgba(251,247,239,.92)" }}>
+            <ChevronRight size={17} style={{ transform: "rotate(180deg)" }} />
+          </button>
+        )}
+        <nav ref={navRef} className="aladj-nav-scroll"
           style={{
-            display: "flex", gap: 3, marginLeft: 8, flexWrap: "nowrap",
+            display: "flex", gap: 3, flexWrap: "nowrap",
             flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden",
-            scrollbarWidth: "none", msOverflowStyle: "none", scrollBehavior: "smooth",
-            WebkitMaskImage: navOverflow ? "linear-gradient(to right, #000 calc(100% - 26px), transparent)" : undefined,
-            maskImage: navOverflow ? "linear-gradient(to right, #000 calc(100% - 26px), transparent)" : undefined,
+            scrollbarWidth: "none", msOverflowStyle: "none",
+            WebkitOverflowScrolling: "touch", touchAction: "pan-x",
           }}>
           {items.map((n) => {
             const Icon = n.icon; const active = page === n.key;
             const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
             return (
-              <button key={n.key} onClick={() => setPage(n.key)} style={{
+              <button key={n.key} onClick={() => setPage(n.key)} data-nav-actif={active ? "1" : undefined} style={{
                 position: "relative", flexShrink: 0, whiteSpace: "nowrap",
                 display: "flex", alignItems: "center", gap: 6, padding: "8px 11px", borderRadius: 11, border: "none",
                 cursor: "pointer", fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 14,
@@ -5482,6 +5542,14 @@ function Navbar({ page, setPage, onAuth }) {
             );
           })}
         </nav>
+        {/* Fleche de droite : visible tant qu'il reste des onglets a atteindre. */}
+        {navScroll.droite && (
+          <button type="button" onClick={() => glisserNav(1)} title="Voir les onglets suivants" aria-label="Voir les onglets suivants"
+            style={{ ...navArrowStyle, right: 0, boxShadow: "-10px 0 14px 6px rgba(251,247,239,.92)" }}>
+            <ChevronRight size={17} />
+          </button>
+        )}
+        </div>
 
         <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="aladj-desktop-nav">
           {currentUser ? (
@@ -6221,6 +6289,14 @@ function GuidePage() {
     {
       icon: "🚀", title: "Premiers pas",
       items: [
+        {
+          q: "Retrouver tous les onglets du menu",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le menu du haut tient sur <b>une seule ligne</b>, pour ne pas manger l'écran. Quand les onglets sont trop nombreux pour la largeur disponible — c'est le cas d'un membre décisionnaire, qui en a dix —, la rangée <b>défile horizontalement</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Deux petites <b>flèches</b> apparaissent alors aux extrémités : un clic fait glisser la rangée. Sur une tablette ou un téléphone, on peut aussi la <b>faire glisser au doigt</b>. L'onglet où vous vous trouvez est toujours ramené automatiquement sous vos yeux.</p>
+            <p style={{ margin: 0 }}>Sur un écran étroit, le menu se replie derrière le bouton <b>☰</b> : tous les onglets y figurent alors les uns sous les autres, sans rien à faire défiler.</p>
+          </>,
+        },
         {
           q: "Créer un compte et se connecter",
           a: <>
