@@ -6862,7 +6862,8 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur téléphone, la carte de chaque joueur porte une <b>zone de score à elle seule</b> : un bouton <b>−</b>, le score, un bouton <b>+</b>. Chaque appui compte un point, <b>sans ouvrir la calculatrice</b> — c'est le geste le plus fréquent d'une partie, il devait être le plus simple.</p>
             <p style={{ margin: "0 0 8px" }}>Le score lui-même reste cliquable : il ouvre la calculatrice pour tout ce qui ne se compte pas un par un.</p>
-            <p style={{ margin: 0 }}>Les <b>flèches ▲▼ qui changent l'ordre des joueurs</b> ont quitté cette zone : elles sont descendues sur la ligne du dessous, à côté du chrono. On ne les touche donc plus par mégarde en comptant les points.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>flèches ▲▼ qui changent l'ordre des joueurs</b> ont quitté cette zone : elles sont descendues sur la ligne du dessous, à côté du chrono. On ne les touche donc plus par mégarde en comptant les points.</p>
+            <p style={{ margin: 0 }}><b>En vue tablette, c'est pareil</b> : deux grands boutons <b>−</b> et <b>+</b> encadrent le score au centre de la carte, et les flèches d'ordre sont posées tout à droite, contre le chrono. Les deux familles de boutons n'ont volontairement pas la même allure — carrés teintés rouge et vert pour compter, petites touches neutres et cernées pour réordonner — afin qu'on ne les confonde jamais du coin de l'œil.</p>
           </>,
         },
         {
