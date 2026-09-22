@@ -205,6 +205,9 @@ const SIGNAL_GROUPS = [
   { name: "Jeux en ligne", color: "#6B3A7A", icon: Globe,
     desc: "Pour nos moments jeux en ligne sur Board Game Arena.",
     url: "https://signal.group/#CjQKIDrh0Erb7vmLuqhbBcjelvyRNlakSz8S0DWuwYzbY9PMEhCa0Qkdic8YD72P2HPBjUVK" },
+  { name: "Magic The Gathering", color: "#E8A317", icon: Sparkles,
+    desc: "Pour nos parties et nos soir\u00e9es Magic : The Gathering \u2014 decks, \u00e9changes et rendez-vous.",
+    url: "https://signal.group/#CjQKIPHQQSLCh92-qpzJPVeLPitCQibolR6x6SNufURTGf9jEhD7g8-W3hgr05FTJxLGMFFX" },
 ];
 
 /* (lot AA) Delai de grace d'une fiche d'extension a venir : quinze jours apres
@@ -1213,6 +1216,10 @@ function mapEvent(row, playersByEvent, nameById = {}, guestsByEvent = {}, commen
     id: row.id, date: row.event_date, time: row.event_time, place: row.place, placeId: row.place_id || null, min: row.min_players, max: row.max_players,
     notes: row.notes || "", online: !!row.online, hostId: row.host_id, hostName: nameById[row.host_id] || "Membre",
     deadline: row.deadline || null, isPrivate: row.is_private === true,
+    // (lot AD) Titre libre des soirees a theme (« Soiree Magic », « Special 2
+    // joueurs »...). Vide dans l'immense majorite des cas : un moment jeux
+    // ordinaire n'a pas besoin d'etre nomme, c'est la date qui l'identifie.
+    title: (row.title || "").trim(),
     signupDeadline: row.signup_deadline || null,
     players: (playersByEvent[row.id] || []).map((p) => ({ id: p.user_id, name: nameById[p.user_id] || "Membre" })),
     // un membre invité (event_guests.member_id) qui s'est aussi inscrit comme participant
@@ -2748,6 +2755,7 @@ function AppProvider({ children }) {
       event_date: d.date, event_time: d.time, place: d.place, place_id: d.placeId || null, min_players: d.min, max_players: d.max,
       notes: d.notes || "", online: d.online || false, host_id: currentUser.id, deadline: d.deadline || null,
       is_private: !!d.isPrivate, signup_deadline: d.signupDeadline || null,
+      title: (d.title || "").trim() || null,
     }).select().single();
     if (error) return { error: error.message };
     if (d.joinSelf) await supabase.from("event_players").insert({ event_id: data.id, user_id: currentUser.id });
@@ -2774,6 +2782,7 @@ function AppProvider({ children }) {
       event_date: patch.date, event_time: patch.time, place: patch.place, place_id: patch.placeId || null,
       min_players: patch.min, max_players: patch.max, notes: patch.notes || "", online: patch.online || false, deadline: patch.deadline || null,
       is_private: !!patch.isPrivate, signup_deadline: patch.signupDeadline || null,
+      title: (patch.title || "").trim() || null,
     }).eq("id", id);
     if (error) return { error: error.message };
     await loadData();
@@ -6481,6 +6490,19 @@ function GuidePage() {
       icon: "🚀", title: "Premiers pas",
       items: [
         {
+          q: "Nos conversations Signal",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b>. Les conversations sont listées en bas de la page d'accueil, avec un bouton « Rejoindre » et un QR code à scanner avec son téléphone.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Organisation jeux</b> — pour caler les moments jeux, s'inscrire et prendre les places de dernière minute. C'est celle qu'il faut rejoindre en premier.</li>
+              <li><b>Blabla</b> — les discussions informelles, entre deux parties.</li>
+              <li><b>Jeux en ligne</b> — les rendez-vous sur Board Game Arena.</li>
+              <li><b>Magic The Gathering</b> — les parties et les soirées Magic : decks, échanges et rendez-vous entre joueurs.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Aucune n'est obligatoire, et l'on peut n'en rejoindre qu'une. Elles sont simplement de loin le moyen le plus pratique de ne rien rater.</p>
+          </>,
+        },
+        {
           q: "Retrouver tous les onglets du menu",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le menu du haut tient sur <b>une seule ligne</b>, pour ne pas manger l'écran. Quand les onglets sont trop nombreux pour la largeur disponible — c'est le cas d'un membre décisionnaire, qui en a dix —, la rangée <b>défile horizontalement</b>.</p>
@@ -6492,7 +6514,7 @@ function GuidePage() {
           q: "Créer un compte et se connecter",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google).</p>
-            <p style={{ margin: "0 0 8px" }}>Avant la création effective du compte, un <b>écran d'engagement</b> s'affiche. Il rappelle que <b>l'essentiel de la vie de l'association se passe sur Signal</b> : s'y inscrire n'est pas obligatoire, mais c'est de loin le plus pratique pour ne rien rater. Vous y trouvez les liens des trois conversations et vous choisissez comment vous présenter : <b>sur Signal</b> ou <b>par e-mail</b>. Une case à cocher confirme cet engagement.</p>
+            <p style={{ margin: "0 0 8px" }}>Avant la création effective du compte, un <b>écran d'engagement</b> s'affiche. Il rappelle que <b>l'essentiel de la vie de l'association se passe sur Signal</b> : s'y inscrire n'est pas obligatoire, mais c'est de loin le plus pratique pour ne rien rater. Vous y trouvez les liens des conversations et vous choisissez comment vous présenter : <b>sur Signal</b> ou <b>par e-mail</b>. Une case à cocher confirme cet engagement.</p>
             <p style={{ margin: "0 0 8px" }}>Se présenter, c'est dire en quelques mots <b>qui vous êtes</b>, si vous êtes <b>joueur régulier</b>, <b>vacancier régulier dans la région</b> ou <b>vacancier de passage</b>, et vos <b>moments idéaux pour jouer</b>. Si vous choisissez l'e-mail, un message pré-rempli vous est proposé sur l'écran de bienvenue — nous vous répondrons en vous redonnant les liens Signal.</p>
             <p style={{ margin: 0 }}>Mot de passe oublié ? Sur l'écran de connexion, cliquez sur <b style={{ color: C.teal }}>« Mot de passe oublié ? »</b> : vous recevrez un lien par e-mail pour en choisir un nouveau.</p>
           </>,
@@ -6640,7 +6662,10 @@ function GuidePage() {
         },
         {
           q: "Trouver un jeu",
-          a: <p style={{ margin: 0 }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>,
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>
+            <p style={{ margin: 0 }}>Dès que vous tapez quelque chose, une <b>croix apparaît tout au bout à droite du champ</b> : un seul clic efface la recherche et la ludothèque entière revient, sans avoir à effacer les lettres une à une. La même croix se trouve sur les recherches de l'onglet <b>À venir</b> et de <b>Ma ludothèque</b>.</p>
+          </>,
         },
         {
           q: "Les jeux les plus joués",
@@ -6889,6 +6914,15 @@ function GuidePage() {
     {
       icon: "📅", title: "Les moments jeux",
       items: [
+        {
+          q: "Donner un titre à un moment jeux (soirée à thème)",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Un moment jeux ordinaire se reconnaît à sa date : il n'a pas besoin de nom. Mais certaines soirées ont un <b>thème</b> — une <i>soirée Magic</i>, une soirée réservée aux <i>jeux à deux</i> — et la date ne dit alors plus de quoi il s'agit.</p>
+            <p style={{ margin: "0 0 8px" }}>À la création du moment (et à tout moment ensuite, par « Modifier le moment jeux »), un champ <b>Titre du moment</b>, <b>facultatif</b>, est proposé tout en haut. Quelques pastilles remplissent le champ en un clic — <i>Soirée Magic</i>, <i>Spécial 2 joueurs</i>, <i>Soirée jeux longs</i>, <i>Découvertes &amp; nouveautés</i>, <i>Tournoi</i>, <i>Soirée famille</i> — mais le champ reste entièrement libre (60 caractères au maximum). Un second clic sur la pastille retenue efface le titre, tout comme la petite croix à droite du champ.</p>
+            <p style={{ margin: "0 0 8px" }}>Le titre s'affiche alors <b>en haut de la fiche du moment</b>, au-dessus de la date, sur un bandeau ambre de sa <b>vignette</b> dans la liste et le calendrier, et en tête du <b>message de partage Signal</b>. La date, elle, reste toujours visible : c'est elle qui identifie le moment.</p>
+            <p style={{ margin: 0 }}>Comme les autres informations du moment, le titre se saisit et se modifie par <b>celui qui a proposé le moment</b> et par les <b>administrateurs du site</b>.</p>
+          </>,
+        },
         {
           q: "Voir le profil de ceux qui se sont inscrits",
           a: <>
@@ -10933,6 +10967,12 @@ function EventCardMini({ e, onOpen }) {
         </div>
         <Badge color="#fff" soft={false}>{reached ? <><Check size={13} /> Confirmée</> : "En attente"}</Badge>
       </div>
+      {/* (lot AD) Soirée à thème : son titre se lit avant tout le reste. */}
+      {e.title && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 20px", background: "rgba(232,163,23,.16)", fontSize: 14.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#8a6a1f" }}>
+          <Sparkles size={15} style={{ flexShrink: 0 }} /> <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title}</span>
+        </div>
+      )}
       {e.isPrivate && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 20px", background: dimmed ? "rgba(120,110,95,.14)" : "rgba(107,58,122,.1)", fontSize: 12.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: dimmed ? "#6b6250" : C.purple }}>
           <Lock size={13} /> {dimmed ? "Moment privé — vous le voyez en tant qu'administrateur" : "Moment privé — sur invitation"}
@@ -11267,11 +11307,74 @@ function tabStyle(active) {
   };
 }
 
+/* =============================================================================
+   (lot AD) LE TITRE D'UN MOMENT JEUX
+   -----------------------------------------------------------------------------
+   Un moment jeux ordinaire se reconnait a sa date : il n'a aucun besoin de nom.
+   Mais certaines soirees ont un theme -- une soiree Magic, une soiree reservee
+   aux jeux a deux -- et la date ne suffit plus a dire de quoi il s'agit. Le
+   titre est donc FACULTATIF et volontairement court : il coiffe la fiche du
+   moment et sa vignette, sans jamais remplacer la date.
+
+   Les pastilles ne sont qu'un raccourci de saisie pour les themes qui
+   reviennent : le champ reste entierement libre. Un second clic sur la pastille
+   deja retenue efface le titre.
+   ============================================================================= */
+const EVENT_TITLE_MAX = 60;
+const EVENT_TITLE_IDEAS = [
+  "Soirée Magic",
+  "Spécial 2 joueurs",
+  "Soirée jeux longs",
+  "Découvertes & nouveautés",
+  "Tournoi",
+  "Soirée famille",
+];
+
+function EventTitleField({ value, onChange }) {
+  const v = value || "";
+  const clean = (t) => t.replace(/\s+/g, " ").slice(0, EVENT_TITLE_MAX);
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 6, fontFamily: "'Fredoka', sans-serif" }}>
+        <Sparkles size={13} style={{ verticalAlign: "-2px", marginRight: 5, color: v.trim() ? C.amber : "#9c8d79" }} />
+        Titre du moment <span style={{ fontWeight: 400, color: "#9c8d79" }}>· facultatif</span>
+      </span>
+      <div style={{ position: "relative" }}>
+        <TextInput value={v} maxLength={EVENT_TITLE_MAX} placeholder="Ex. Soirée Magic"
+          onChange={(ev) => onChange(clean(ev.target.value))}
+          style={{ paddingRight: v ? 40 : 14 }} />
+        {v && (
+          <button type="button" onClick={() => onChange("")} title="Effacer le titre" aria-label="Effacer le titre"
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        {EVENT_TITLE_IDEAS.map((t) => {
+          const on = v.trim().toLowerCase() === t.toLowerCase();
+          return (
+            <button key={t} type="button" onClick={() => onChange(on ? "" : t)}
+              style={{ background: on ? "rgba(232,163,23,.16)" : "#fff", border: `1.5px solid ${on ? C.amber : "#e6dcc9"}`,
+                color: on ? "#8a6a1f" : "#6e6256", borderRadius: 999, padding: "5px 12px", fontSize: 12.5,
+                fontFamily: "'Fredoka',sans-serif", fontWeight: 600, cursor: "pointer" }}>
+              {t}
+            </button>
+          );
+        })}
+      </div>
+      <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", marginTop: 6, lineHeight: 1.5 }}>
+        Pour les soirées à thème. Il s'affiche en haut de la fiche du moment, sur sa vignette et dans le message de partage Signal. Laissez vide pour un moment jeux ordinaire.
+      </span>
+    </div>
+  );
+}
+
 function CreateEventModal({ onClose, onCreate, presetDate }) {
   const { currentUser, users } = useApp();
   const today = new Date().toISOString().slice(0, 10);
   const startDate = presetDate || today;
-  const [f, setF] = useState({ date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, isPrivate: false, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00", useSignupLimit: false, signupDate: startDate, signupTime: "18:00" });
+  const [f, setF] = useState({ title: "", date: startDate, time: "20:00", place: "Local ALADJ — Gouville-sur-Mer", placeId: null, online: false, min: 2, max: "", notes: "", joinSelf: true, isPrivate: false, useDeadline: false, deadlineDate: startDate, deadlineTime: "18:00", useSignupLimit: false, signupDate: startDate, signupTime: "18:00" });
   const [invites, setInvites] = useState([]); // {name, memberId|null}
   const [showInvite, setShowInvite] = useState(false);
   const [err, setErr] = useState("");
@@ -11307,6 +11410,7 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
     }
     setBusy(true);
     const res = await onCreate({
+      title: f.title.trim(),
       date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online,
       min: minN, max: maxN, notes: f.notes.trim(),
       joinSelf: f.joinSelf, isPrivate: f.isPrivate, deadline, signupDeadline, invites,
@@ -11335,6 +11439,8 @@ function CreateEventModal({ onClose, onCreate, presetDate }) {
           </div>
         </div>
       </div>
+
+      <EventTitleField value={f.title} onChange={(t) => setF({ ...f, title: t })} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Jour"><TextInput type="date" min={today} value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
@@ -11508,7 +11614,14 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
             <Badge color="#fff" soft={false}>{expired ? "⛔ Annulé — quorum non atteint" : reached ? <><Check size={13} /> Moment jeux confirmé</> : "En attente de joueurs"}</Badge>
             {e.isPrivate && <Badge color="#fff" soft={false}><Lock size={12} /> Moment privé</Badge>}
           </span>
-          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 26, margin: "12px 0 4px", textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
+          {/* (lot AD) Le titre coiffe la fiche ; la date reste juste en dessous,
+              car c'est toujours elle qui identifie le moment. */}
+          {e.title && (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "12px 0 2px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 25, lineHeight: 1.2 }}>
+              <Sparkles size={21} style={{ flexShrink: 0, opacity: .9 }} /> <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{e.title}</span>
+            </div>
+          )}
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: e.title ? 600 : 700, fontSize: e.title ? 19 : 26, margin: e.title ? "0 0 4px" : "12px 0 4px", opacity: e.title ? .95 : 1, textTransform: "capitalize" }}>{formatDateFr(e.date)}</h2>
           {(() => {
             const bd = birthdayMembersOn(e.date, users);
             if (!bd.length) return null;
@@ -12168,6 +12281,7 @@ function EventPlayedGames({ e, isParticipant, canManage }) {
 /* ---- Modale : modifier un moment jeux (créateur/admin) ---- */
 function EditEventModal({ e, onClose, onSave }) {
   const [f, setF] = useState({
+    title: e.title || "",
     date: e.date, time: e.time, place: e.place, placeId: e.placeId || null, online: !!e.online, min: e.min, max: e.max || "",
     notes: e.notes || "", isPrivate: !!e.isPrivate,
     useDeadline: !!e.deadline,
@@ -12197,7 +12311,7 @@ function EditEventModal({ e, onClose, onSave }) {
       signupDeadline = sd.toISOString();
     }
     setBusy(true);
-    const res = await onSave({ date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), isPrivate: f.isPrivate, deadline, signupDeadline });
+    const res = await onSave({ title: f.title.trim(), date: f.date, time: f.time, place: f.online ? "Board Game Arena" : f.place.trim(), placeId: f.online ? null : f.placeId, online: f.online, min: minN, max: maxN, notes: f.notes.trim(), isPrivate: f.isPrivate, deadline, signupDeadline });
     setBusy(false);
     if (res?.error) setErr(res.error);
   };
@@ -12205,6 +12319,7 @@ function EditEventModal({ e, onClose, onSave }) {
   const today = new Date().toISOString().slice(0, 10);
   return (
     <Modal open onClose={onClose} title="Modifier le moment jeux" width={540}>
+      <EventTitleField value={f.title} onChange={(t) => setF({ ...f, title: t })} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Field label="Jour"><TextInput type="date" value={f.date} onChange={(ev) => setF({ ...f, date: ev.target.value })} /></Field>
         <Field label="Heure"><TextInput type="time" value={f.time} onChange={(ev) => setF({ ...f, time: ev.target.value })} /></Field>
@@ -12281,8 +12396,11 @@ function ShareEventModal({ event, onClose }) {
   const deadlineTxt = event.deadline
     ? `\n⏳ À valider avant le ${formatDateFr(new Date(event.deadline).toISOString().slice(0,10))} à ${new Date(event.deadline).toTimeString().slice(0,5)}`
     : "";
+  // (lot AD) Une soirée à thème s'annonce par son titre : c'est lui qui donne
+  // envie de venir, bien plus que la mention générique.
+  const titleTxt = (event.title || "").trim();
   const message =
-`🎲 Nouveau moment jeux !
+`🎲 ${titleTxt ? `${titleTxt} — nouveau moment jeux !` : "Nouveau moment jeux !"}
 
 📅 ${formatDateFr(event.date)} à ${event.time}
 📍 ${event.place}
@@ -14612,7 +14730,13 @@ function UpcomingPage({ onAuth, setToast }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
               <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu ou une extension..." style={{ paddingLeft: 42 }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu ou une extension..." style={{ paddingLeft: 42, paddingRight: q ? 40 : 14 }} />
+              {q && (
+                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+                  <X size={17} />
+                </button>
+              )}
             </div>
             <select value={kind} onChange={(e) => setKind(e.target.value)} title="Ne garder que les jeux, ou que les extensions"
               style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: kind ? C.purple : undefined }}>
@@ -15921,7 +16045,13 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
               <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu, un propriétaire..." style={{ paddingLeft: 42 }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu, un propriétaire..." style={{ paddingLeft: 42, paddingRight: q ? 40 : 14 }} />
+              {q && (
+                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+                  <X size={17} />
+                </button>
+              )}
             </div>
             <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes mécaniques</option>
@@ -20423,7 +20553,13 @@ function MyLudoPage({ setToast, setPage }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
               <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher dans mes jeux..." style={{ paddingLeft: 42 }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher dans mes jeux..." style={{ paddingLeft: 42, paddingRight: q ? 40 : 14 }} />
+              {q && (
+                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
+                  <X size={17} />
+                </button>
+              )}
             </div>
             <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
               <option value="">Toutes mécaniques</option>
