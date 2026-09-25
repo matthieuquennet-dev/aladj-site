@@ -7449,11 +7449,21 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Lancer un jeu sans ouvrir sa fiche",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Un jeu qu'il faut d'abord ouvrir pour pouvoir le lancer est un jeu qu'on ne lance pas. Le lien vit donc <b>directement sous la vignette</b>, dans la liste : une bande colorée, juste au-dessus de celle de la discussion.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Un jeu jouable s'ouvre à tout le monde</b>, membre ou simple curieux : la bande « Jouer à… », aux couleurs du jeu, le lance dans un nouvel onglet. Rien à installer, rien à payer — c'est la vitrine de l'association.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Un jeu en développement, c'est autre chose.</b> Dès que son adresse est renseignée, une bande <b>« Essayer la version en développement »</b> apparaît — mais <b>seulement pour les membres connectés</b>. Ces versions bougent encore, elles cassent parfois, et les retours qu'on en attend viennent de gens qui savent à quoi ils jouent.</p>
+            <p style={{ margin: "0 0 8px" }}>Un visiteur non connecté voit qu'il y a quelque chose à essayer — « Version d'essai réservée aux membres » — sans avoir l'adresse. Un clic l'amène à la connexion ; <b>l'inscription est gratuite</b>.</p>
+            <p style={{ margin: 0 }}>Les mêmes boutons figurent bien sûr <b>dans la fiche détaillée</b>, sous la présentation du jeu. Et tant qu'aucune adresse n'est renseignée, rien n'apparaît : la fiche explique simplement que le jeu n'est pas encore ouvert.</p>
+          </>,
+        },
+        {
           q: "Disponibles, en développement : lire l'onglet",
           a: <>
             <p style={{ margin: "0 0 8px" }}>L'onglet se lit en deux temps. <b>« Disponibles »</b> rassemble les jeux que vous pouvez lancer tout de suite. <b>« En cours de développement »</b> montre l'atelier : les titres sur lesquels l'association travaille, avec — quand elle est connue — une <b>date de sortie approximative</b> que les administrateurs renseignent.</p>
             <p style={{ margin: "0 0 8px" }}>Chaque jeu a sa <b>miniature</b> et une phrase qui dit de quoi il retourne. Un clic ouvre sa fiche complète : le <b>principe</b>, les <b>règles</b>, le <b>fonctionnement</b> et quelques <b>conseils</b> pour bien débuter.</p>
-            <p style={{ margin: "0 0 8px" }}>Tant qu'un jeu n'est pas ouvert au public, <b>aucun lien n'est publié</b> : les adresses de développement changent encore, et un lien mort ne rend service à personne. Le bouton « Jouer » apparaît le jour où le jeu est prêt.</p>
+            <p style={{ margin: "0 0 8px" }}>Tant qu'un jeu n'est pas ouvert au public, son adresse <b>n'est pas publiée</b> : elle bouge encore, et un lien mort ne rend service à personne. Mais dès qu'elle est renseignée, <b>les membres connectés peuvent essayer la version en développement</b> — c'est comme cela qu'un jeu progresse. Voyez « Lancer un jeu sans ouvrir sa fiche », juste au-dessus.</p>
             <p style={{ margin: "0 0 8px" }}>Une <b>troisième zone, « En préparation »</b>, n'apparaît qu'à ceux qui ont une fiche masquée en chantier (et aux administrateurs) : les autres membres ne la voient pas du tout.</p>
             <p style={{ margin: 0 }}><b>Côté créateur et administrateurs.</b> En bas de chaque fiche, « Modifier cette fiche » règle le nom, l'état, la date de sortie, l'adresse, le nombre de joueurs, la durée et l'ordre d'affichage — ainsi que la <b>miniature</b> : importez une image ou collez une adresse web, l'aperçu montre aussitôt le rendu de la vignette. Laissée vide, la miniature revient au <b>dessin livré avec le site</b> ; un bouton « Revenir au dessin d'origine » le rétablit en un clic.</p>
           </>,
@@ -8348,6 +8358,73 @@ function WebGameChat({ w, onClose, onAuth, setToast = () => {}, onCount }) {
 }
 
 /* La zone posee sous chaque jeu : un clic, et la discussion s'ouvre. */
+/* ---- « Jouer », sous la vignette (lot AF) -------------------------------
+   Un jeu qu'il faut d'abord ouvrir pour pouvoir le lancer est un jeu qu'on ne
+   lance pas. Le lien vit donc sous la vignette, la ou le regard se pose.
+
+   Deux publics, deux liens. Un jeu JOUABLE s'ouvre a tout le monde, membre ou
+   simple curieux : c'est la vitrine de l'association, et il n'y a aucune raison
+   d'en garder la porte. Un jeu EN DEVELOPPEMENT dont l'adresse est renseignee
+   est une version d'essai : elle se reserve aux membres, parce qu'elle bouge
+   encore, qu'elle casse parfois, et que les retours qu'on en attend viennent de
+   gens qui savent a quoi ils jouent. Le visiteur voit qu'il y a quelque chose a
+   essayer — il ne voit pas l'adresse, et on l'invite a nous rejoindre.
+   ------------------------------------------------------------------------ */
+function WebGamePlayStrip({ w, onAuth }) {
+  const { currentUser } = useApp();
+  if (!w.url) return null;
+  const live = w.status === "live";
+  const accent = w.accent || C.teal;
+  const bande = {
+    width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10,
+    border: "1px solid #ece2d0", borderTop: "none", padding: "12px 16px",
+    textAlign: "left", textDecoration: "none", fontFamily: "'Nunito',sans-serif",
+  };
+  const deuxLignes = (titre, sous, couleurTitre, couleurSous) => (
+    <span style={{ flex: 1, minWidth: 0 }}>
+      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: couleurTitre, overflowWrap: "anywhere" }}>{titre}</span>
+      <span style={{ display: "block", fontSize: 12, lineHeight: 1.4, color: couleurSous }}>{sous}</span>
+    </span>
+  );
+
+  // Jouable : la porte est grande ouverte.
+  if (live) {
+    return (
+      <a href={w.url} target="_blank" rel="noopener noreferrer" title={`Jouer à ${w.name}`}
+        style={{ ...bande, background: accent, color: "#fff", borderColor: accent }}>
+        <Gamepad2 size={18} color="#fff" style={{ flexShrink: 0 }} />
+        {deuxLignes(`Jouer à ${w.name}`, "S'ouvre dans un nouvel onglet — rien à installer.", "#fff", "rgba(255,255,255,.82)")}
+        <ExternalLink size={15} color="rgba(255,255,255,.9)" style={{ flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  // En chantier, et l'adresse existe : réservée aux membres.
+  if (currentUser) {
+    return (
+      <a href={w.url} target="_blank" rel="noopener noreferrer" title={`Essayer ${w.name}, version en développement`}
+        style={{ ...bande, background: "rgba(232,163,23,.13)" }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(232,163,23,.22)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(232,163,23,.13)"; }}>
+        <Wrench size={17} color={C.amber} style={{ flexShrink: 0 }} />
+        {deuxLignes("Essayer la version en développement", "Réservée aux membres — elle bouge encore, et vos retours la font avancer.", C.navy, "#8a7c6a")}
+        <ExternalLink size={15} color="#b6a78f" style={{ flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  return (
+    <button type="button" onClick={() => onAuth && onAuth("login")} title="Se connecter pour essayer"
+      style={{ ...bande, background: "rgba(26,58,92,.05)", cursor: "pointer" }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(26,58,92,.09)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(26,58,92,.05)"; }}>
+      <Lock size={16} color="#8a7c6a" style={{ flexShrink: 0 }} />
+      {deuxLignes("Version d'essai réservée aux membres", "Connectez-vous pour l'essayer — l'adhésion est gratuite.", C.navy, "#8a7c6a")}
+      <ChevronRight size={16} color="#b6a78f" style={{ flexShrink: 0 }} />
+    </button>
+  );
+}
+
 function WebGameChatStrip({ w, count, onOpen }) {
   const n = count == null ? (w.msgCount || 0) : count;
   return (
@@ -8496,11 +8573,27 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast, initialEditing }) {
           <Gamepad2 size={18} /> Jouer à {w.name}
         </a>
       ) : (
-        <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}55`, borderRadius: 13, padding: "13px 16px", marginBottom: 18, fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
-          <b style={{ color: "#8a6a1f", fontFamily: "'Fredoka',sans-serif" }}>🔧 Pas encore ouvert au public.</b>{" "}
-          {w.releaseNote || (w.releaseDate ? `Sortie envisagée vers ${formatDateFr(w.releaseDate)}.` : "La date de sortie n'est pas encore arrêtée.")}
-          {" "}Le lien sera publié ici dès que le jeu sera prêt — inutile de le chercher ailleurs, il bouge encore.
-        </div>
+        <>
+          <div style={{ background: "rgba(232,163,23,.1)", border: `1px solid ${C.amber}55`, borderRadius: 13, padding: "13px 16px", marginBottom: w.url ? 10 : 18, fontSize: 13.5, color: "#5e5346", lineHeight: 1.6 }}>
+            <b style={{ color: "#8a6a1f", fontFamily: "'Fredoka',sans-serif" }}>🔧 Pas encore ouvert au public.</b>{" "}
+            {w.releaseNote || (w.releaseDate ? `Sortie envisagée vers ${formatDateFr(w.releaseDate)}.` : "La date de sortie n'est pas encore arrêtée.")}
+            {w.url
+              ? " Une version d'essai tourne déjà : elle est ouverte aux membres de l'association, qui la font avancer par leurs retours."
+              : " Le lien sera publié ici dès que le jeu sera prêt — inutile de le chercher ailleurs, il bouge encore."}
+          </div>
+          {/* (lot AF) La version d'essai : aux membres, et à eux seuls. */}
+          {w.url && (currentUser ? (
+            <a href={w.url} target="_blank" rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: "rgba(232,163,23,.16)", border: `1.5px solid ${C.amber}`, color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, padding: "13px 20px", borderRadius: 13, textDecoration: "none", marginBottom: 18 }}>
+              <Wrench size={17} color={C.amber} /> Essayer la version en développement
+            </a>
+          ) : (
+            <button type="button" onClick={() => onAuth && onAuth("login")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", background: "rgba(26,58,92,.05)", border: "1.5px solid #e6dcc9", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14.5, padding: "13px 20px", borderRadius: 13, cursor: "pointer", marginBottom: 18 }}>
+              <Lock size={16} color="#8a7c6a" /> Version d'essai réservée aux membres — se connecter
+            </button>
+          ))}
+        </>
       )}
 
       {/* Zone de discussion, accessible depuis la fiche comme depuis la liste. */}
@@ -8808,6 +8901,8 @@ function WebGamesPage({ onAuth, setToast }) {
             {liste.map((w) => (
               <div key={w.id} style={{ display: "flex", flexDirection: "column" }}>
                 <WebGameCard w={w} onOpen={() => setOpenId(w.id)} />
+                {/* (lot AF) Le lien du jeu, sans avoir à ouvrir la fiche. */}
+                <WebGamePlayStrip w={w} onAuth={onAuth} />
                 <WebGameChatStrip w={w} count={counts[w.id]} onOpen={() => setChatId(w.id)} />
               </div>
             ))}
