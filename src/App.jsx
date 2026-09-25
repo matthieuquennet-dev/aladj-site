@@ -1675,6 +1675,7 @@ function AppProvider({ children }) {
         releaseDate: w.release_date || null, releaseNote: w.release_note || "",
         url: w.url || "", img: w.image_url || "", accent: w.accent || "",
         sortOrder: w.sort_order || 0,
+        createdBy: w.created_by || null,
         credits: (creditsByGame[w.id] || []).slice().sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name, "fr")),
         msgCount: msgCountByGame[w.id] || 0,
       })));
@@ -3020,9 +3021,36 @@ function AppProvider({ children }) {
   // ---- (lot AA) Applications de jeu en ligne ----
   // ============================================================
 
-  // Modifier une fiche d'application (réservé aux administrateurs côté serveur).
+  /* (lot AE) Ouvrir une fiche de jeu en ligne.
+     L'association edite ses propres jeux : proposer un titre n'est pas un acte
+     d'administration, c'est un acte de la vie de l'association. Les membres
+     decisionnaires y ont donc droit, au meme titre que les administrateurs.
+     La fiche nait MASQUEE — on ne publie pas une page vide, on la remplit
+     d'abord. L'adresse courte est deduite du nom ici (le navigateur sait
+     retirer les accents, Postgres beaucoup moins) ; la base la rend unique. */
+  const addWebGame = useCallback(async (name) => {
+    if (!currentUser) return { error: "Connectez-vous pour créer une fiche." };
+    if (!isDecideur(currentUser)) return { error: "Réservé aux membres décisionnaires et aux administrateurs." };
+    const nom = String(name || "").trim();
+    if (nom.length < 2) return { error: "Donnez un nom à ce jeu." };
+    if (nom.length > 80) return { error: "Ce nom est trop long (80 caractères au plus)." };
+    const slug = nom.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").replace(/-+$/, "").slice(0, 40);
+    const { data, error } = await supabase.rpc("aladj_create_web_game", { p_name: nom, p_slug: slug || null });
+    if (error) return { error: error.message };
+    await loadData();
+    return { id: data || null };
+  }, [currentUser, loadData]);
+
+  /* Modifier une fiche d'application.
+     (lot AE) Une fiche a un auteur : lui et les administrateurs la reprennent,
+     personne d'autre — deux personnes qui reecrivent le meme texte se marchent
+     dessus. Le controle ci-dessous n'est qu'un confort d'interface : c'est la
+     RLS de web_games qui tranche pour de bon. */
   const updateWebGame = useCallback(async (id, patch) => {
-    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    if (!canEditWebGame((webGames || []).find((x) => x.id === id), currentUser)) {
+      return { error: "Cette fiche ne peut être modifiée que par son créateur et les administrateurs." };
+    }
     const fields = {};
     if (patch.name !== undefined) fields.name = String(patch.name || "").trim();
     if (patch.status !== undefined) fields.status = patch.status;
@@ -3057,7 +3085,20 @@ function AppProvider({ children }) {
     if (!data || data.length === 0) return { error: "Modification impossible : droits insuffisants." };
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, webGames, loadData]);
+
+  /* (lot AE) Supprimer une fiche. Le createur et les administrateurs, eux seuls.
+     La discussion et les rendez-vous du jeu partent avec (ON DELETE CASCADE) :
+     le site demande confirmation avant d'en arriver la. */
+  const removeWebGame = useCallback(async (id) => {
+    if (!canEditWebGame((webGames || []).find((x) => x.id === id), currentUser)) {
+      return { error: "Cette fiche ne peut être supprimée que par son créateur et les administrateurs." };
+    }
+    const { error } = await supabase.from("web_games").delete().eq("id", id);
+    if (error) return { error: error.message };
+    await loadData();
+    return {};
+  }, [currentUser, webGames, loadData]);
 
   /* (lot AB) Les membres qui ont fabrique le jeu.
      Ils apparaissent sur sa fiche et sont prevenus de chaque message deposé
@@ -3065,7 +3106,9 @@ function AppProvider({ children }) {
      remerciements. La liste est remplacee d'un bloc : c'est plus simple a
      comprendre qu'une suite d'ajouts et de retraits, et la table est minuscule. */
   const setWebGameCredits = useCallback(async (webGameId, rows) => {
-    if (!currentUser?.admin) return { error: "Réservé aux administrateurs." };
+    if (!canEditWebGame((webGames || []).find((x) => x.id === webGameId), currentUser)) {
+      return { error: "Cette fiche ne peut être modifiée que par son créateur et les administrateurs." };
+    }
     const clean = (rows || [])
       .filter((r) => r && r.userId)
       .filter((r, i, arr) => arr.findIndex((x) => x.userId === r.userId) === i)
@@ -3082,7 +3125,7 @@ function AppProvider({ children }) {
     }
     await loadData();
     return {};
-  }, [currentUser, loadData]);
+  }, [currentUser, webGames, loadData]);
 
   /* Le fil de discussion d'un jeu en ligne.
      Ouvert a tous, connectes comme visiteurs : celui qui tombe sur un bug doit
@@ -3936,7 +3979,8 @@ function AppProvider({ children }) {
     addUpcoming, updateUpcoming, removeUpcoming, setHype, setIntent,
     addUpcomingComment, updateUpcomingComment, removeUpcomingComment, importUpcomingToLudo,
     importUpcomingExtension,
-    webGames, webSessions, updateWebGame, addWebSession, removeWebSession, toggleWebSignup, webSessionToEvent,
+    webGames, webSessions, addWebGame, updateWebGame, removeWebGame,
+    addWebSession, removeWebSession, toggleWebSignup, webSessionToEvent,
     setWebGameCredits, fetchWebGameMessages, postWebGameMessage, updateWebGameMessage,
     deleteWebGameMessage, pinWebGameMessage,
     reload: loadData,
@@ -7366,15 +7410,26 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Une <b>petite ligne sous chaque vignette</b> nomme ceux qui ont construit le jeu, du plus impliqué au moins impliqué — le premier nom est mis en avant, les suivants s'effacent progressivement. Trois noms au plus y tiennent ; le survol donne la liste complète avec les rôles.</p>
             <p style={{ margin: "0 0 8px" }}>La <b>fiche détaillée</b>, elle, ouvre sur un encart qui les nomme tous, <b>numérotés dans l'ordre d'importance</b>, avec leur photo et leur rôle (code, illustrations, règles…). Un clic sur un nom ouvre son profil.</p>
-            <p style={{ margin: 0 }}>Ce sont eux, avec les administrateurs, qui <b>reçoivent une notification</b> à chaque message de la discussion : quand vous écrivez, vous savez exactement à qui. <b>Côté administrateurs</b>, « Modifier cette fiche » permet d'ajouter un membre, de préciser son rôle et de le <b>monter ou descendre dans le classement</b> avec deux flèches — l'ordre de la liste est celui qui s'affiche partout.</p>
+            <p style={{ margin: 0 }}>Ce sont eux, avec les administrateurs, qui <b>reçoivent une notification</b> à chaque message de la discussion : quand vous écrivez, vous savez exactement à qui. <b>Le créateur de la fiche et les administrateurs</b> ajoutent un membre depuis « Modifier cette fiche », précisent son rôle et le <b>montent ou descendent dans le classement</b> avec deux flèches — l'ordre de la liste est celui qui s'affiche partout.</p>
           </>,
         },
         {
-          q: "Tout modifier, côté administrateurs",
+          q: "Ouvrir une fiche de jeu (membres décisionnaires)",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>« Modifier cette fiche », en bas de chaque jeu, permet désormais de reprendre <b>la totalité de la présentation</b> : le nom, le <b>sous-titre</b>, l'<b>accroche</b> de la vignette, <b>« Le principe »</b>, <b>« Les règles »</b>, <b>« Comment ça marche »</b> et <b>« Quelques conseils »</b> — plus les langues, la couleur d'accent, la miniature, l'état, la date de sortie, l'adresse, la tablée, la durée et l'ordre d'affichage.</p>
+            <p style={{ margin: "0 0 8px" }}>L'association édite ses jeux : proposer un titre relève de sa vie courante, pas de l'administration du site. <b>Tout membre décisionnaire</b> — et bien sûr tout administrateur — peut donc <b>ouvrir une fiche</b>, avec le bouton <b>« Ouvrir une fiche de jeu »</b> en haut de l'onglet.</p>
+            <p style={{ margin: "0 0 8px" }}>On ne vous demande qu'<b>un nom</b>. La fiche s'ouvre aussitôt sur son formulaire, et vous la remplissez tranquillement : le principe, les règles, le fonctionnement, les conseils, la miniature, la tablée, la durée, les auteurs.</p>
+            <p style={{ margin: "0 0 8px" }}>Elle naît <b>masquée</b> : personne d'autre que vous (et les administrateurs) ne la voit, et elle attend dans une zone <b>« En préparation »</b> visible de vous seul. Le jour où elle est présentable, passez-la en <b>« En développement »</b> — elle rejoint l'atelier — puis en <b>« Jouable »</b> quand le lien est stable. Ce verrou est posé <b>côté serveur</b> : une fiche masquée n'est pas seulement cachée à l'écran, elle est illisible des autres.</p>
+            <p style={{ margin: 0 }}>Il n'y a <b>rien à demander au bureau</b> : ni validation préalable, ni passage par un administrateur.</p>
+          </>,
+        },
+        {
+          q: "Qui peut modifier une fiche de jeu en ligne",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Une fiche appartient à <b>qui l'a ouverte</b>. Son créateur la reprend quand il veut, avec « Modifier cette fiche » en bas de la fiche ; les <b>administrateurs</b> peuvent intervenir partout, pour dépanner. <b>Personne d'autre</b> — un décisionnaire n'a pas la main sur la fiche d'un autre. Là encore, c'est <b>vérifié côté serveur</b>, pas seulement masqué à l'écran.</p>
+            <p style={{ margin: "0 0 8px" }}>Le formulaire donne accès à <b>la totalité de la présentation</b> : le nom, le <b>sous-titre</b>, l'<b>accroche</b> de la vignette, <b>« Le principe »</b>, <b>« Les règles »</b>, <b>« Comment ça marche »</b> et <b>« Quelques conseils »</b> — plus les langues, la couleur d'accent, la miniature, l'état, la date de sortie, l'adresse, la tablée, la durée et l'ordre d'affichage.</p>
             <p style={{ margin: "0 0 8px" }}>Un champ <b>laissé vide revient au texte livré avec le site</b> : un bouton « Revenir au texte d'origine » le vide en un clic. Aucun texte n'est donc perdu, jamais.</p>
-            <p style={{ margin: 0 }}>Le même écran sert à <b>créditer les membres</b> qui ont participé à la construction du jeu : cherchez un nom, ajoutez-le, précisez son rôle.</p>
+            <p style={{ margin: "0 0 8px" }}>Le même écran sert à <b>créditer les membres</b> qui ont participé à la construction du jeu : cherchez un nom, ajoutez-le, précisez son rôle.</p>
+            <p style={{ margin: 0 }}>Enfin, un bouton <b>« Supprimer »</b> efface la fiche — <b>avec sa discussion et ses rendez-vous</b>, définitivement. Il est réservé au créateur et aux administrateurs, et demande confirmation. Les deux premières fiches du site (SudoCulpa, Le Thalex) n'ont pas de créateur enregistré : elles restent du ressort des administrateurs.</p>
           </>,
         },
         {
@@ -7399,7 +7454,8 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>L'onglet se lit en deux temps. <b>« Disponibles »</b> rassemble les jeux que vous pouvez lancer tout de suite. <b>« En cours de développement »</b> montre l'atelier : les titres sur lesquels l'association travaille, avec — quand elle est connue — une <b>date de sortie approximative</b> que les administrateurs renseignent.</p>
             <p style={{ margin: "0 0 8px" }}>Chaque jeu a sa <b>miniature</b> et une phrase qui dit de quoi il retourne. Un clic ouvre sa fiche complète : le <b>principe</b>, les <b>règles</b>, le <b>fonctionnement</b> et quelques <b>conseils</b> pour bien débuter.</p>
             <p style={{ margin: "0 0 8px" }}>Tant qu'un jeu n'est pas ouvert au public, <b>aucun lien n'est publié</b> : les adresses de développement changent encore, et un lien mort ne rend service à personne. Le bouton « Jouer » apparaît le jour où le jeu est prêt.</p>
-            <p style={{ margin: 0 }}><b>Côté administrateurs.</b> En bas de chaque fiche, « Modifier cette fiche » règle le nom, l'état, la date de sortie, l'adresse, le nombre de joueurs, la durée et l'ordre d'affichage — ainsi que la <b>miniature</b> : importez une image ou collez une adresse web, l'aperçu montre aussitôt le rendu de la vignette. Laissée vide, la miniature revient au <b>dessin livré avec le site</b> ; un bouton « Revenir au dessin d'origine » le rétablit en un clic.</p>
+            <p style={{ margin: "0 0 8px" }}>Une <b>troisième zone, « En préparation »</b>, n'apparaît qu'à ceux qui ont une fiche masquée en chantier (et aux administrateurs) : les autres membres ne la voient pas du tout.</p>
+            <p style={{ margin: 0 }}><b>Côté créateur et administrateurs.</b> En bas de chaque fiche, « Modifier cette fiche » règle le nom, l'état, la date de sortie, l'adresse, le nombre de joueurs, la durée et l'ordre d'affichage — ainsi que la <b>miniature</b> : importez une image ou collez une adresse web, l'aperçu montre aussitôt le rendu de la vignette. Laissée vide, la miniature revient au <b>dessin livré avec le site</b> ; un bouton « Revenir au dessin d'origine » le rétablit en un clic.</p>
           </>,
         },
         {
@@ -7665,6 +7721,29 @@ function mergeWebGame(w) {
     time: w.time || d.time || null,
     languages: (w.languages && w.languages.length) ? w.languages : (d.languages || []),
   };
+}
+
+/* ---- Qui touche a une fiche ? (lot AE) -----------------------------------
+   Deux questions, deux reponses, et elles ne sont pas les memes.
+
+   OUVRIR une fiche : les membres decisionnaires et les administrateurs.
+   L'association edite ses jeux ; proposer un titre releve de sa vie courante,
+   pas de l'administration du site.
+
+   LA MODIFIER : son createur et les administrateurs, personne d'autre. Une
+   fiche a un auteur — celui qui fabrique le jeu en parle mieux que quiconque,
+   et deux plumes sur le meme texte finissent toujours par s'effacer l'une
+   l'autre. Les administrateurs gardent la main partout, pour depanner.
+
+   Les deux fiches semees a l'origine (SudoCulpa, Le Thalex) n'ont pas de
+   createur : elles restent du ressort des administrateurs, jusqu'a ce que
+   l'un d'eux les confie a quelqu'un.
+   ------------------------------------------------------------------------ */
+function canCreateWebGame(u) {
+  return isDecideur(u);
+}
+function canEditWebGame(w, u) {
+  return !!u && !!w && (u.admin === true || (!!w.createdBy && w.createdBy === u.id));
 }
 
 /* ---- Miniatures dessinées ------------------------------------------------
@@ -7984,6 +8063,7 @@ function webGameCreditsLine(credits) {
 }
 
 function WebGameCard({ w, onOpen }) {
+  const hidden = w.status === "hidden";
   const dev = w.status !== "live";
   const credits = webGameCreditsLine(w.credits);
   return (
@@ -7999,11 +8079,11 @@ function WebGameCard({ w, onOpen }) {
         <WebGameArt w={w} />
         <div style={{ position: "absolute", top: 10, left: 10 }}>
           <span style={{
-            display: "inline-flex", alignItems: "center", gap: 5, background: dev ? C.amber : C.teal, color: "#fff",
+            display: "inline-flex", alignItems: "center", gap: 5, background: hidden ? "#6e6256" : (dev ? C.amber : C.teal), color: "#fff",
             borderRadius: 999, padding: "4px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11.5,
             boxShadow: "0 2px 6px rgba(0,0,0,.22)",
           }}>
-            {dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}
+            {hidden ? <><EyeOff size={12} /> Masqué</> : dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}
           </span>
         </div>
       </div>
@@ -8299,13 +8379,31 @@ function WebGameChatStrip({ w, count, onOpen }) {
 }
 
 /* ---- Fiche détaillée d'une application ---- */
-function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
-  const { currentUser, updateWebGame, users } = useApp();
-  const [editing, setEditing] = useState(false);
+function WebGameDetailModal({ w, onClose, onAuth, setToast, initialEditing }) {
+  const { currentUser, updateWebGame, removeWebGame, users, askConfirm } = useApp();
+  const [editing, setEditing] = useState(!!initialEditing);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatCount, setChatCount] = useState(null);
   const [viewMember, setViewMember] = useState(null);
   const dev = w.status !== "live";
+  const hidden = w.status === "hidden";
+  // (lot AE) Le createur de la fiche la reprend quand il veut ; les
+  // administrateurs aussi, mais eux pour depanner.
+  const canEdit = canEditWebGame(w, currentUser);
+  const mienne = !!(currentUser && w.createdBy && w.createdBy === currentUser.id);
+
+  const supprimer = async () => {
+    const ok = await askConfirm({
+      title: "Supprimer la fiche de " + w.name + " ?",
+      message: "La fiche disparaît du site, et avec elle toute sa discussion et les rendez-vous qui lui sont rattachés. C'est définitif.",
+      confirmLabel: "Supprimer la fiche",
+    });
+    if (!ok) return;
+    const res = await removeWebGame(w.id);
+    if (res?.error) { if (setToast) setToast(res.error); return; }
+    if (setToast) setToast("Fiche supprimée.");
+    onClose();
+  };
 
   const bloc = (icon, titre, texte) => (texte ? (
     <div style={{ marginBottom: 18 }}>
@@ -8323,7 +8421,9 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
       </div>
 
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
-        <Badge color={dev ? C.amber : C.teal} soft={false}>{dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}</Badge>
+        <Badge color={hidden ? "#6e6256" : (dev ? C.amber : C.teal)} soft={false}>
+          {hidden ? <><EyeOff size={12} /> Masqué</> : dev ? <><Wrench size={12} /> En développement</> : <><Rocket size={12} /> Jouable</>}
+        </Badge>
         {w.min && <Badge color={C.teal}><Users size={12} /> {w.min}{w.max && w.max !== w.min ? `–${w.max}` : ""} joueurs</Badge>}
         {w.time && <Badge color={C.amber}><Clock size={12} /> {w.time} min</Badge>}
         {(w.languages || []).map((l) => <Badge key={l} color="#8a7c6a">{l}</Badge>)}
@@ -8422,19 +8522,33 @@ function WebGameDetailModal({ w, onClose, onAuth, setToast }) {
       )}
       {viewMember && <MemberLibraryModal memberId={viewMember} onClose={() => setViewMember(null)} setToast={setToast} onAuth={onAuth} />}
 
-      {currentUser?.admin && (
+      {canEdit && (
         <div style={{ marginTop: 18, borderTop: "1px solid #f0e8d8", paddingTop: 14 }}>
           {editing
-            ? <WebGameAdminForm w={w} onCancel={() => setEditing(false)} onSave={updateWebGame} setToast={setToast} />
-            : <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier cette fiche (administration)</Btn>}
+            ? <WebGameEditForm w={w} onCancel={() => setEditing(false)} onSave={updateWebGame} setToast={setToast} />
+            : (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Btn size="sm" variant="soft" onClick={() => setEditing(true)}><Edit3 size={14} /> Modifier cette fiche</Btn>
+                <Btn size="sm" variant="danger" onClick={supprimer}><Trash2 size={14} /> Supprimer</Btn>
+                <span style={{ fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5 }}>
+                  {mienne
+                    ? "Vous avez ouvert cette fiche : elle est la vôtre."
+                    : "Vous intervenez ici comme administrateur."}
+                </span>
+              </div>
+            )}
         </div>
       )}
     </Modal>
   );
 }
 
-/* ---- Réglages d'une application, côté administrateurs ---- */
-function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
+/* ---- Réglages d'une application ----
+   (lot AE) Le meme formulaire pour le createur de la fiche et pour les
+   administrateurs : il n'y a pas de raison qu'un auteur ait moins de prise sur
+   son jeu que le bureau. L'etat « masqué » est la clef de voute — c'est lui qui
+   permet d'ouvrir une fiche et de la remplir sans la montrer a personne. */
+function WebGameEditForm({ w, onCancel, onSave, setToast }) {
   const { users, setWebGameCredits } = useApp();
   const [f, setF] = useState({
     name: w.name || "", status: w.status || "dev",
@@ -8575,7 +8689,8 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
         )}
       </Field>
 
-      <Field label="État">
+      <Field label="État"
+        hint="« Masqué » garde la fiche pour vous seul (et pour les administrateurs) : c'est l'état des fiches que l'on prépare. « En développement » la montre dans l'atelier, « Jouable » la publie avec son lien.">
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
           {[{ k: "dev", t: "🔧 En développement" }, { k: "live", t: "🚀 Jouable" }, { k: "hidden", t: "🙈 Masqué" }].map((o) => (
             <button key={o.k} type="button" onClick={() => setF({ ...f, status: o.k })}
@@ -8608,22 +8723,79 @@ function WebGameAdminForm({ w, onCancel, onSave, setToast }) {
   );
 }
 
+/* ---- Ouvrir une fiche (lot AE) ----
+   Un seul champ : le nom. Tout le reste attend dans le formulaire de la fiche,
+   qui s'ouvre dans la foulee. Reclamer douze renseignements a quelqu'un qui
+   vient d'avoir une idee, c'est le plus sur moyen qu'il n'en fasse rien. */
+function WebGameCreateModal({ onClose, onCreated, setToast }) {
+  const { addWebGame } = useApp();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    if (busy || name.trim().length < 2) return;
+    setBusy(true); setErr("");
+    const res = await addWebGame(name);
+    setBusy(false);
+    if (res?.error) { setErr(res.error); return; }
+    if (setToast) setToast("Fiche créée — elle reste masquée le temps que vous la remplissiez.");
+    onClose();
+    if (onCreated) onCreated(res.id);
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Ouvrir une fiche de jeu en ligne" width={540}>
+      <p style={{ fontSize: 14.5, color: "#5e5346", lineHeight: 1.65, margin: "0 0 18px" }}>
+        L'association édite ses propres jeux. Donnez un nom à celui-ci : la fiche s'ouvre aussitôt,
+        <b> masquée</b>, et vous la remplissez tranquillement — principe, règles, miniature, auteurs.
+        Personne d'autre ne la voit tant que vous ne l'avez pas passée en « en développement » ou « jouable ».
+      </p>
+      <Field label="Nom du jeu" hint="Vous pourrez le changer à tout moment.">
+        <TextInput value={name} maxLength={80} autoFocus placeholder="Ex. Le Thalex"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      </Field>
+      {err && <div style={{ background: "rgba(181,40,58,.08)", color: C.red, padding: "9px 12px", borderRadius: 9, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Btn variant="teal" onClick={submit} disabled={busy || name.trim().length < 2}>
+          {busy ? <Loader2 size={15} className="aladj-spin" /> : <><Plus size={15} /> Créer la fiche</>}
+        </Btn>
+        <Btn variant="soft" onClick={onClose}>Annuler</Btn>
+      </div>
+      <p style={{ fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.6, margin: "16px 0 0" }}>
+        <Info size={13} style={{ verticalAlign: "-2px" }} /> Une fiche appartient à qui l'ouvre :
+        vous seul (et les administrateurs) pourrez la modifier ensuite.
+      </p>
+    </Modal>
+  );
+}
+
 /* ---- La page ---- */
 function WebGamesPage({ onAuth, setToast }) {
   const { webGames, currentUser } = useApp();
   const [openId, setOpenId] = useState(null);
   const [howTo, setHowTo] = useState(false);
+  // (lot AE) Ouverture d'une fiche par un membre decisionnaire. Une fois creee,
+  // la fiche s'ouvre directement sur son formulaire : demander un nom puis
+  // laisser quelqu'un devant une page vide, c'est le meilleur moyen qu'il n'en
+  // fasse rien.
+  const [creating, setCreating] = useState(false);
+  const [editId, setEditId] = useState(null);
   // (lot AB) Discussion ouverte depuis la liste, et compteurs rafraichis sans
   // recharger tout le site : un message poste ne doit pas couter un aller-retour
   // sur l'ensemble des donnees.
   const [chatId, setChatId] = useState(null);
   const [counts, setCounts] = useState({});
 
+  // Une fiche masquée n'existe que pour son auteur et les administrateurs —
+  // c'est verrouillé côté serveur aussi, pas seulement caché ici.
   const all = useMemo(() => (webGames || [])
-    .filter((w) => w.status !== "hidden" || currentUser?.admin)
+    .filter((w) => w.status !== "hidden" || currentUser?.admin || (w.createdBy && w.createdBy === currentUser?.id))
     .map(mergeWebGame), [webGames, currentUser]);
   const live = all.filter((w) => w.status === "live");
-  const dev = all.filter((w) => w.status !== "live");
+  const dev = all.filter((w) => w.status === "dev");
+  const masques = all.filter((w) => w.status === "hidden");
   const opened = all.find((w) => w.id === openId) || null;
 
   const section = (titre, sousTitre, liste, vide) => (
@@ -8659,6 +8831,16 @@ function WebGamesPage({ onAuth, setToast }) {
           Tous se jouent <b>à plusieurs, sur place ou à distance</b> — et comme ils tiennent dans un téléphone,
           vous avez toujours de quoi proposer une partie, où que vous soyez.
         </p>
+        {/* (lot AE) Ouvrir une fiche : les membres décisionnaires comme les
+            administrateurs. C'est ici que commence un jeu de l'association. */}
+        {canCreateWebGame(currentUser) && (
+          <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn variant="amber" onClick={() => setCreating(true)}><Plus size={16} /> Ouvrir une fiche de jeu</Btn>
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,.75)", lineHeight: 1.5 }}>
+              Elle naîtra masquée, le temps que vous la remplissiez.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Rappel d'installation */}
@@ -8682,6 +8864,11 @@ function WebGamesPage({ onAuth, setToast }) {
       {section("Atelier", "En cours de développement", dev,
         "Rien en chantier pour le moment.")}
 
+      {/* (lot AE) Les fiches masquées : celles que l'on prépare. Elles ne sont
+          listées que pour leur auteur et pour les administrateurs. */}
+      {masques.length > 0 && section("En préparation", "Fiches masquées, invisibles des autres membres", masques,
+        "Aucune fiche en préparation.")}
+
       {/* Tous les rendez-vous, jeux confondus */}
       <WebGameRendezVous webGameId={null} onAuth={onAuth} setToast={setToast} />
 
@@ -8690,7 +8877,14 @@ function WebGamesPage({ onAuth, setToast }) {
         Une idée de jeu, une remarque, un bug&nbsp;? Dites-le sur la conversation Signal « Blabla » — c'est comme cela qu'ils s'améliorent.
       </p>
 
-      {opened && <WebGameDetailModal w={opened} onClose={() => setOpenId(null)} onAuth={onAuth} setToast={setToast} />}
+      {opened && (
+        <WebGameDetailModal w={opened} initialEditing={editId === opened.id}
+          onClose={() => { setOpenId(null); setEditId(null); }} onAuth={onAuth} setToast={setToast} />
+      )}
+      {creating && (
+        <WebGameCreateModal setToast={setToast} onClose={() => setCreating(false)}
+          onCreated={(id) => { if (id) { setEditId(id); setOpenId(id); } }} />
+      )}
       {chatId && (() => {
         const jeu = all.find((x) => x.id === chatId);
         return jeu ? (
