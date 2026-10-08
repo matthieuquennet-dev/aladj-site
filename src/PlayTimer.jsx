@@ -386,6 +386,52 @@ function useLandscape() {
   return wide;
 }
 
+/* (lot AG) Score a taille ajustee. Sur la tablette en deux colonnes (5 joueurs
+   et plus), la place laissee au score depend de la largeur de la dalle, du
+   nombre de chiffres et de la duree affichee a cote : une taille fixe en vw
+   finissait a un seul chiffre, et encore rogne. On mesure donc la boite
+   reellement disponible et on prend la plus grande taille qui y fait tenir
+   le nombre, en largeur comme en hauteur, entre minPx et maxPx.
+   Le nombre est pose en absolu dans sa boite : il ne pese pas sur la hauteur
+   de la carte, ce qui evite toute boucle entre mesure et rendu.
+   On reserve toujours la place de trois caracteres : tous les scores de la
+   table ont ainsi la meme taille, et elle ne saute pas en passant de 99 a
+   100. Au-dela (1000 et plus, ou -100), le nombre se resserre pour tenir. */
+const SCORE_CHAR_EM = 0.64;  // largeur d'un chiffre Fredoka (tabular), un peu genereuse
+function FitScore({ value, color, minPx = 26, maxPx = 120 }) {
+  const boxRef = useRef(null);
+  const txt = String(value);
+  const chars = Math.max(3, txt.length);
+  const [px, setPx] = useState(48);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = el.clientWidth, h = el.clientHeight;
+      if (!w || !h) return;
+      const byW = w / (chars * SCORE_CHAR_EM);
+      const byH = h / 1.0;   // lineHeight .95 : on garde un souffle
+      const next = Math.round(Math.max(minPx, Math.min(maxPx, byW, byH)));
+      setPx((cur) => (cur === next ? cur : next));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [chars, minPx, maxPx]);
+  return (
+    <span ref={boxRef} style={{ position: 'relative', display: 'block', flex: '1 1 0', minHeight: 0, width: '100%' }}>
+      <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: TITLE, fontWeight: 600, fontSize: px, lineHeight: .95, color,
+        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{txt}</span>
+    </span>
+  );
+}
+
 const WAKE_LOCK_SUPPORTED = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
 function useKeepAwake(enabled) {
@@ -3086,6 +3132,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       // de laisser du vide sous les cartes.
       const rows = n <= 4 ? n : Math.ceil(n / 2);
       const cols = n <= 4 ? 1 : 2;
+      // (lot AG) En deux colonnes, chaque carte n'a que la moitie de la
+      // largeur : identite et chrono se resserrent, les boutons - et +
+      // rapetissent, et c'est le score qui recupere la place.
+      const compact = cols > 1;
       // Le minuteur, quand il est affiche, occupe une bande en haut :
       // on la retire de la hauteur disponible pour les cartes joueurs.
       const timerBand = timerOn ? ((timerEndsAt || timerRest != null || timerRinging) ? 108 : 152) : 0;
@@ -3154,6 +3204,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         if (L <= 16) return 'clamp(17px,1.7vw,28px)';
         if (L <= 24) return 'clamp(15px,1.4vw,23px)';
         return 'clamp(13px,1.15vw,19px)';
+      };
+      const nameSizeCompact = (nm) => {
+        const L = String(nm || '').length;
+        if (L <= 10) return 'clamp(15px,1.45vw,26px)';
+        if (L <= 16) return 'clamp(14px,1.25vw,22px)';
+        if (L <= 24) return 'clamp(12px,1.05vw,18px)';
+        return 'clamp(11px,.92vw,16px)';
       };
 
       const tile = (icon, label, on, onClick, tint, highlight) => (
@@ -3239,16 +3296,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                  Sur une carte active (fond colore), les deux passent en blanc
                  translucide pour rester lisibles. */
               const stepBtn = (tint) => ({
-                width: 'clamp(50px,4.4vw,74px)', height: 'clamp(50px,4.4vw,74px)', flex: '0 0 auto',
-                borderRadius: 16, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
-                fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(26px,2.3vw,40px)', lineHeight: 1,
+                width: compact ? 'clamp(40px,3.2vw,56px)' : 'clamp(50px,4.4vw,74px)',
+                height: compact ? 'clamp(40px,3.2vw,56px)' : 'clamp(50px,4.4vw,74px)', flex: '0 0 auto',
+                borderRadius: compact ? 12 : 16, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
+                fontFamily: TITLE, fontWeight: 600, fontSize: compact ? 'clamp(22px,1.8vw,32px)' : 'clamp(26px,2.3vw,40px)', lineHeight: 1,
                 border: `2px solid ${active ? 'rgba(255,255,255,.55)' : `${tint}66`}`,
                 background: active ? 'rgba(255,255,255,.20)' : `${tint}14`,
                 color: active ? ink : tint,
                 touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
               });
               const ordBtn = (off) => ({
-                width: 'clamp(40px,3.2vw,54px)', height: 'clamp(27px,2.1vw,36px)', flex: '0 0 auto',
+                width: compact ? 'clamp(32px,2.6vw,46px)' : 'clamp(40px,3.2vw,54px)',
+                height: compact ? 'clamp(24px,1.9vw,32px)' : 'clamp(27px,2.1vw,36px)', flex: '0 0 auto',
                 borderRadius: 10, padding: 0, display: 'grid', placeItems: 'center',
                 cursor: off ? 'default' : 'pointer', opacity: off ? 0.3 : 1,
                 border: `2px solid ${active ? 'rgba(255,255,255,.45)' : '#E7DCC7'}`,
@@ -3261,8 +3320,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <div key={p.id}
                   onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
                   style={{
-                    position: 'relative', display: 'flex', alignItems: 'center', gap: 'clamp(10px,1.2vw,20px)',
-                    minHeight: rowH, borderRadius: 20, padding: '10px clamp(12px,1.5vw,22px)',
+                    position: 'relative', display: 'flex', alignItems: 'center',
+                    gap: compact ? 'clamp(6px,.7vw,12px)' : 'clamp(10px,1.2vw,20px)',
+                    minHeight: rowH, borderRadius: 20,
+                    padding: compact ? '8px clamp(10px,1vw,16px)' : '10px clamp(12px,1.5vw,22px)',
                     cursor: clickable ? 'pointer' : 'default', overflow: 'hidden',
                     background: active ? `linear-gradient(115deg, ${hex}, ${hex}d0)` : '#fff',
                     border: `2px solid ${active ? hex : '#E7DCC7'}`,
@@ -3274,9 +3335,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
                   {/* Identite */}
                   <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    gap: 6, width: 'clamp(134px,15vw,272px)', marginLeft: active ? 0 : 6 }}>
-                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={78} />
-                    <span title={p.name} style={{ fontFamily: TITLE, fontWeight: 600, fontSize: nameSize(p.name),
+                    gap: compact ? 4 : 6, width: compact ? 'clamp(88px,10.5vw,200px)' : 'clamp(134px,15vw,272px)', marginLeft: active ? 0 : 6 }}>
+                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={compact ? 50 : 78} />
+                    <span title={p.name} style={{ fontFamily: TITLE, fontWeight: 600, fontSize: compact ? nameSizeCompact(p.name) : nameSize(p.name),
                       lineHeight: 1.14, color: ink, textAlign: 'center', maxWidth: '100%',
                       display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
                       overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</span>
@@ -3291,17 +3352,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                       Le nombre lui-meme ouvre le pave pour le reste. */}
                   <div onClick={(e) => e.stopPropagation()}
                     style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', gap: 'clamp(8px,1vw,18px)' }}>
+                      justifyContent: 'center', gap: compact ? 'clamp(8px,1.2vw,22px)' : 'clamp(8px,1vw,18px)',
+                      alignSelf: compact ? 'stretch' : undefined }}>
                     <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
                       aria-label={`Retirer un point a ${p.name}`} title="−1 point" style={stepBtn(C.red)}>−</button>
-                    <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
-                      style={{ flex: '0 1 auto', minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
-                        padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: `clamp(44px, ${n <= 4 ? '6.2vw' : '4.1vw'}, 112px)`,
-                        lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
-                      <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
-                        opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
-                    </button>
+                    {compact ? (
+                      /* (lot AG) Le score occupe toute la place entre ses deux
+                         boutons et prend la plus grande taille qui y tient. */
+                      <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
+                        style={{ flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', border: 'none', background: 'transparent', cursor: 'pointer',
+                          padding: '2px 0', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', overflow: 'hidden' }}>
+                        <FitScore value={p.score || 0} color={ink} minPx={26} maxPx={120} />
+                        <span style={{ fontSize: 'clamp(10px,.85vw,14px)', letterSpacing: 1.2, fontWeight: 700, textAlign: 'center',
+                          opacity: .55, textTransform: 'uppercase', marginTop: 1, flex: '0 0 auto' }}>points</span>
+                      </button>
+                    ) : (
+                      <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
+                        style={{ flex: '0 1 auto', minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+                          padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(44px, 6.2vw, 112px)',
+                          lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
+                        <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
+                          opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
+                      </button>
+                    )}
                     <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
                       aria-label={`Ajouter un point a ${p.name}`} title="+1 point" style={stepBtn(C.teal)}>+</button>
                   </div>
@@ -3311,7 +3385,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                       score : on ne les touche donc pas en comptant les points,
                       et la carte garde exactement la meme hauteur. */}
                   <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-                    gap: 'clamp(7px,.8vw,13px)', width: 'clamp(162px,15vw,290px)' }}>
+                    gap: compact ? 'clamp(5px,.55vw,10px)' : 'clamp(7px,.8vw,13px)',
+                    ...(compact ? { minWidth: 'clamp(112px,11vw,210px)' } : { width: 'clamp(162px,15vw,290px)' }) }}>
                     {players.length > 1 && (
                       <div onClick={(e) => e.stopPropagation()}
                         style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 auto' }}>
@@ -3325,11 +3400,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     )}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
                       justifyContent: 'center', gap: 3, minWidth: 0 }}>
-                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(30px,3.15vw,58px)',
-                        lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>{fmt(shown(p.id))}</span>
+                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: compact ? 'clamp(22px,2.2vw,42px)' : 'clamp(30px,3.15vw,58px)',
+                        lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmt(shown(p.id))}</span>
                       {active
-                        ? <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .8, color: ink, opacity: .85, textTransform: 'uppercase' }}>à lui de jouer</span>
-                        : <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: .6, textTransform: 'uppercase', fontWeight: 700 }}>temps de jeu</span>}
+                        ? <span style={{ fontSize: compact ? 'clamp(9.5px,.82vw,14px)' : 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: compact ? .5 : .8, color: ink, opacity: .85, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>à lui de jouer</span>
+                        : <span style={{ fontSize: compact ? 'clamp(9.5px,.82vw,14px)' : 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: compact ? .4 : .6, textTransform: 'uppercase', fontWeight: 700, whiteSpace: 'nowrap' }}>temps de jeu</span>}
                     </div>
                   </div>
 
