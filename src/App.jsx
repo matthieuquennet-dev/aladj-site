@@ -7161,6 +7161,14 @@ function GuidePage() {
           </>,
         },
         {
+          q: "« À venir » : les sorties récentes, pour faire ses emplettes",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>En tête de la page <b>À venir</b>, un encart <b>🛍️ Sorties récentes</b> rassemble les jeux et extensions <b>sortis en France il y a deux mois ou moins</b>, le plus récent en tête. Il se replie et se déplie d'un clic sur son titre ; votre navigateur se souvient de votre choix.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque ligne donne la <b>date de sortie</b> (« il y a 3 semaines »), le <b>prix neuf</b> quand il est renseigné, votre <b>intention d'achat</b> — ou, à défaut, le nombre de membres intéressés —, le nombre de membres qui <b>l'ont déjà</b>, et un bouton <b>Ludum</b> pour l'acheter directement. Un clic ailleurs sur la ligne ouvre la fiche.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>L'encart est indépendant des filtres et du tri de la page. Seule une <b>date de sortie</b> permet de dater la parution : une fiche simplement cochée « déjà sorti », sans date, n'y figure pas — complétez la date sur la fiche pour l'y faire entrer. Les fiches qui ont quitté la veille (jeu noté deux fois dans la ludothèque, extension possédée depuis plus de quinze jours) n'y figurent plus, comme dans le reste de la page. L'encart ne s'affiche pas quand rien n'est sorti ces deux derniers mois.</p>
+          </>,
+        },
+        {
           q: "Les extensions dans « À venir »",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Une <b>extension</b> peut désormais avoir sa propre fiche de veille, au même titre qu'un jeu. Au moment de l'ajout, un sélecteur en haut de la fenêtre demande simplement : <b>🎲 un jeu</b> ou <b>🧩 une extension</b>. Dans le second cas, il faut désigner son <b>jeu de base</b> — soit un jeu de la ludothèque, soit une autre fiche « À venir » si le jeu de base n'est pas encore sorti.</p>
@@ -7222,6 +7230,14 @@ function GuidePage() {
         {
           q: "Vue tablette : les noms s'affichent en entier",
           a: <p style={{ margin: 0 }}>Un nom un peu long n'est plus coupé en vue tablette : il <b>passe sur deux lignes</b> et sa taille s'ajuste toute seule. La place ne manquait pas sur une dalle posée au milieu de la table — il n'y avait aucune raison de tronquer. Le <b>titre du jeu</b>, dans le bandeau, obéit à la même règle.</p>,
+        },
+        {
+          q: "Vue tablette à 5 joueurs et plus : le score reste lisible",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>À partir de <b>5 joueurs</b>, la vue tablette range les cartes sur <b>deux colonnes</b> : chaque carte n'a plus que la moitié de la largeur. Jusqu'ici, le score se retrouvait coincé entre ses boutons − et +, au point de ne plus montrer qu'un chiffre, et encore mal.</p>
+            <p style={{ margin: "0 0 8px" }}>Désormais, sur deux colonnes, l'avatar, le nom et le temps de jeu se resserrent, les boutons <b>−</b> et <b>+</b> rapetissent et s'écartent, et c'est le <b>score qui récupère la place</b>. Sa taille se règle toute seule sur l'espace réellement disponible : <b>trois chiffres</b> tiennent toujours, en gros, quelle que soit la tablette.</p>
+            <p style={{ margin: 0 }}>Tous les scores de la table ont la <b>même taille</b>, qu'ils affichent 7 ou 128 : le nombre ne grossit ni ne rapetisse en passant de 99 à 100. Seul un score à quatre chiffres (ou un « −100 ») se resserre pour tenir. À 4 joueurs ou moins, rien ne change.</p>
+          </>,
         },
         {
           q: "L'onglet « Chrono » : la page dédiée",
@@ -9106,6 +9122,7 @@ function ChronoPage({ onAuth, setPage }) {
         <>Sur un <b>grand écran en paysage</b>, le chrono bascule tout seul sur une disposition dédiée.</>,
         <>En haut, les <b>trois grands blocs</b> de phase avec leur compteur en très gros caractères.</>,
         <>En dessous, les joueurs en tuiles : couleur, temps, score, et le trophée.</>,
+        <>À <b>5 joueurs et plus</b>, les tuiles passent sur deux colonnes et le score s'ajuste à la place : trois chiffres restent lisibles en gros.</>,
         <>Le grand <b>QR de jonction</b> s'affiche d'un appui, pour les retardataires.</>,
       ],
       illu: <Illu caption="Le passage en vue tablette est automatique, et forçable à la main."><MockBtn color={C.teal}>Vue tablette</MockBtn><MockBtn color={C.navy} soft>Vue téléphone</MockBtn></Illu>,
@@ -14932,6 +14949,114 @@ function UpcomingCard({ u, onOpen, currentUserId }) {
   );
 }
 
+/* ---- (lot AG) Sorties récentes -------------------------------------------
+   Une liste dépliable, en tête de la page, des fiches sorties en France il y
+   a deux mois ou moins : de quoi faire ses emplettes sans parcourir toute la
+   veille. Seule une DATE de sortie permet de dater la parution : une fiche
+   simplement cochée « déjà sorti », sans date, ne peut pas y figurer.
+   Les fiches qui ont quitté la veille (règle de bascule habituelle : jeu
+   noté deux fois dans la ludothèque, extension possédée depuis quinze jours)
+   n'y sont pas non plus : la liste part de `upcoming`, déjà filtrée.
+   ------------------------------------------------------------------------ */
+const RECENT_RELEASE_MONTHS = 2;
+const RECENT_OPEN_KEY = "aladj_upc_recent_open";
+
+/* Date de sortie si elle tombe dans les deux derniers mois (aujourd'hui
+   compris), sinon null. */
+function recentReleaseDate(u, now) {
+  if (!u || !u.releaseDate) return null;
+  const d = new Date(u.releaseDate + "T00:00:00");
+  if (isNaN(d.getTime())) return null;
+  const today = new Date(now || Date.now()); today.setHours(0, 0, 0, 0);
+  const from = new Date(today); from.setMonth(from.getMonth() - RECENT_RELEASE_MONTHS);
+  return d <= today && d >= from ? d : null;
+}
+
+/* « aujourd'hui », « hier », « il y a 5 jours », « il y a 3 semaines ». */
+function releasedAgo(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((today - d) / 86400000);
+  if (days <= 0) return "aujourd'hui";
+  if (days === 1) return "hier";
+  if (days < 14) return `il y a ${days} jours`;
+  const w = Math.floor(days / 7);
+  return `il y a ${w} semaines`;
+}
+
+function RecentReleasesPanel({ items, currentUserId, onOpen }) {
+  const [open, setOpen] = useState(() => {
+    try { return typeof window !== "undefined" && window.localStorage && window.localStorage.getItem(RECENT_OPEN_KEY) === "1"; }
+    catch (e) { return false; }
+  });
+  const toggle = () => setOpen((o) => {
+    const next = !o;
+    try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(RECENT_OPEN_KEY, next ? "1" : "0"); }
+    catch (e) { /* stockage indisponible : sans gravite */ }
+    return next;
+  });
+  if (!items.length) return null;
+  const n = items.length;
+  return (
+    <div style={{ background: "#fff", border: `1.5px solid ${C.teal}44`, borderRadius: 16, marginBottom: 18, overflow: "hidden", boxShadow: "0 4px 16px rgba(18,41,63,.05)" }}>
+      <button type="button" onClick={toggle} aria-expanded={open}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", border: "none", cursor: "pointer", textAlign: "left", background: open ? "rgba(30,138,138,.07)" : "#fff" }}>
+        <span style={{ width: 38, height: 38, borderRadius: 11, background: C.teal, color: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <ShoppingBag size={19} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 16.5 }}>
+            Sorties récentes <span style={{ color: C.teal }}>· {n}</span>
+          </span>
+          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.4 }}>
+            {n} sortie{n > 1 ? "s" : ""} ces deux derniers mois, la plus récente en tête — de quoi faire ses emplettes.
+          </span>
+        </span>
+        <ChevronDown size={20} color={C.teal} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div style={{ borderTop: "1px solid #efe6d6", maxHeight: 440, overflowY: "auto" }}>
+          {items.map(({ u, date }) => {
+            const myIntent = currentUserId ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[currentUserId]) : null;
+            const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length;
+            const owners = (u.ludoOwners || []).length;
+            return (
+              <div key={u.id} role="button" tabIndex={0} onClick={() => onOpen(u.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(u.id); } }}
+                style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 16px", borderBottom: "1px solid #f3ecdf", cursor: "pointer" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(232,163,23,.06)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 12, flex: "1 1 240px", minWidth: 0 }}>
+                  {u.img
+                    ? <img src={u.img} alt="" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#f3ecdf" }} />
+                    : <span style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, background: `linear-gradient(135deg, ${C.teal}, ${C.navy})` }} />}
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                    {u.kind === "extension" && <span style={{ display: "block", fontSize: 11.5, color: C.purple, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
+                    <span style={{ display: "block", fontSize: 12, color: "#8a7c6a" }}>
+                      {u.kind === "extension" ? "Sortie" : "Sorti"} le {formatReleaseDate(date)} · <b style={{ color: C.teal }}>{releasedAgo(date)}</b>
+                    </span>
+                  </span>
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto", fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
+                  {myIntent && <span title="Mon intention d'achat" style={{ color: "#fff", background: myIntent.color, borderRadius: 999, padding: "2px 9px" }}>🎯 {myIntent.label}</span>}
+                  {!myIntent && wanted > 0 && <span title="Membres intéressés par l'achat" style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 9px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
+                  {owners > 0 && <span title={`${owners} membre${owners > 1 ? "s l'ont" : " l'a"} déjà`} style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
+                  {u.newPrice != null && <span style={{ color: C.navy, fontSize: 13.5 }}>{u.newPrice.toFixed(2).replace(".", ",")} €</span>}
+                  <a href={ludumLink(u.name, u.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
+                    onClick={(e) => e.stopPropagation()} title={`Acheter « ${u.name} » chez Ludum`}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, background: C.amber, color: "#fff", borderRadius: 10, padding: "6px 11px", textDecoration: "none", fontSize: 12.5, whiteSpace: "nowrap" }}>
+                    <ShoppingBag size={14} /> Ludum
+                  </a>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---- Page "À venir" ---- */
 function UpcomingPage({ onAuth, setToast }) {
   const { upcoming, users, currentUser, games: allGames } = useApp();
@@ -14950,6 +15075,13 @@ function UpcomingPage({ onAuth, setToast }) {
   const withBase = useMemo(() => upcoming.map((u) => (u.kind === "extension"
     ? { ...u, baseName: (resolveUpcomingBase(u, allGames, upcoming) || {}).name || "" }
     : u)), [upcoming, allGames]);
+
+  // (lot AG) Sorties des deux derniers mois, la plus récente en tête.
+  // Indépendante des filtres : c'est un raccourci, pas une vue de la liste.
+  const recentReleases = useMemo(() => withBase
+    .map((u) => ({ u, date: recentReleaseDate(u) }))
+    .filter((x) => x.date)
+    .sort((a, b) => b.date - a.date || a.u.name.localeCompare(b.u.name, "fr")), [withBase]);
 
   const allMechanics = useMemo(() => {
     const s = new Set();
@@ -15016,6 +15148,7 @@ function UpcomingPage({ onAuth, setToast }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
         <div className="aladj-ludo-main">
+          <RecentReleasesPanel items={recentReleases} currentUserId={currentUser?.id} onOpen={(id) => setSelected(id)} />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
             <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
               <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
