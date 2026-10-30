@@ -15,6 +15,8 @@
 //                    Sans elle, le composant va la chercher lui-même.
 //   Aucune de gameId / eventId / joinCode n'est obligatoire : sans elles, on
 //   lance un chrono « à blanc » et le jeu est choisi sur l'écran de préparation.
+//   (lot AH) Celui qui rejoint SANS etre connecte peut se connecter a son
+//   compte depuis le chrono, ou reprendre une place d'invite deja preparee.
 //   - onExit       : callback de fermeture
 //
 //  USAGE
@@ -371,6 +373,55 @@ function readableOn(hex) {
 const TEAM_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 // Equipe par defaut d'une tablee cooperative : tout le monde dedans.
 const COOP_TEAM = 0;
+
+/* (lot AH) TYPE DE PARTIE
+   Deux questions independantes, que l'on regle a tout moment pendant la partie :
+     - qui joue avec qui (structure) : chacun pour soi, par equipes, ou toute la
+       tablee ensemble (cooperatif) ;
+     - comment se decide la victoire (regle) : le plus grand score, le plus
+       petit, un gagnant designe sans score, ou ni victoire ni defaite.
+   Les combiner couvre tous les cas : Codenames = equipes + gagnant designe,
+   Just One = cooperatif + plus grand score, Dixit en soiree = sans vainqueur.
+   Le reglage vit sur la session (partage en direct entre les telephones) et
+   est retenu sur la fiche du jeu pour la partie suivante. */
+const PLAY_STRUCTURES = [
+  { key: 'solo',  icon: '🙋', label: 'Chacun pour soi', hint: 'Chaque joueur marque ses propres points.' },
+  { key: 'teams', icon: '👥', label: 'Par équipes',     hint: 'Le score se partage au sein de chaque équipe.' },
+  { key: 'coop',  icon: '🤝', label: 'Coopératif',      hint: 'Toute la tablée dans la même équipe : on gagne ou on perd ensemble.' },
+];
+const PLAY_RULES = [
+  { key: 'high', icon: '⬆️', label: 'Le plus grand score gagne', coop: 'Un score à atteindre pour gagner' },
+  { key: 'low',  icon: '⬇️', label: 'Le plus petit score gagne', coop: 'Un score à ne pas dépasser' },
+  { key: 'pick', icon: '👆', label: 'Pas de score : on désigne le gagnant', coop: 'Pas de score : gagné ou perdu, à déclarer' },
+  { key: 'none', icon: '🕊️', label: 'Ni victoire ni défaite', coop: 'Ni victoire ni défaite' },
+];
+const STRUCTURE_KEYS = PLAY_STRUCTURES.map((x) => x.key);
+const RULE_KEYS = PLAY_RULES.map((x) => x.key);
+const normStructure = (v) => (STRUCTURE_KEYS.indexOf(v) !== -1 ? v : null);
+const normRule = (v) => (RULE_KEYS.indexOf(v) !== -1 ? v : null);
+const RULE_SHORT = { high: 'plus grand score', low: 'plus petit score', pick: 'gagnant désigné', none: 'sans vainqueur' };
+const RULE_SHORT_COOP = { high: 'score à atteindre', low: 'score à ne pas dépasser', pick: 'gagné ou perdu', none: 'sans victoire ni défaite' };
+const structureOf = (k) => PLAY_STRUCTURES.find((x) => x.key === k) || PLAY_STRUCTURES[0];
+function playModeLabel(structure, rule) {
+  const st = structureOf(structure);
+  const r = (structure === 'coop' ? RULE_SHORT_COOP : RULE_SHORT)[rule] || '';
+  return r ? `${st.label} · ${r}` : st.label;
+}
+/* Reglage propose d'office pour un jeu. Une fiche declaree cooperative
+   l'emporte toujours ; sinon on reprend le dernier choix fait au chrono. */
+function defaultStructureOf(game, defaults) {
+  if (!game) return 'solo';
+  if (game.is_coop === true) return 'coop';
+  const remembered = normStructure(defaults && defaults.play_structure);
+  return remembered === 'teams' || remembered === 'coop' ? remembered : 'solo';
+}
+function defaultRuleOf(game, defaults) {
+  const remembered = normRule(defaults && defaults.play_rule);
+  if (remembered === 'pick' || remembered === 'none') return remembered;
+  return game && game.score_direction === 'low' ? 'low' : 'high';
+}
+/* Message clair quand la migration SQL du lot AH n'a pas ete jouee. */
+const missingFn = (m) => /Could not find the function|does not exist|schema cache/i.test(String(m || ''));
 
 /* Ecran large en paysage : on bascule sur la disposition tablette. */
 function useLandscape() {
@@ -1389,8 +1440,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [coopTouched, setCoopTouched] = useState(false);
   const [coopTarget, setCoopTarget] = useState('');
   const [phrases, setPhrases] = useState([]);          // bareme de fin de partie
-  const [coopDeclaring, setCoopDeclaring] = useState(false);
   const [pendingName, setPendingName] = useState(''); // prénom saisi par un invité avant de rejoindre
+  // (lot AH) Rejoindre sans etre connecte : se connecter a son compte, ou
+  // reprendre une place deja preparee par l'hote, plutot que d'en creer une.
+  const [openSeats, setOpenSeats] = useState([]);       // places sans telephone
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPwd, setLoginPwd] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginErr, setLoginErr] = useState(null);
+  const [loginFor, setLoginFor] = useState(null);       // nom de la place de membre visee
+  const [seatBusy, setSeatBusy] = useState(false);
+  const loginRef = useRef(null);
+  // (lot AH) Type de partie : panneau de reglage et reglage retenu sur la fiche.
+  const [modeOpen, setModeOpen] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [gameDefaults, setGameDefaults] = useState(null); // { play_structure, play_rule }
   const [now, setNow] = useState(Date.now());
   const channelRef = useRef(null);
   // Session reellement suivie : sert a ignorer les evenements temps reel d'une
@@ -1657,13 +1721,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [supabase, refetchTotals, refetchPlayers]);
 
   // ---- rejoindre une partie (membre, ou invité avec son prénom) ------
-  const joinNow = useCallback(async (guestName, code) => {
-    const theCode = (code || joinCode || '').toUpperCase();
-    const { error: e } = await supabase.rpc('join_session', {
-      p_join_code: theCode,
-      p_guest_name: currentUser ? null : ((guestName && guestName.trim()) || 'Invité'),
-    });
-    if (e) throw e;
+  // (lot AH) Une fois assis a la table, on charge la partie : commun aux trois
+  // facons de s'asseoir (rejoindre, reprendre sa place, se connecter).
+  const attachByCode = useCallback(async (theCode) => {
     const { data: sess } = await supabase.from('play_sessions')
       .select('*').eq('join_code', theCode).single();
     if (!sess) throw new Error('Partie introuvable');
@@ -1671,9 +1731,103 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     await refetchPlayers(sess.id);
     await refetchTotals(sess.id);
     subscribe(sess.id);
-  }, [supabase, joinCode, currentUser, refetchPlayers, refetchTotals, subscribe]);
+  }, [supabase, refetchPlayers, refetchTotals, subscribe]);
+
+  const joinNow = useCallback(async (guestName, code, asMember) => {
+    const theCode = (code || joinCode || '').toUpperCase();
+    const member = asMember === true || !!currentUser;
+    const { error: e } = await supabase.rpc('join_session', {
+      p_join_code: theCode,
+      p_guest_name: member ? null : ((guestName && guestName.trim()) || 'Invité'),
+    });
+    if (e) throw e;
+    await attachByCode(theCode);
+  }, [supabase, joinCode, currentUser, attachByCode]);
+
+  // (lot AH) Reprendre une place d'invite preparee par l'hote : on relie ce
+  // telephone a la ligne existante au lieu d'en creer une seconde.
+  const claimGuestSeat = async (seat) => {
+    if (seatBusy || !seat) return;
+    if (seat.is_member) {
+      // Une place de membre ne se reprend qu'en se connectant au bon compte.
+      setLoginFor(seat.seat_name);
+      setLoginErr(null);
+      try { if (loginRef.current) loginRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* sans gravite */ }
+      return;
+    }
+    setSeatBusy(true); setError(null);
+    const theCode = (joinCode || '').toUpperCase();
+    try {
+      const { error: e } = await supabase.rpc('aladj_claim_guest_seat', { p_join_code: theCode, p_player_id: seat.player_id });
+      if (e) throw e;
+      setPhase('loading');
+      await attachByCode(theCode);
+    } catch (err) {
+      const m = err.message || String(err);
+      setError(/ALADJ_SEAT_TAKEN/.test(m) ? "Quelqu'un vient de prendre cette place depuis un autre téléphone."
+        : /ALADJ_SEAT_MEMBER/.test(m) ? 'Cette place est celle d\u2019un membre : connectez-vous à son compte pour la reprendre.'
+        : missingFn(m) ? "La reprise de place n'est pas installée sur le serveur (migration du lot AH à jouer)."
+        : m);
+      setPhase('ask-name');
+    } finally {
+      setSeatBusy(false);
+    }
+  };
+
+  // (lot AH) Se connecter a son compte depuis le chrono. join_session rend
+  // alors la place deja preparee a son nom par l'hote, s'il y en a une, au
+  // lieu d'ajouter un invite de plus a la tablee.
+  const loginAndJoin = async () => {
+    if (loginBusy) return;
+    const email = loginEmail.trim();
+    if (!email || !loginPwd) { setLoginErr('Indiquez votre e-mail et votre mot de passe.'); return; }
+    setLoginBusy(true); setLoginErr(null); setError(null);
+    try {
+      const { data, error: e } = await supabase.auth.signInWithPassword({ email, password: loginPwd });
+      if (e || !data?.user) { setLoginErr('E-mail ou mot de passe incorrect.'); return; }
+      setMyUid(data.user.id);
+      setLoginPwd('');
+      setPhase('loading');
+      await joinNow(null, null, true);
+    } catch (err) {
+      setError(err.message || String(err));
+      setPhase('ask-name');
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  // (lot AH) Connexion Google : on quitte le site le temps de l'identification.
+  // Le code est garde de cote pour revenir directement dans la partie.
+  const loginWithGoogle = async () => {
+    const theCode = (joinCode || '').toUpperCase();
+    try { window.sessionStorage.setItem('aladj.chrono.join', theCode); } catch (e) { /* stockage indisponible */ }
+    const back = `${window.location.origin}/?chrono=${encodeURIComponent(theCode)}`;
+    const { error: e } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: back } });
+    if (e) setLoginErr(e.message || String(e));
+  };
 
   useEffect(() => () => { if (channelRef.current) supabase.removeChannel(channelRef.current); }, [supabase]);
+
+  // (lot AH) Places encore libres de la tablee, pour qui arrive sans compte.
+  useEffect(() => {
+    if (phase !== 'ask-name' || !joinCode) return undefined;
+    let go = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc('aladj_session_open_seats', { p_join_code: joinCode });
+      if (go) setOpenSeats(e ? [] : (data || []));
+    })();
+    return () => { go = false; };
+  }, [phase, joinCode, supabase]);
+
+  // (lot AH) Le membre est connecte entre-temps (retour de Google, ou profil
+  // charge apres l'ouverture du chrono) : il rejoint aussitot, a sa place.
+  useEffect(() => {
+    if (phase !== 'ask-name' || !currentUser?.id || !joinCode) return;
+    setMyUid(currentUser.id);
+    setPhase('loading');
+    joinNow(null, null, true).catch((err) => { setError(err.message || String(err)); setPhase('error'); });
+  }, [phase, currentUser?.id]); // eslint-disable-line
 
   // Au retour au premier plan (téléphone déverrouillé, onglet réactivé), le canal
   // temps réel a pu être coupé : on resynchronise l'état et on réabonne.
@@ -1784,10 +1938,20 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         if (eventId) {
           // (1) Un chrono tourne peut-etre deja pour ce moment : on le proposera
           // en haut de l'ecran de preparation, pour rejoindre au lieu de doubler.
-          const { data: act } = await supabase.from('play_sessions')
-            .select('id,join_code,status,game_id,created_at,host_profile_id')
-            .eq('event_id', eventId).in('status', ['lobby', 'running'])
-            .order('created_at', { ascending: false });
+          // (lot AH) La base ne laisse lire une partie qu'a ceux qui y sont deja
+          // relies : un participant pre-ajoute ne la voyait donc pas. La fonction
+          // dediee les montre a tous ceux qui ont acces au moment. Repli sur la
+          // lecture directe tant que la migration n'est pas jouee.
+          let act = null;
+          const live = await supabase.rpc('aladj_event_live_sessions', { p_event_id: eventId });
+          if (!live.error) act = live.data || [];
+          else {
+            const { data: direct } = await supabase.from('play_sessions')
+              .select('id,join_code,status,game_id,created_at,host_profile_id')
+              .eq('event_id', eventId).in('status', ['lobby', 'running'])
+              .order('created_at', { ascending: false });
+            act = direct || [];
+          }
           if ((act || []).length) {
             const gIds2 = [...new Set(act.map((x) => x.game_id).filter(Boolean))];
             const hIds = [...new Set(act.map((x) => x.host_profile_id).filter(Boolean))];
@@ -1804,7 +1968,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               gameName: gByI[x.game_id]?.name || 'Partie',
               gameImg: gByI[x.game_id]?.image_url || null,
               hostName: hByI[x.host_profile_id] || 'un membre',
-              nPlayers: nBy[x.id] || 0,
+              nPlayers: x.n_players != null ? x.n_players : (nBy[x.id] || 0),
             })));
           }
 
@@ -2021,7 +2185,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       await applyGuestAvatars(sessionId);   // les photos du carnet suivent la tablee
       // Jeu cooperatif : la tablee part groupee, et le seuil de victoire saisi
       // ici rejoint la fiche du jeu — l'ecran de fin pourra trancher tout seul.
-      if (game.is_coop === true) {
+      // (lot AH) « Cooperatif » peut aussi venir du dernier reglage retenu.
+      if (setupStructure === 'coop') {
         await groupTableAsOneTeam(sessionId);
         await persistCoopSettings();
       }
@@ -2056,8 +2221,56 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setWinnersTouched(false);
   }, [game?.id, game?.score_direction]);
 
+  // (lot AH) Equipes deduites des joueurs. Remontees ici depuis la section
+  // « equipes et couleurs » : le type de partie en a besoin des maintenant.
+  const teamsOn = players.some((p) => p.team != null);
+
+  // Toute la tablee dans une seule et meme equipe : c'est le cas cooperatif.
+  // Le score reste commun, mais ce n'est PAS un affrontement par equipes — on
+  // n'affiche donc ni « ÉQUIPE A » sur chaque carte, ni une couleur unique pour
+  // tout le monde : a la table, chacun garde son pion.
+  const singleTeam = useMemo(() => {
+    if (!players.length) return null;
+    const t = players[0].team;
+    if (t == null) return null;
+    return players.every((p) => p.team === t) ? t : null;
+  }, [players]);
+  const oneTeamTable = singleTeam != null;
+
+  // (lot AH) Dernier type de partie retenu sur la fiche du jeu. Lu a part : si
+  // la migration n'est pas jouee, la requete echoue sans rien emporter.
+  useEffect(() => {
+    const gid = game?.id;
+    if (!gid) { setGameDefaults(null); return undefined; }
+    let go = true;
+    (async () => {
+      const { data, error: e } = await supabase.from('games')
+        .select('play_structure,play_rule').eq('id', gid).maybeSingle();
+      if (go) setGameDefaults(e ? null : (data || null));
+    })();
+    return () => { go = false; };
+  }, [game?.id]); // eslint-disable-line
+
+  // (lot AH) Type de partie effectif : celui de la session s'il a ete regle,
+  // sinon celui du jeu. Des equipes composees a la main sur un jeu « chacun
+  // pour soi » valent « par equipes » (comportement d'avant ce lot).
+  const setupStructure = defaultStructureOf(game, gameDefaults);
+  const gameRule = defaultRuleOf(game, gameDefaults);
+  const structure = normStructure(session?.play_structure)
+    || (setupStructure === 'solo' && teamsOn && !oneTeamTable ? 'teams' : setupStructure);
+  const rule = normRule(session?.play_rule) || gameRule;
+  // Les points comptent-ils pour designer le vainqueur ? Sinon, on ne les
+  // affiche pas du tout : « pas de score », c'est pas de score.
+  const scored = rule === 'high' || rule === 'low';
+
   // (lot V) Reglages cooperatifs et bareme, repris de la fiche du jeu.
-  const isCoop = game?.is_coop === true;
+  // (lot AH) Cooperatif = le type de partie, et non plus la seule fiche.
+  const isCoop = structure === 'coop';
+
+  // (lot AH) Le sens du score suit la regle de la partie quand elle en a un.
+  useEffect(() => {
+    if (rule === 'high' || rule === 'low') setScoreDir(rule);
+  }, [rule]);
   useEffect(() => {
     setCoopTarget(game?.coop_target == null ? '' : String(game.coop_target));
     setCoopScore(''); setCoopWon(null); setCoopTouched(false);
@@ -2076,7 +2289,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [game?.id]); // eslint-disable-line
 
   // Verdict deduit du score et du seuil, tant qu'on ne l'a pas force a la main.
-  const coopAuto = coopWinFromScore(coopTarget, scoreDir, coopScore);
+  // (lot AH) Sans score, le verdict se declare a la main.
+  const coopAuto = scored ? coopWinFromScore(coopTarget, scoreDir, coopScore) : null;
   useEffect(() => {
     if (!isCoop || coopTouched) return;
     setCoopWon(coopAuto);
@@ -2105,26 +2319,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   // Le score commun est ecrit sur chaque siege : l'historique du jeu reste
   // exploitable (moyennes, records) exactement comme en competitif.
-  // Declarer le jeu cooperatif sans quitter le chrono : la fiche est mise a jour
-  // pour tout le monde, et l'ecran de fin bascule sur le verdict commun.
-  const declareCoop = async () => {
-    if (!game?.id) return;
-    setCoopDeclaring(true);
-    try {
-      await supabase.rpc('aladj_set_game_coop', {
-        p_game_id: game.id, p_is_coop: true,
-        p_target: null, p_direction: scoreDir,
-      });
-      setGame((prev) => (prev ? { ...prev, is_coop: true } : prev));
-      // La tablee se groupe aussitot : declarer le jeu cooperatif sans reunir
-      // les joueurs n'aurait servi a rien, le score serait reste individuel.
-      if (sid) { await groupTableAsOneTeam(sid); await refetchPlayers(sid); }
-    } catch (e) {
-      setError("Impossible d'enregistrer le mode coopératif : " + (e?.message || e));
-    } finally {
-      setCoopDeclaring(false);
-    }
-  };
+  // (lot AH) « En fait, ce jeu est cooperatif » est remplace par le panneau
+  // « Type de partie », accessible a tout moment et pas seulement a la fin.
 
   const applyCoopScoreToAll = async (v) => {
     const n = v === '' || v == null || !Number.isFinite(Number(v)) ? 0 : Number(v);
@@ -2145,7 +2341,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // correction faite a la main.
   const coopSeedRef = useRef(null);
   useEffect(() => {
-    if (!isCoop || phase !== 'done' || !players.length) return;
+    if (!isCoop || !scored || phase !== 'done' || !players.length) return;
     const key = `${sid}|${session?.current_game || 1}`;
     if (coopSeedRef.current === key) return;
     const vals = players.map((p) => Number(p.score || 0));
@@ -2153,15 +2349,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const seed = vals.every((v) => v === vals[0]) ? vals[0] : Math.max(...vals);
     coopSeedRef.current = key;
     setCoopScore((cur) => (cur === '' ? String(seed) : cur));
-  }, [isCoop, phase, scoreKey, sid, session?.current_game]); // eslint-disable-line
+  }, [isCoop, scored, phase, scoreKey, sid, session?.current_game]); // eslint-disable-line
 
   // Vainqueur(s) deduits des scores, selon le sens choisi.
   const autoWinners = useMemo(() => {
-    if (!anyScore || !players.length) return [];
+    // (lot AH) Sans score, personne n'est designe d'office.
+    if (!scored || !anyScore || !players.length) return [];
     const vals = players.map((p) => p.score || 0);
     const best = scoreDir === 'low' ? Math.min(...vals) : Math.max(...vals);
     return players.filter((p) => (p.score || 0) === best).map((p) => p.id);
-  }, [scoreKey, scoreDir, anyScore]); // eslint-disable-line
+  }, [scoreKey, scoreDir, anyScore, scored]); // eslint-disable-line
 
   const sameIds = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
@@ -2175,9 +2372,15 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Changer le sens du score : on recalcule le vainqueur et on met a jour
   // la fiche du jeu (RPC dediee : la RLS de "games" reserve l'ecriture aux
   // proprietaires, or n'importe quel membre peut lancer un chrono).
+  // (lot AH) Le sens du score est desormais une des regles du type de partie :
+  // le changer ici le change pour tous les telephones, et la fiche suit.
   const changeScoreDir = async (d) => {
     setScoreDir(d);
     setWinnersTouched(false);
+    if (sid) {
+      const ok = await setPlayMode(structure, d, { quiet: true });
+      if (ok) return;
+    }
     if (!game?.id || !currentUser || game.score_direction === d) return;
     try {
       await supabase.rpc('set_game_score_direction', { p_game_id: game.id, p_direction: d });
@@ -2243,6 +2446,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const nextRound = () => rpc('next_round', { p_session_id: sid });
   const openNewGame = () => { setNewGameWinners(autoWinners); setNewGameCoopWon(null); setNewGamePrompt(true); };
   const toggleNewGameWinner = (pid) => setNewGameWinners((w) => (w.includes(pid) ? w.filter((x) => x !== pid) : [...w, pid]));
+  // (lot AH) Une partie « sans score » ne doit rien laisser trainer : des
+  // points saisis avant de changer de regle seraient archives avec elle.
+  const clearScoresIfUnscored = async () => {
+    if (scored || !sid) return;
+    for (const p of players) {
+      if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 });
+    }
+  };
   const [newGameBusy, setNewGameBusy] = useState(false);
   // Cooperatif : la manche se solde par un verdict commun, pas par une liste
   // de vainqueurs. null = on ne tranche pas (la manche est comptee sans vainqueur).
@@ -2253,7 +2464,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     try {
       // En cooperatif, toute la table gagne ou personne : meme regle qu'a l'ecran
       // de fin, pour que les deux facons d'enchainer comptent pareil.
-      const ids = isCoop ? (newGameCoopWon === true ? players.map((p) => p.id) : []) : newGameWinners;
+      const ids = rule === 'none' ? []
+        : (isCoop ? (newGameCoopWon === true ? players.map((p) => p.id) : []) : newGameWinners);
+      await clearScoresIfUnscored();
       await rpc('new_game', { p_session_id: sid, p_winner_ids: ids });
       for (const p of players) {
         if ((p.score || 0) !== 0) await supabase.rpc('set_player_score', { p_session_id: sid, p_player_id: p.id, p_score: 0 });
@@ -2276,12 +2489,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // Une seule regle, partagee par « enregistrer et quitter » et par les deux
   // boutons d'enchainement : sans cela, une partie cooperative enchainee partait
   // sans le moindre vainqueur.
-  const finalWinnerIds = () => (isCoop ? (coopWon === true ? players.map((p) => p.id) : []) : winnerIds);
+  // (lot AH) « Ni victoire ni defaite » : la partie est comptee, sans vainqueur.
+  const finalWinnerIds = () => (rule === 'none' ? []
+    : (isCoop ? (coopWon === true ? players.map((p) => p.id) : []) : winnerIds));
 
   // Le seuil de victoire et le sens du score corriges sur l'ecran de fin
   // remontent sur la fiche du jeu -- que l'on quitte OU que l'on enchaine.
   const persistCoopSettings = async () => {
-    if (!isCoop || !game?.id || !currentUser) return;
+    // (lot AH) Une fiche qui dit « non cooperatif » n'est jamais renversee
+    // parce qu'une tablee a joue la variante cooperative ce soir-la.
+    if (!isCoop || !scored || !game?.id || !currentUser || game.is_coop === false) return;
     const savedTarget = game.coop_target == null ? '' : String(game.coop_target);
     if (savedTarget === String(coopTarget || '') && game.score_direction === scoreDir) return;
     try {
@@ -2297,6 +2514,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setSavingResult(true); setError(null);
     const ids = finalWinnerIds();
     await persistCoopSettings();
+    await clearScoresIfUnscored();
     const { error: e } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: ids });
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
@@ -2332,6 +2550,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       // 1. Le resultat de la partie qui s'acheve doit etre enregistre d'abord.
       await persistCoopSettings();
       if (!resultSaved) {
+        await clearScoresIfUnscored();
         const { error: e0 } = await supabase.rpc('record_session_result', { p_session_id: sid, p_winner_ids: finalWinnerIds() });
         if (e0) throw e0;
         setResultSaved(true);
@@ -2355,17 +2574,30 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         });
       }
       // 4. ... puis leurs equipes et leurs couleurs.
+      // (lot AH) Une tablee groupee en cooperatif ne le reste que si la suite
+      // se joue aussi en cooperatif : sinon chacun reprend ses propres points.
+      const sameGame = !!(game && g.id === game.id);
+      const keepTeams = !oneTeamTable || g.is_coop === true || (sameGame && isCoop);
       const { data: np } = await supabase.from('play_session_players')
         .select('id,profile_id,guest_name').eq('session_id', nid);
       for (const p of players) {
         if (p.team == null && !p.color) continue;
         const m = (np || []).find((x) => (p.profile_id ? x.profile_id === p.profile_id : x.guest_name === p.guest_name));
         if (!m) continue;
-        if (p.team != null) await supabase.rpc('aladj_set_player_team', { p_session_id: nid, p_player_id: m.id, p_team: p.team });
+        if (p.team != null && keepTeams) await supabase.rpc('aladj_set_player_team', { p_session_id: nid, p_player_id: m.id, p_team: p.team });
         if (p.color) await supabase.rpc('aladj_set_player_color', { p_session_id: nid, p_player_id: m.id, p_color: p.color });
       }
       // 4 bis. Les photos des invites suivent le nouveau jeu.
       await applyGuestAvatars(nid);
+      // 4 ter. (lot AH) On refait une partie du MEME jeu : elle se joue comme
+      // la precedente, meme si le reglage n'a pas ete retenu sur la fiche.
+      if (sameGame && (session?.play_structure || session?.play_rule)) {
+        try {
+          await supabase.rpc('aladj_set_session_play_mode', {
+            p_session_id: nid, p_structure: structure, p_rule: rule, p_remember: false,
+          });
+        } catch (e) { /* le jeu suivant reprendra le reglage de sa fiche */ }
+      }
 
       // 5. On designe la suite : les telephones deja connectes basculent seuls.
       await supabase.rpc('aladj_link_next_session', { p_old: sid, p_new: nid });
@@ -2434,8 +2666,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       const { error: e } = await supabase.rpc('aladj_set_session_game', { p_session_id: sid, p_game_id: g.id });
       if (e) throw e;
       setGame(g);                      // affichage immediat, sans attendre l'aller-retour
+      // (lot AH) Le type de partie regle pour l'ancien jeu ne le suit pas : le
+      // nouveau repart de sa propre fiche.
+      if (session?.play_structure || session?.play_rule) {
+        try {
+          await supabase.rpc('aladj_set_session_play_mode', {
+            p_session_id: sid, p_structure: null, p_rule: null, p_remember: false,
+          });
+        } catch (e2) { /* sans gravite */ }
+      }
       // Le nouveau jeu est cooperatif : la tablee se groupe, comme au lancement.
       if (g?.is_coop === true) { await groupTableAsOneTeam(sid); await refetchPlayers(sid); }
+      else if (oneTeamTable) { await dissolveTeams(); await refetchPlayers(sid); }
       await refetchSession(sid);
       await syncEventGame(sid);        // le moment jeux suit, s'il y en a un
       setSwapPicker(false); setNextQuery(''); setNextHits([]);
@@ -2508,13 +2750,72 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // marque des points ensemble.
   const setPlayerScore = async (playerId, score) => {
     const me = players.find((p) => p.id === playerId);
-    const targets = (me && me.team != null)
-      ? players.filter((p) => p.team === me.team)
-      : (me ? [me] : []);
+    // (lot AH) Qui partage ce score ? Toute la tablee en cooperatif, l'equipe
+    // en mode equipes, personne en « chacun pour soi » (meme s'il reste des
+    // equipes composees d'une partie precedente).
+    const targets = !me ? []
+      : (structure === 'coop' ? players
+        : ((structure === 'teams' && me.team != null) ? players.filter((p) => p.team === me.team) : [me]));
     const ids = targets.map((p) => p.id);
     setPlayers((ps) => ps.map((p) => (ids.includes(p.id) ? { ...p, score } : p))); // optimiste
     for (const id of ids) {
       await rpc('set_player_score', { p_session_id: sid, p_player_id: id, p_score: score });
+    }
+  };
+
+  // ---- (lot AH) type de partie ----------------------------------------
+  // Chacun redevient seul : on quitte un cooperatif, ou on change de jeu.
+  const dissolveTeams = async () => {
+    for (const p of players) {
+      if (p.team == null) continue;
+      try { await supabase.rpc('aladj_set_player_team', { p_session_id: sid, p_player_id: p.id, p_team: null }); }
+      catch (e) { /* confort : jamais bloquant pour la partie */ }
+    }
+  };
+
+  // Regler le type de partie. Le reglage est ecrit sur la session (tous les
+  // telephones suivent en direct) et retenu sur la fiche du jeu par un membre.
+  // Les equipes suivent : cooperatif = toute la tablee ensemble ; quitter le
+  // cooperatif rend chacun a ses points ; passer en equipes ouvre leur
+  // composition s'il n'y en a pas encore.
+  const setPlayMode = async (ns, nr, opts = {}) => {
+    if (!sid || modeBusy) return false;
+    const nextS = normStructure(ns) || 'solo';
+    const nextR = normRule(nr) || 'high';
+    const prevS = structure;
+    setModeBusy(true);
+    if (!opts.quiet) setError(null);
+    try {
+      const { error: e } = await supabase.rpc('aladj_set_session_play_mode', {
+        p_session_id: sid, p_structure: nextS, p_rule: nextR, p_remember: true,
+      });
+      if (e) throw e;
+      setSession((cur) => (cur ? { ...cur, play_structure: nextS, play_rule: nextR } : cur));
+      if (currentUser) {
+        setGameDefaults((d) => ({ ...(d || {}), play_structure: nextS, play_rule: nextR }));
+        setGame((g) => (g ? {
+          ...g,
+          score_direction: (nextR === 'high' || nextR === 'low') ? nextR : g.score_direction,
+          is_coop: (nextS === 'coop' && g.is_coop == null) ? true : g.is_coop,
+        } : g));
+      }
+      setWinnersTouched(false);
+      setCoopTouched(false);
+      if (nextS === 'coop' && prevS !== 'coop') await groupTableAsOneTeam(sid);
+      if (prevS === 'coop' && nextS !== 'coop' && oneTeamTable) await dissolveTeams();
+      await refetchPlayers(sid);
+      if (nextS === 'teams' && prevS !== 'teams' && (!teamsOn || oneTeamTable)) setTeamsOpen(true);
+      return true;
+    } catch (err) {
+      const m = err.message || String(err);
+      if (!opts.quiet) {
+        setError(missingFn(m) ? "Le type de partie n'est pas installé sur le serveur (migration du lot AH à jouer)."
+          : /ALADJ_NOT_PARTICIPANT/.test(m) ? 'Seuls les joueurs de la partie peuvent en changer le type.'
+          : m);
+      }
+      return false;
+    } finally {
+      setModeBusy(false);
     }
   };
 
@@ -2536,21 +2837,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     await rpc('aladj_set_player_color', { p_session_id: sid, p_player_id: playerId, p_color: color });
   };
 
-  // Y a-t-il des equipes ? On le deduit des joueurs : aucun reglage a stocker
-  // en plus, et tous les appareils sont d'accord sans synchronisation dediee.
-  const teamsOn = players.some((p) => p.team != null);
-
-  // Toute la tablee dans une seule et meme equipe : c'est le cas cooperatif.
-  // Le score reste commun, mais ce n'est PAS un affrontement par equipes — on
-  // n'affiche donc ni « ÉQUIPE A » sur chaque carte, ni une couleur unique pour
-  // tout le monde : a la table, chacun garde son pion.
-  const singleTeam = useMemo(() => {
-    if (!players.length) return null;
-    const t = players[0].team;
-    if (t == null) return null;
-    return players.every((p) => p.team === t) ? t : null;
-  }, [players]);
-  const oneTeamTable = singleTeam != null;
+  // Y a-t-il des equipes ? (lot AH) teamsOn, singleTeam et oneTeamTable sont
+  // desormais calcules plus haut, avec le type de partie.
 
   /* Attribution des couleurs, dans cet ordre :
        1. la couleur choisie a la main pour cette partie ;
@@ -2587,7 +2875,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [players, colorKeyOf]);
 
   const hexFor = (p) => hexOfColor(
-    (teamsOn && !oneTeamTable && p.team != null && teamColorKey[p.team]) ? teamColorKey[p.team] : colorKeyOf[p.id]
+    (structure === 'teams' && p.team != null && teamColorKey[p.team]) ? teamColorKey[p.team] : colorKeyOf[p.id]
   ) || ACCENTS[0];
 
   // ---- temps affichés ------------------------------------------------
@@ -2739,6 +3027,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           onClose={() => setColorFor(null)}
         />
       )}
+      {modeOpen && (
+        <PlayModeSheet
+          structure={structure}
+          rule={rule}
+          busy={modeBusy}
+          canRemember={!!currentUser}
+          gameName={game?.name || ''}
+          onPick={async (ns, nr) => { const ok = await setPlayMode(ns, nr); if (ok) setModeOpen(false); }}
+          onClose={() => { if (!modeBusy) setModeOpen(false); }}
+        />
+      )}
       {teamsOpen && (
         <TeamsSheet
           players={players}
@@ -2810,16 +3109,80 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       setPhase('loading');
       joinNow(pendingName).catch((err) => { setError(err.message || String(err)); setPhase('error'); });
     };
+    // (lot AH) Trois facons de s'asseoir, de la plus juste a la moins juste :
+    // reprendre sa place si l'hote l'a deja preparee, se connecter a son
+    // compte (la partie rejoint alors son historique), ou entrer en invite.
+    const guestSeats = openSeats.filter((x) => !x.is_member);
+    const memberSeats = openSeats.filter((x) => x.is_member);
     return shell(
       <div>
-        <Label>Ton prénom</Label>
-        <p style={{ fontSize: 13, color: '#1A3A5C99', margin: '2px 0 12px' }}>Pour te différencier des autres joueurs à table.</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input autoFocus value={pendingName} placeholder="Ex. Camille" style={{ ...input, flex: 1 }}
-            onChange={(e) => setPendingName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
-          <button style={btnPrimary} onClick={go}>Rejoindre</button>
+        {openSeats.length > 0 && (
+          <Card>
+            <Label>Déjà à la table ?</Label>
+            <p style={{ fontSize: 13, color: `${C.navy}99`, margin: '2px 0 10px', lineHeight: 1.5 }}>
+              L'hôte a peut-être déjà préparé votre place. Touchez votre nom : vous la reprenez, sans créer de doublon.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {[...memberSeats, ...guestSeats].map((x) => (
+                <button key={x.player_id} type="button" onClick={() => claimGuestSeat(x)} disabled={seatBusy}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#fff', cursor: 'pointer',
+                    border: `1.5px solid ${x.is_member ? `${C.teal}66` : `${C.purple}55`}`, borderRadius: 999,
+                    padding: '5px 14px 5px 5px', fontFamily: BODY, fontWeight: 700, fontSize: 14.5, color: C.navy }}>
+                  <Avatar name={x.seat_name} url={x.avatar_url} color={x.is_member ? C.teal : C.purple} size={28} />
+                  <span>{x.seat_name}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: .3, color: x.is_member ? C.teal : C.purple }}>
+                    {x.is_member ? 'MEMBRE' : 'INVITÉ'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {memberSeats.length > 0 && (
+              <p style={{ fontSize: 12, color: `${C.navy}88`, margin: '10px 0 0', lineHeight: 1.45 }}>
+                Une place de <b>membre</b> se reprend en se connectant à son compte, juste en dessous.
+              </p>
+            )}
+          </Card>
+        )}
+
+        <div ref={loginRef}>
+          <Card>
+            <Label>Membre de l'association ?</Label>
+            <p style={{ fontSize: 13, color: `${C.navy}99`, margin: '2px 0 10px', lineHeight: 1.5 }}>
+              {loginFor
+                ? <>Connectez-vous au compte de <b>{loginFor}</b> pour reprendre sa place à la table.</>
+                : <>Connectez-vous : si l'hôte vous a déjà mis à la table, vous retrouvez <b>votre place</b>, et la partie rejoint <b>votre historique</b>.</>}
+            </p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <input type="email" autoComplete="email" value={loginEmail} placeholder="Adresse e-mail" style={input}
+                onChange={(e) => setLoginEmail(e.target.value)} />
+              <input type="password" autoComplete="current-password" value={loginPwd} placeholder="Mot de passe" style={input}
+                onChange={(e) => setLoginPwd(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') loginAndJoin(); }} />
+              {loginErr && <div style={{ color: C.red, fontWeight: 700, fontSize: 13.5 }}>{loginErr}</div>}
+              <button style={{ ...btnPrimary, opacity: loginBusy ? .6 : 1 }} onClick={loginAndJoin} disabled={loginBusy}>
+                {loginBusy ? 'Connexion…' : 'Se connecter et rejoindre'}
+              </button>
+              <button type="button" onClick={loginWithGoogle} disabled={loginBusy}
+                style={{ ...btnSecondary, background: '#fff', border: '1.5px solid #e6dcc9' }}>
+                Continuer avec Google
+              </button>
+            </div>
+          </Card>
         </div>
+
+        <Card>
+          <Label>Pas de compte ? Rejoindre en invité</Label>
+          <p style={{ fontSize: 13, color: '#1A3A5C99', margin: '2px 0 12px' }}>
+            Votre prénom, pour vous différencier des autres joueurs à table.
+            {guestSeats.length > 0 && <> Votre nom figure plus haut ? Touchez-le plutôt.</>}
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={pendingName} placeholder="Ex. Camille" style={{ ...input, flex: 1 }}
+              onChange={(e) => setPendingName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
+            <button style={btnPrimary} onClick={go}>Rejoindre</button>
+          </div>
+        </Card>
       </div>
     );
   }
@@ -2843,15 +3206,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.gameName}</div>
                     <div style={{ fontSize: 12, color: `${C.navy}99` }}>
-                      lance par {s.hostName} · {s.nPlayers} joueur{s.nPlayers > 1 ? 's' : ''} · {s.status === 'running' ? 'en cours' : 'en attente'}
+                      lance par {s.hostName} · {s.nPlayers} joueur{s.nPlayers > 1 ? 's' : ''} · {s.status === 'lobby' ? 'en attente' : 'en cours'}
                     </div>
+                    {s.my_seat === 'waiting' && (
+                      <div style={{ fontSize: 12, color: C.teal, fontWeight: 800 }}>Votre place vous attend à cette table</div>
+                    )}
                   </div>
                   <button style={{ ...btnPrimary, flex: '0 0 auto', padding: '9px 14px', fontSize: 14 }}
                     onClick={() => {
                       setPhase('loading');
                       joinNow(null, s.join_code).catch((err) => { setError(err.message || String(err)); setPhase('setup'); });
                     }}>
-                    Rejoindre
+                    {s.my_seat === 'in' ? 'Revenir' : (s.my_seat === 'waiting' ? 'Prendre ma place' : 'Rejoindre')}
                   </button>
                 </div>
               ))}
@@ -2927,7 +3293,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               qu'on a la boite en main et la regle sous les yeux. Renseigne une
               fois, il est enregistre sur la fiche du jeu : a la fin de la partie,
               le chrono annonce tout seul si la table a gagne ou perdu. */}
-          {game?.is_coop === true && (
+          {setupStructure === 'coop' && (
             <div style={{ marginTop: 14, background: 'rgba(107,58,122,.06)', border: `1.5px solid ${C.purple}44`,
               borderRadius: 13, padding: '12px 13px' }}>
               <Label>🤝 Coopératif · {scoreDir === 'low' ? 'on gagne en dessous de' : 'on gagne à partir de'}</Label>
@@ -3065,6 +3431,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               onRemove={isHost && players.length > 1 ? () => removePlayer(p) : undefined} />
           ))}
           <LiveAdd onAddGuest={(n) => addPlayerLive(null, n)} supabase={supabase} currentUser={currentUser} onAddMember={(m) => addPlayerLive(m.id, null)} />
+        </Card>
+
+        <Card>
+          <Label>Type de partie</Label>
+          <PlayModeChip structure={structure} rule={rule} onOpen={() => setModeOpen(true)} />
         </Card>
 
         <EventBanner created={eventCreated} can={canMakeEvent}
@@ -3232,7 +3603,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           {scoreFor && (() => {
             const sp = players.find((p) => p.id === scoreFor);
             return sp ? (
-              <ScorePad key={sp.id} name={sp.name + (sp.team != null ? ` · équipe ${TEAM_LETTERS[sp.team]}` : '')} initialScore={sp.score || 0}
+              <ScorePad key={sp.id} name={sp.name + (structure === 'teams' && sp.team != null ? ` · équipe ${TEAM_LETTERS[sp.team]}` : (isCoop ? ' · score commun' : ''))} initialScore={sp.score || 0}
                 onClose={() => setScoreFor(null)}
                 onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
             ) : null;
@@ -3265,7 +3636,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 <span>Partie {session?.current_game || 1}</span>
                 {simul && <span style={{ color: C.purple, fontWeight: 700 }}>· Simultané</span>}
                 {neutral && <span style={{ color: C.amber, fontWeight: 700 }}>· En pause</span>}
-                {teamsOn && <span style={{ color: C.teal, fontWeight: 700 }}>· {oneTeamTable ? (isCoop ? 'Coopératif · score commun' : 'Toute la table ensemble') : 'Mode équipe'}</span>}
+                <button type="button" onClick={() => setModeOpen(true)} title="Changer le type de partie"
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.purple, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                  · {structureOf(structure).icon} {playModeLabel(structure, rule)}
+                </button>
                 {session?.join_code && (
                   <button type="button" onClick={() => setQrOpen(true)} title="Afficher le QR code pour rejoindre la partie"
                     style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.teal, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
@@ -3341,7 +3715,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                       lineHeight: 1.14, color: ink, textAlign: 'center', maxWidth: '100%',
                       display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
                       overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</span>
-                    {p.team != null && !oneTeamTable && (
+                    {structure === 'teams' && p.team != null && (
                       <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .4,
                         color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
                     )}
@@ -3349,7 +3723,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
                   {/* Score, au centre et en tres grand, encadre de ses deux
                       boutons : un appui = un point, sans ouvrir la calculatrice.
-                      Le nombre lui-meme ouvre le pave pour le reste. */}
+                      Le nombre lui-meme ouvre le pave pour le reste.
+                      (lot AH) Partie sans score : la place reste vide. */}
+                  {!scored ? <div style={{ flex: 1, minWidth: 0 }} /> : (
                   <div onClick={(e) => e.stopPropagation()}
                     style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
                       justifyContent: 'center', gap: compact ? 'clamp(8px,1.2vw,22px)' : 'clamp(8px,1vw,18px)',
@@ -3379,6 +3755,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
                       aria-label={`Ajouter un point a ${p.name}`} title="+1 point" style={stepBtn(C.teal)}>+</button>
                   </div>
+                  )}
 
                   {/* Ordre des joueurs et chrono, a droite.
                       Les fleches sont posees CONTRE le temps, et non sous le
@@ -3431,6 +3808,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
             {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
             {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
+            {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
             {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
             {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
             {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
@@ -3448,12 +3826,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
                 <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminée</div>
                 <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                  {isCoop
+                  {rule === 'none'
+                    ? 'Partie sans vainqueur : elle est comptée telle quelle. On repart ensuite sur une nouvelle partie du même jeu.'
+                    : isCoop
                     ? 'Partie coopérative : la table a-t-elle gagné ? On repart ensuite sur une nouvelle partie du même jeu.'
-                    : (anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? (laisse vide pour un coopératif) On repart ensuite sur une nouvelle partie du même jeu.')}
+                    : (scored && anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? Touchez le ou les gagnants. On repart ensuite sur une nouvelle partie du même jeu.')}
                 </div>
-                {isCoop && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
-                <div style={{ display: isCoop ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
+                {isCoop && rule !== 'none' && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
+                <div style={{ display: (isCoop || rule === 'none') ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
                   {players.map((p) => {
                     const won = newGameWinners.includes(p.id);
                     return (
@@ -3495,19 +3875,21 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
               <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, marginBottom: 4 }}>Partie terminee</div>
               <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                {isCoop
+                {rule === 'none'
+                  ? "Partie sans vainqueur : elle est comptee telle quelle, puis une nouvelle partie du meme jeu commence."
+                  : isCoop
                   ? "Partie cooperative : la table a-t-elle gagne cette partie ?"
-                  : (anyScore
+                  : (scored && anyScore
                     ? "Qui a gagne cette partie ? Le vainqueur est deduit des scores, corrige-le si besoin."
-                    : "Qui a gagne cette partie ? (laisse vide pour un jeu cooperatif - la partie sera quand meme comptee)")}
+                    : "Qui a gagne cette partie ? Touche le ou les gagnants.")}
               </div>
-              {isCoop && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
-              {!isCoop && anyScore && (
+              {isCoop && rule !== 'none' && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
+              {!isCoop && scored && anyScore && (
                 <div style={{ marginBottom: 12 }}>
                   <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); }} saved={game?.score_direction} compact />
                 </div>
               )}
-              <div style={{ display: isCoop ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
+              <div style={{ display: (isCoop || rule === 'none') ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
                 {players.map((p, i) => {
                   const won = newGameWinners.includes(p.id);
                   return (
@@ -3544,6 +3926,11 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         </div>
 
         {timerOn && <TimerBar t={timerApi} />}
+
+        {/* (lot AH) Type de partie : visible et reglable par toute la tablee. */}
+        <div style={{ marginBottom: 12 }}>
+          <PlayModeChip structure={structure} rule={rule} onOpen={() => setModeOpen(true)} />
+        </div>
 
         {/* En-tête de manche (pendant le jeu) */}
         {gamePhase === 'play' && (
@@ -3604,7 +3991,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     <div style={{ fontSize: 11, color: `${C.navy}88`, display: 'flex', gap: 6, alignItems: 'center' }}>
                       <span onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
                         style={{ width: 11, height: 11, borderRadius: 3, background: hexFor(p), border: '1px solid rgba(0,0,0,.15)', cursor: 'pointer', flexShrink: 0 }} />
-                      {p.team != null && !oneTeamTable && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
+                      {structure === 'teams' && p.team != null && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
                       {!p.auth_user_id && <span>sans tel</span>}
                     </div>
                   </div>
@@ -3622,6 +4009,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     simples. Les fleches d'ordre des joueurs sont descendues plus
                     bas : elles ne sont plus collees au score, on ne les touche
                     donc plus par megarde. */}
+                {scored && (
                 <div onClick={(e) => e.stopPropagation()}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
                   <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
@@ -3636,6 +4024,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     aria-label={`Ajouter un point a ${p.name}`} title="+1 point"
                     style={{ ...scoreStepBtn, borderColor: `${C.teal}66`, color: C.teal, background: '#e8f4f4' }}>+</button>
                 </div>
+                )}
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
                   <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, color: active ? hexFor(p) : C.navy }}>
@@ -3713,12 +4102,23 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             <Stat label="Ratio" value={summary?.ratio_vs_box ? `×${summary.ratio_vs_box}` : '—'} color={summary?.ratio_vs_box >= 1.5 ? C.red : C.teal} />
           </div>
         </Card>
+        {/* (lot AH) Le type de partie se corrige encore ici, avant d'enregistrer :
+            c'est souvent a la fin qu'on s'apercoit qu'il etait mal regle. */}
+        <Card>
+          <Label>Type de partie</Label>
+          <PlayModeChip structure={structure} rule={rule} onOpen={() => setModeOpen(true)} />
+        </Card>
         {isCoop ? (
           <Card>
             <Label>Le sort de la table</Label>
             <div style={{ fontSize: 12.5, color: `${C.navy}99`, margin: '4px 0 12px', lineHeight: 1.5 }}>
-              Partie coopérative : tout le monde marque le même score et gagne ou perd ensemble.
+              {rule === 'none'
+                ? 'Partie coopérative sans victoire ni défaite : elle est enregistrée telle quelle, sans vainqueur.'
+                : (scored
+                  ? 'Partie coopérative : tout le monde marque le même score et gagne ou perd ensemble.'
+                  : 'Partie coopérative sans score : dites simplement si la table a gagné ou perdu.')}
             </div>
+            {scored && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <label style={{ display: 'grid', gap: 5 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: C.navy }}>Score de la table</span>
@@ -3741,9 +4141,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                     fontFamily: BODY, fontSize: 15, color: C.navy, boxSizing: 'border-box' }} />
               </label>
             </div>
+            )}
+            {scored && (
             <div style={{ marginTop: 12 }}>
               <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); setCoopTouched(false); }} saved={game?.score_direction} compact />
             </div>
+            )}
+            {rule !== 'none' && (
             <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
               {[{ v: true, t: '🎉 Gagné' }, { v: false, t: '😖 Perdu' }, { v: null, t: 'Je ne sais pas' }].map((o) => {
                 const on = coopWon === o.v;
@@ -3759,23 +4163,28 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 );
               })}
             </div>
+            )}
+            {rule !== 'none' && (
             <div style={{ marginTop: 14 }}>
-              <CoopOutcome won={coopWon} score={coopScore} phrase={coopPhrase}
+              <CoopOutcome won={coopWon} score={scored ? coopScore : ''} phrase={scored ? coopPhrase : null}
                 onReplay={coopWon === true ? celebrate : null} />
             </div>
+            )}
             {/* Un verdict « non tranche » n'est jamais une fatalite : on dit ce
                 qui manque, et ou le saisir. C'est exactement ce qui bloquait —
                 un seuil de victoire jamais renseigne sur la fiche du jeu. */}
-            {coopWon === null && (
+            {coopWon === null && rule !== 'none' && (
               <div style={{ background: 'rgba(232,163,23,.10)', border: `1.5px solid ${C.amber}66`,
                 borderRadius: 12, padding: '10px 12px', marginTop: 10, fontSize: 12.5,
                 color: C.navy, lineHeight: 1.55 }}>
-                {coopTarget === ''
+                {!scored
+                  ? <>Touchez <b>Gagné</b> ou <b>Perdu</b> : sans score, c'est à la table de le dire.</>
+                  : coopTarget === ''
                   ? <>Le chrono ne peut pas trancher : indiquez ci-dessus <b>{scoreDir === 'low' ? 'le score à ne pas dépasser' : 'le score à atteindre'}</b> pour gagner à ce jeu. Il est <b>enregistré sur la fiche du jeu</b> — les prochaines fois, le verdict tombera tout seul.</>
                   : <>Saisissez le <b>score de la table</b> ci-dessus, ou déclarez vous-même le résultat avec les boutons.</>}
               </div>
             )}
-            {phrases.length === 0 && (
+            {scored && phrases.length === 0 && (
               <div style={{ fontSize: 11.5, color: `${C.navy}88`, marginTop: 8, lineHeight: 1.45 }}>
                 Aucune phrase de score pour ce jeu. Elles se saisissent sur la fiche du jeu, section « Phrases de score ».
               </div>
@@ -3783,12 +4192,18 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           </Card>
         ) : (
         <Card>
-          <Label>Qui a remporté la partie ?</Label>
-          {anyScore && (
+          <Label>{rule === 'none' ? 'Partie sans vainqueur' : 'Qui a remporté la partie ?'}</Label>
+          {scored && anyScore && (
             <div style={{ marginTop: 6, marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid #e6dcc9' }}>
               <ScoreDirPicker value={scoreDir} onChange={changeScoreDir} saved={game?.score_direction} />
             </div>
           )}
+          {rule === 'none' ? (
+            <div style={{ fontSize: 13.5, color: `${C.navy}aa`, lineHeight: 1.55, marginTop: 4 }}>
+              Ni victoire ni défaite : la partie est <b>comptée</b> — durée, joueurs, statistiques — sans désigner de gagnant.
+              Changez le type de partie juste au-dessus si, finalement, quelqu'un l'a emporté.
+            </div>
+          ) : (
           <div style={{ display: 'grid', gap: 8, marginTop: 6 }}>
             {players.map((p, i) => {
               const won = winnerIds.includes(p.id);
@@ -3797,27 +4212,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
                     border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
                   <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
-                  <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
-                  {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
+                  <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}
+                    {structure === 'teams' && p.team != null && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.teal, marginLeft: 7 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>}
+                  </span>
+                  {scored && (p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
                   <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
                 </button>
               );
             })}
           </div>
+          )}
+          {rule !== 'none' && (
           <div style={{ fontSize: 12, color: `${C.navy}99`, marginTop: 8 }}>
-            {anyScore
+            {scored && anyScore
               ? <>Le vainqueur est déduit des scores ({scoreDir === 'low' ? 'le plus petit' : 'le plus grand'} l'emporte) — tu peux le corriger à la main.{winnersTouched ? ' (choix manuel en cours)' : ''}</>
-              : <>Laisse vide pour une partie sans vainqueur (coopératif) : elle sera quand même comptabilisée.</>}
+              : <>Touchez le ou les gagnants. Laissé vide, la partie est quand même comptabilisée.</>}
           </div>
-          {/* (lot V) On s'aperçoit souvent ICI que le jeu n'a jamais été déclaré
-              coopératif. Un bouton, et l'écran bascule aussitôt. */}
-          {game?.id && currentUser && (
-            <button onClick={declareCoop} disabled={coopDeclaring}
-              style={{ marginTop: 12, width: '100%', padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
-                border: `1.5px dashed ${C.purple}`, background: 'rgba(107,58,122,.06)', color: C.purple,
-                fontFamily: TITLE, fontWeight: 700, fontSize: 14 }}>
-              {coopDeclaring ? 'Enregistrement…' : '🤝 En fait, ce jeu est coopératif'}
-            </button>
           )}
         </Card>
         )}
@@ -4434,6 +4844,101 @@ function TeamsSheet({ players, hexFor, onSet, onClose, isHost, onRemove, onAddGu
             </p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* (lot AH) Pastille du type de partie : un resume d'un coup d'oeil, et un
+   appui pour le changer. Meme allure partout (attente, partie, fin). */
+function PlayModeChip({ structure, rule, onOpen }) {
+  const st = structureOf(structure);
+  return (
+    <button type="button" onClick={onOpen} title="Changer le type de partie"
+      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: 'pointer',
+        background: 'rgba(107,58,122,.06)', border: `1.5px solid ${C.purple}44`, borderRadius: 13,
+        padding: '9px 12px', color: C.navy, fontFamily: BODY }}>
+      <span style={{ fontSize: 22, lineHeight: 1, flex: '0 0 auto' }}>{st.icon}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 15, lineHeight: 1.2 }}>{st.label}</span>
+        <span style={{ display: 'block', fontSize: 12.5, color: `${C.navy}99` }}>
+          {(structure === 'coop' ? RULE_SHORT_COOP : RULE_SHORT)[rule] || ''}
+        </span>
+      </span>
+      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: C.purple, flex: '0 0 auto' }}>Changer ›</span>
+    </button>
+  );
+}
+
+/* (lot AH) Panneau de reglage : deux questions, un bouton pour valider.
+   On valide les deux d'un coup : changer « qui joue avec qui » sans revoir
+   « comment on gagne » menait a des combinaisons involontaires. */
+function PlayModeSheet({ structure, rule, busy, canRemember, gameName, onPick, onClose }) {
+  const [st, setSt] = useState(structure);
+  const [ru, setRu] = useState(rule);
+  const changed = st !== structure || ru !== rule;
+  const opt = (on, tint) => ({
+    display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left', cursor: 'pointer',
+    padding: '10px 12px', borderRadius: 13, fontFamily: BODY, color: C.navy,
+    border: on ? `2px solid ${tint}` : '1.5px solid #e6dcc9', background: on ? `${tint}14` : '#fff',
+  });
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620, maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 19 }}>🎯 Type de partie</div>
+          <button onClick={onClose} style={btnGhost}>Fermer</button>
+        </div>
+        <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 14, lineHeight: 1.5 }}>
+          Réglable à tout moment, même en pleine partie : tous les téléphones de la table suivent aussitôt.
+        </div>
+
+        <Label>Qui joue avec qui ?</Label>
+        <div style={{ display: 'grid', gap: 7, marginBottom: 16 }}>
+          {PLAY_STRUCTURES.map((o) => (
+            <button key={o.key} type="button" onClick={() => setSt(o.key)} style={opt(st === o.key, C.purple)}>
+              <span style={{ fontSize: 20, lineHeight: 1.1 }}>{o.icon}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontFamily: TITLE, fontWeight: 600, fontSize: 15 }}>{o.label}</span>
+                <span style={{ display: 'block', fontSize: 12.5, color: `${C.navy}99`, lineHeight: 1.4 }}>{o.hint}</span>
+              </span>
+              {st === o.key && <span style={{ color: C.purple, fontWeight: 800 }}>&#10003;</span>}
+            </button>
+          ))}
+        </div>
+
+        <Label>{st === 'coop' ? 'Comment la table gagne-t-elle ?' : 'Comment se décide la victoire ?'}</Label>
+        <div style={{ display: 'grid', gap: 7, marginBottom: 14 }}>
+          {PLAY_RULES.map((o) => (
+            <button key={o.key} type="button" onClick={() => setRu(o.key)} style={opt(ru === o.key, C.teal)}>
+              <span style={{ fontSize: 18, lineHeight: 1.15 }}>{o.icon}</span>
+              <span style={{ flex: 1, minWidth: 0, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5, lineHeight: 1.3 }}>
+                {st === 'coop' ? o.coop : o.label}
+              </span>
+              {ru === o.key && <span style={{ color: C.teal, fontWeight: 800 }}>&#10003;</span>}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 12, color: `${C.navy}88`, lineHeight: 1.5, marginBottom: 12 }}>
+          {ru === 'pick' || ru === 'none'
+            ? <>Sans score, les compteurs de points disparaissent des cartes joueurs. </>
+            : null}
+          {st === 'teams' && structure !== 'teams'
+            ? <>La composition des équipes s'ouvre ensuite. </>
+            : null}
+          {canRemember
+            ? <>Ce réglage est aussi <b>retenu pour {gameName ? `« ${gameName} »` : 'ce jeu'}</b> : il sera proposé d'office la prochaine fois.</>
+            : <>Il vaut pour cette partie.</>}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button style={{ ...btnGhost, flex: 1 }} onClick={onClose} disabled={busy}>Annuler</button>
+          <button style={{ ...btnPrimary, flex: 2, opacity: (busy || !changed) ? .55 : 1 }}
+            disabled={busy || !changed} onClick={() => onPick(st, ru)}>
+            {busy ? 'Enregistrement…' : 'Appliquer'}
+          </button>
+        </div>
       </div>
     </div>
   );
