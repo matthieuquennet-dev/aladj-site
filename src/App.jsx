@@ -1321,7 +1321,14 @@ function AppProvider({ children }) {
   const closeChrono = useCallback(() => setChrono(null), []);
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("chrono");
-    if (code) setChrono({ joinCode: code });
+    // (lot AH) Connexion Google lancee depuis le chrono : selon les reglages de
+    // Supabase, le retour peut perdre ?chrono=... -- le code a ete mis de cote.
+    let pending = null;
+    try {
+      pending = window.sessionStorage.getItem("aladj.chrono.join");
+      if (pending) window.sessionStorage.removeItem("aladj.chrono.join");
+    } catch (e) { /* stockage indisponible */ }
+    if (code || pending) setChrono({ joinCode: code || pending });
   }, []);
 
   /* ---- Chargement des données partagées ---- */
@@ -6848,7 +6855,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}><b>La tuile a trois états</b>, et non deux : <b style={{ color: C.purple }}>Oui</b>, <b>Non</b>, ou <b style={{ color: C.amber }}>En attente</b> tant que personne ne s'est prononcé. La nuance compte : un « Non » affirme quelque chose, « En attente » reconnaît simplement qu'on n'a pas encore regardé — et signale d'un coup d'œil les fiches à compléter. Toutes les fiches de la ludothèque sont donc reparties en « En attente ».</p>
             <p style={{ margin: "0 0 8px" }}>À côté, la tuile <b>Phrases de score</b> n'apparaît que pour un jeu <b>déclaré coopératif</b> : c'est là que le barème sert. Elle reste toutefois visible sur un jeu compétitif qui en porte déjà, pour ne rien rendre inaccessible.</p>
             <p style={{ margin: "0 0 8px" }}>Le réglage tient en deux champs : l'<b>état</b> ci-dessus, et le <b>seuil de victoire</b> — le score à partir duquel (ou en dessous duquel) la table l'emporte. Exemple : à <b>Just One</b>, on gagne <b>à partir de 9</b>. Les mêmes champs figurent aussi dans « Modifier le jeu » et dans le formulaire d'ajout d'un jeu.</p>
-            <p style={{ margin: "0 0 8px" }}>Et si vous vous en apercevez trop tard ? À la fin d'une partie au chronomètre, un bouton <b>« En fait, ce jeu est coopératif »</b> bascule l'écran aussitôt, sans quitter le chrono.</p>
+            <p style={{ margin: "0 0 8px" }}>Et si vous vous en apercevez en cours de route ? Dans le chrono, la pastille <b style={{ color: C.purple }}>🎯 Type de partie</b> fait passer la partie en <b>Coopératif</b> à tout moment — pendant le jeu comme sur l'écran de fin : la tablée se groupe aussitôt. Un jeu dont la fiche est encore « En attente » passe à « Oui » ; un « Non » déjà posé n'est jamais renversé (on a pu jouer une variante coopérative ce soir-là). Voir « Le type de partie ».</p>
             <p style={{ margin: "0 0 8px" }}>Le sens de lecture réutilise le réglage existant « quel score l'emporte » : <b>le plus grand</b> signifie « on gagne à partir du seuil », <b>le plus petit</b> signifie « on gagne en dessous ». Laissez le seuil vide si le jeu n'en a pas de chiffré : vous déclarerez alors la victoire à la main.</p>
             <p style={{ margin: "0 0 8px" }}>Une fois le jeu marqué coopératif, <b>le chronomètre et « Enregistrer une partie jouée » s'adaptent tout seuls</b> : plus de score ni de trophée joueur par joueur, mais <b>un seul score pour la table</b> et un seul résultat — <b>Gagné</b>, <b>Perdu</b> ou <b>Je ne sais pas</b>. Le résultat se déduit du score et du seuil, et reste corrigeable d'un clic. Tous les joueurs sont enregistrés avec le même score, et tous vainqueurs (ou aucun).</p>
             <p style={{ margin: "0 0 8px" }}><b>Au chrono, la tablée part groupée.</b> Lancer un jeu coopératif place d'office <b>tous les joueurs dans la même équipe</b> : un score saisi pour l'un est aussitôt reporté sur tous les autres, ce qui est exactement la façon dont on marque les points à un coopératif. Chacun <b>garde sa couleur</b> — on joue ensemble, mais chacun a son pion — et l'étiquette « Équipe A » ne s'affiche pas : le bandeau indique simplement <b>« Coopératif · score commun »</b>. Vous pouvez toujours défaire ce groupement depuis <b>👥 La tablée</b>, et celui qui s'installe en cours de partie rejoint la table automatiquement tant qu'elle n'a pas été répartie à la main.</p>
@@ -7265,7 +7272,7 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Quatre portes d'entrée : la fiche d'un <b>jeu</b> (« <b>Chronométrer une partie</b> »), la fiche d'un <b>moment</b> (« <b>Lancer le chrono de la partie</b> » — la partie sera alors rattachée au moment jeux), l'onglet <b>⏱️ Chrono</b> et la tuile en bas de la <b>page d'accueil</b>. Depuis ces deux dernières, le jeu se choisit sur l'écran de préparation. Ajoutez les joueurs — membres ou invités — et c'est parti.</p>
             <p style={{ margin: "0 0 8px" }}>Depuis un <b>moment jeux</b>, tous les participants du moment (inscrits, membres invités et invités non-membres) sont <b>pré-ajoutés d'office</b> à la partie. Il ne reste plus qu'à retirer ceux qui ne sont pas à cette table-là, d'une croix, avant de démarrer.</p>
-            <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Si un chrono tourne déjà sur ce moment, il apparaît en haut de la fiche du moment sous « Chrono en cours », avec le jeu, qui l'a lancé et combien de joueurs y sont — un bouton <b>Rejoindre</b> vous y emmène directement. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
+            <p style={{ margin: 0 }}><b>Rejoindre au lieu d'en lancer un deuxième.</b> Dès qu'un chrono tourne sur un moment, une <b>case « Un chrono tourne sur ce moment »</b> s'affiche <b>tout en haut de sa fiche</b>, pour tous les membres qui ont accès au moment — qu'ils soient déjà dans la partie ou non. Elle indique le jeu, qui l'a lancé et à quelle heure, combien de joueurs y sont, et se met à jour toute seule. Un appui sur la case vous emmène dans la partie : <b>Rejoindre</b> si vous n'y êtes pas encore, <b>Prendre ma place</b> si l'hôte vous a déjà installé à la table (vous reprenez votre ligne, sans doublon), <b>Revenir à la partie</b> si vous y étiez déjà. Le rappel s'affiche aussi sur l'écran de préparation, au cas où vous seriez déjà parti pour en créer un. Plus besoin de se passer le code de bouche à oreille autour de la table.</p>
             <p style={{ margin: "8px 0 0" }}><b>Les « jeux joués » du moment se remplissent tout seuls.</b> Le jeu choisi dans le chrono s'ajoute immédiatement à la fiche du moment, et chaque <b>manche supplémentaire</b> relève son compteur de parties. Plus rien à ressaisir après coup — et pas de doublon : les demandes de confirmation envoyées aux participants tiennent compte de ce que le chrono a déjà enregistré. Si vous aviez relevé le compteur à la main pour des parties non chronométrées, votre chiffre est conservé : le chrono ne le fait jamais redescendre.</p>
           </>,
         },
@@ -7295,10 +7302,23 @@ function GuidePage() {
         {
           q: "Jouer en équipes",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Dans le chrono, le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes : chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</p>
+            <p style={{ margin: "0 0 8px" }}>Dans le chrono, choisissez <b>Par équipes</b> dans <b style={{ color: C.purple }}>🎯 Type de partie</b> : la composition des équipes s'ouvre aussitôt (on la retrouve ensuite sous <b>👥 La tablée</b>). Chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</p>
             <p style={{ margin: "0 0 8px" }}>Dès lors, le <b>score saisi pour un joueur est reporté à l'identique sur ses coéquipiers</b> — c'est bien le même score, pas une addition : une équipe marque ses points ensemble. Un joueur qui rejoint une équipe en cours de partie hérite aussitôt du score de celle-ci. Les coéquipiers partagent aussi la <b>même couleur</b> à l'écran.</p>
             <p style={{ margin: "0 0 8px" }}>Même chose pour une partie <b>non chronométrée</b> : dans « Enregistrer une partie », cochez <b>Partie en équipes</b> et attribuez les lettres. Le pavé de score rappelle l'équipe concernée, et le trophée reste à cocher joueur par joueur.</p>
             <p style={{ margin: 0 }}><b>Un cas à part : le coopératif.</b> Quand <b>toute la tablée</b> se retrouve dans une seule et même équipe — ce que le chrono fait d'office pour un jeu coopératif — ce n'est pas un affrontement par équipes : le score reste commun, mais <b>chacun garde sa couleur</b> et les cartes n'affichent pas de lettre d'équipe. Voir « Les parties coopératives ».</p>
+          </>,
+        },
+        {
+          q: "Le type de partie : chacun pour soi, équipes, coopératif… avec ou sans score",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Tous les jeux ne se gagnent pas de la même façon. La pastille <b style={{ color: C.purple }}>🎯 Type de partie</b> — dans la salle d'attente, au-dessus des joueurs pendant la partie (une tuile en vue tablette, et un lien dans le bandeau du jeu), et sur l'écran de fin — règle deux choses, <b>à tout moment, même en pleine partie</b> :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Qui joue avec qui ?</b> 🙋 <b>Chacun pour soi</b> ; 👥 <b>Par équipes</b> (le score se partage dans l'équipe, la composition s'ouvre) ; 🤝 <b>Coopératif</b> (toute la tablée dans la même équipe, on gagne ou on perd ensemble).</li>
+              <li><b>Comment se décide la victoire ?</b> ⬆️ <b>le plus grand score</b> gagne ; ⬇️ <b>le plus petit</b> ; 👆 <b>pas de score</b>, on désigne le gagnant à la main ; 🕊️ <b>ni victoire ni défaite</b>, la partie est simplement comptée.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>Les deux se combinent : <i>Codenames</i> se joue par équipes, sans score ; <i>Just One</i> en coopératif, avec un score à atteindre ; une partie de <i>Dixit</i> pour le plaisir, sans vainqueur. En coopératif, les mêmes choix deviennent « un score à atteindre », « un score à ne pas dépasser », « gagné ou perdu, sans score » ou « ni victoire ni défaite ».</p>
+            <p style={{ margin: "0 0 8px" }}>Sans score, les <b>compteurs de points disparaissent</b> des cartes joueurs, et l'écran de fin ne demande que le ou les gagnants — ou rien du tout pour une partie sans vainqueur, qui alimente quand même durées et statistiques.</p>
+            <p style={{ margin: 0 }}>Le réglage se voit <b>en direct sur tous les téléphones</b> de la table et vaut pour les parties suivantes du même jeu (« Nouvelle partie », « Refaire une partie de ce jeu »). Réglé par un membre connecté, il est aussi <b>retenu sur la fiche du jeu</b> et proposé d'office la prochaine fois — le sens du score y compris. Une fiche déclarée <b>coopérative</b> l'emporte toujours au lancement. « Changer de jeu » repart du réglage du nouveau jeu.</p>
           </>,
         },
         {
@@ -7315,6 +7335,12 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Dès qu'un chrono est lancé, un <b>QR code</b> s'affiche à côté du code à six caractères. Chacun le scanne avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — et arrive directement dans la partie, sans rien saisir.</p>
             <p style={{ margin: "0 0 8px" }}>Les <b>points de règle</b> se dictent à la voix (bouton <b>🎤 Dicter</b>) : plus commode qu'un clavier à une main au milieu d'une table. Le clavier se referme au démarrage de la dictée, et le bouton rouge <b>« J'écoute… — toucher pour arrêter »</b> coupe l'écoute à coup sûr. Ce que le micro entend s'affiche <b>en direct sous le bouton</b>, puis vient s'ajouter au texte déjà saisi. Sans parole pendant deux minutes, elle s'arrête toute seule. La dictée n'apparaît que sur les navigateurs qui la gèrent (Chrome, Safari) ; ailleurs, la saisie au clavier reste disponible.</p>
             <p style={{ margin: "0 0 8px" }}>En <b>vue tablette</b>, le code affiché dans le bandeau du jeu est cliquable : il ouvre un grand QR au centre de l'écran, lisible depuis l'autre bout de la table. Pratique quand un joueur arrive en cours de soirée.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Pas connecté sur ce téléphone ?</b> Le chrono ne vous oblige plus à vous ajouter comme un joueur de plus. Il propose trois façons de vous asseoir :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Déjà à la table ?</b> Les places que l'hôte a préparées et que personne n'a encore reprises s'affichent : touchez votre nom. Une place d'<b>invité</b> se reprend d'un geste ; une place de <b>membre</b> se reprend en se connectant à son compte.</li>
+              <li><b>Membre de l'association ?</b> Connectez-vous (e-mail et mot de passe, ou Google) : si l'hôte vous a déjà mis à la table — c'est le cas de tous les inscrits quand le chrono est lancé depuis un moment jeux —, vous retrouvez <b>votre place</b>, et la partie rejoint <b>votre historique</b>.</li>
+              <li><b>Pas de compte ?</b> Entrez simplement votre prénom, comme avant.</li>
+            </ul>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>Le QR est fabriqué par le site lui-même, sans passer par aucun service extérieur : le code de votre partie ne quitte jamais votre navigateur.</p>
           </>,
         },
@@ -7396,7 +7422,7 @@ function GuidePage() {
         },
         {
           q: "Terminer… ou quitter sans enregistrer",
-          a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : cochez les vainqueurs (laissez vide pour un jeu coopératif), puis choisissez votre sortie — <b>« Enregistrer et quitter »</b>, <b>« 🔁 Enregistrer et refaire une partie de ce jeu »</b> ou <b>« 🎲 Enregistrer et enchaîner un autre jeu »</b>. Dans les trois cas la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
+          a: <p style={{ margin: 0 }}><b>« Terminer »</b> passe à l'écran de fin : désignez les vainqueurs — ou, selon le <b>type de partie</b>, dites si la table a gagné, ou rien du tout pour une partie sans vainqueur —, puis choisissez votre sortie — <b>« Enregistrer et quitter »</b>, <b>« 🔁 Enregistrer et refaire une partie de ce jeu »</b> ou <b>« 🎲 Enregistrer et enchaîner un autre jeu »</b>. Dans les trois cas la partie alimente les statistiques, le champion en titre et vos badges. <b>« Quitter sans enregistrer »</b> abandonne tout : aucune durée, aucun résultat, la session est supprimée.</p>,
         },
         {
           q: "Pas de doublon : un joueur, une ligne — une partie, un enregistrement",
@@ -9055,7 +9081,7 @@ function ChronoPage({ onAuth, setPage }) {
       steps: [
         <>Dès la partie créée, un <b>code</b> et un <b>QR code</b> s'affichent à l'écran.</>,
         <>Chacun scanne le QR avec <b>l'appareil photo de son téléphone</b> — aucune application à installer — ou saisit le code sur la page d'accueil.</>,
-        <>Les invités non-membres entrent simplement leur prénom : pas besoin de compte.</>,
+        <>Pas connecté ? On <b>touche son nom</b> si l'hôte a déjà préparé sa place, on <b>se connecte</b> à son compte, ou l'on entre son prénom en invité — pas besoin de compte.</>,
         <>Tout le monde voit alors <b>les mêmes chronos, en direct</b>.</>,
       ],
       illu: <Illu caption="Le code de la partie, à recopier ou à scanner."><MockBtn color={C.teal}>Rejoindre</MockBtn><MockBtn color={C.navy} soft>VPDMS3</MockBtn></Illu>,
@@ -9097,12 +9123,23 @@ function ChronoPage({ onAuth, setPage }) {
       emoji: "👥", color: C.purple, title: "Le mode équipe",
       teaser: "Équipe A, équipe B… les scores et les victoires suivent.",
       steps: [
-        <>Le bouton <b>👥 Mode équipe</b> ouvre la composition des équipes.</>,
+        <>Choisissez <b>Par équipes</b> dans <b>🎯 Type de partie</b> : la composition des équipes s'ouvre.</>,
         <>Chaque joueur reçoit une lettre (Équipe A, B, C…) ou reste sur <b>Seul</b> s'il joue pour lui-même.</>,
         <>Saisir le score d'un joueur le <b>recopie sur ses coéquipiers</b> : un seul chiffre par équipe.</>,
         <>Le trophée reste à cocher joueur par joueur, pour que chacun garde sa victoire dans ses statistiques.</>,
       ],
-      illu: <Illu caption="Composer les équipes en cours de préparation."><MockBtn color={C.purple}>👥 Mode équipe</MockBtn><MockBtn color={C.navy} soft>Équipe A</MockBtn><MockBtn color={C.teal} soft>Seul</MockBtn></Illu>,
+      illu: <Illu caption="Composer les équipes en cours de préparation."><MockBtn color={C.purple}>👥 Par équipes</MockBtn><MockBtn color={C.navy} soft>Équipe A</MockBtn><MockBtn color={C.teal} soft>Seul</MockBtn></Illu>,
+    },
+    {
+      emoji: "🎯", color: C.purple, title: "Le type de partie",
+      teaser: "Compétitif, équipes, coopératif, avec ou sans score : réglable même en pleine partie.",
+      steps: [
+        <>Touchez la pastille <b>🎯 Type de partie</b> : en salle d'attente, au-dessus des joueurs, ou sur l'écran de fin.</>,
+        <>Choisissez <b>qui joue avec qui</b> : chacun pour soi, par équipes, ou toute la tablée en coopératif.</>,
+        <>Puis <b>comment on gagne</b> : le plus grand score, le plus petit, un gagnant désigné sans score, ou ni victoire ni défaite.</>,
+        <>Tous les téléphones suivent aussitôt, et le jeu s'en souvient pour la prochaine partie.</>,
+      ],
+      illu: <Illu caption="Deux questions, et la partie se joue comme il faut."><MockBtn color={C.purple}>🤝 Coopératif</MockBtn><MockBtn color={C.teal} soft>👆 Gagnant désigné</MockBtn><MockBtn color={C.navy} soft>🕊️ Sans vainqueur</MockBtn></Illu>,
     },
     {
       emoji: "⏳", color: C.navy, title: "Le minuteur (le sablier)",
@@ -11885,6 +11922,8 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 
   const [showGuest, setShowGuest] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  // (lot AH) Chronos en cours sur ce moment (renseigne par EventLiveChronos).
+  const [liveChronos, setLiveChronos] = useState(0);
   // (lot AB) Profil d'un inscrit, ouvert depuis la liste des participants.
   // On voit qui vient ; on doit pouvoir voir qui c'est.
   const [viewMember, setViewMember] = useState(null);
@@ -11956,6 +11995,10 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
         </div>
 
         <div style={{ padding: 26 }}>
+          {/* (lot AH) Un chrono tourne sur ce moment : la case de jonction passe
+              en tete de fiche, avant tout le reste -- c'est ce qu'on vient
+              chercher quand on ouvre le moment en pleine partie. */}
+          {currentUser && !expired && <EventLiveChronos eventId={e.id} onCount={setLiveChronos} onBeforeOpen={onClose} />}
           {e.isPrivate && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "rgba(107,58,122,.09)", border: `1.5px solid ${C.purple}33`, borderRadius: 13, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, lineHeight: 1.5, color: C.navy }}>
               <Lock size={17} color={C.purple} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -12129,12 +12172,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
           )}
 
           {currentUser && !expired && (
-            <>
-              <EventLiveChronos eventId={e.id} />
-              <Btn full variant="teal" style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
-                <Clock size={17} /> Lancer le chrono de la partie
-              </Btn>
-            </>
+            <Btn full variant={liveChronos > 0 ? "soft" : "teal"} style={{ marginBottom: 18 }} onClick={() => { onClose(); openChrono({ eventId: e.id }); }}>
+              <Clock size={17} /> {liveChronos > 0 ? "Lancer le chrono d'une autre table" : "Lancer le chrono de la partie"}
+            </Btn>
           )}
 
           {/* SUGGESTIONS DE JEUX */}
@@ -12200,12 +12240,25 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
 /* ---- Section : jeux joués lors d'un moment ---- */
 /* Chronos deja lances sur un moment jeux.
    Sans cet encart, deux personnes autour de la meme table lancaient chacune
-   leur chrono sans le savoir : on propose desormais de rejoindre l'existant. */
-function EventLiveChronos({ eventId }) {
+   leur chrono sans le savoir : on propose desormais de rejoindre l'existant.
+   (lot AH) La case n'apparaissait qu'a ceux qui etaient DEJA relies a la
+   partie : la base cache une partie a qui n'y a pas encore de telephone, y
+   compris aux participants que l'hote avait pre-ajoutes. Elle passe donc par
+   une fonction dediee (aladj_event_live_sessions), qui la montre a tous ceux
+   qui ont acces au moment, et sait si une place les attend deja.
+   Elle se place en tete de fiche et se rafraichit toute seule. */
+function EventLiveChronos({ eventId, onCount, onBeforeOpen }) {
   const { openChrono, users, games } = useApp();
   const [rows, setRows] = useState([]);
 
   const load = useCallback(async () => {
+    const live = await supabase.rpc("aladj_event_live_sessions", { p_event_id: eventId });
+    if (!live.error) {
+      setRows((live.data || []).map((x) => ({ ...x, nPlayers: x.n_players || 0 })));
+      return;
+    }
+    // Repli tant que la migration du lot AH n'est pas jouee : la lecture
+    // directe ne montre la partie qu'a ceux qui y sont deja.
     const { data } = await supabase.from("play_sessions")
       .select("id,join_code,status,game_id,host_profile_id,created_at")
       .eq("event_id", eventId).in("status", ["lobby", "running"])
@@ -12215,41 +12268,60 @@ function EventLiveChronos({ eventId }) {
       .select("session_id").in("session_id", data.map((x) => x.id));
     const n = {};
     (pl || []).forEach((r) => { n[r.session_id] = (n[r.session_id] || 0) + 1; });
-    setRows(data.map((x) => ({ ...x, nPlayers: n[x.id] || 0 })));
+    setRows(data.map((x) => ({ ...x, nPlayers: n[x.id] || 0, my_seat: "in" })));
   }, [eventId]);
 
   useEffect(() => {
     load();
-    // Une partie peut demarrer pendant qu'on regarde la fiche : on rafraichit.
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    // Une partie peut demarrer pendant qu'on regarde la fiche : on rafraichit,
+    // et tout de suite au retour sur l'onglet (telephone deverrouille).
+    const t = setInterval(load, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
   }, [load]);
+
+  useEffect(() => { if (onCount) onCount(rows.length); }, [rows.length, onCount]);
 
   if (!rows.length) return null;
 
+  const join = (r) => { if (onBeforeOpen) onBeforeOpen(); openChrono({ joinCode: r.join_code }); };
+  const hhmm = (iso) => {
+    try { return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; }
+  };
+
   return (
-    <div style={{ marginBottom: 20 }}>
-      <h4 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 15.5, margin: "0 0 9px", display: "flex", alignItems: "center", gap: 7 }}>
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red, boxShadow: `0 0 0 3px ${C.red}33` }} />
-        {rows.length > 1 ? "Chronos en cours" : "Chrono en cours"}
-      </h4>
+    <div style={{ marginBottom: 18, background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}55`, borderRadius: 16, padding: "12px 13px" }}>
+      <div style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, fontWeight: 600, margin: "0 0 9px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 9, height: 9, borderRadius: "50%", background: C.red, boxShadow: `0 0 0 3px ${C.red}33`, animation: "aladjLivePulse 1.6s ease-in-out infinite" }} />
+        {rows.length > 1 ? `${rows.length} chronos en cours sur ce moment` : "Un chrono tourne sur ce moment"}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
         {rows.map((r) => {
           const g = (games || []).find((x) => x.id === r.game_id);
           const host = (users || []).find((u) => u.id === r.host_profile_id);
+          const seat = r.my_seat;
+          const cta = seat === "in" ? "Revenir à la partie" : (seat === "waiting" ? "Prendre ma place" : "Rejoindre");
           return (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1.5px solid ${C.teal}44`, borderRadius: 13, padding: "9px 12px", minWidth: 0 }}>
-              <span style={{ width: 40, height: 40, borderRadius: 9, flexShrink: 0, background: g && g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
+            <button key={r.id} type="button" onClick={() => join(r)}
+              style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1.5px solid ${seat === "waiting" ? C.teal : `${C.teal}44`}`,
+                borderRadius: 13, padding: "10px 12px", minWidth: 0, width: "100%", textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0, background: g && g.img ? `center/cover url("${g.img}")` : `linear-gradient(135deg,${C.teal},${C.navy})` }} />
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {g ? g.name : "Partie en cours"}
                 </span>
                 <span style={{ display: "block", fontSize: 12, color: "#9c8d79" }}>
-                  lancé par {host ? host.name : "un membre"} · {r.nPlayers} joueur{r.nPlayers > 1 ? "s" : ""} · {r.status === "running" ? "en cours" : "en attente"}
+                  lancé par {host ? host.name : "un membre"}{r.created_at ? ` à ${hhmm(r.created_at)}` : ""} · {r.nPlayers} joueur{r.nPlayers > 1 ? "s" : ""} · {r.status === "lobby" ? "en attente" : "en cours"}
                 </span>
+                {seat === "waiting" && (
+                  <span style={{ display: "block", fontSize: 12, color: C.teal, fontWeight: 800 }}>Votre place vous attend à cette table</span>
+                )}
               </span>
-              <Btn size="sm" variant="teal" onClick={() => openChrono({ joinCode: r.join_code })}>Rejoindre</Btn>
-            </div>
+              <span style={{ flexShrink: 0, background: C.teal, color: "#fff", borderRadius: 11, padding: "8px 13px", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, whiteSpace: "nowrap" }}>
+                {cta}
+              </span>
+            </button>
           );
         })}
       </div>
@@ -21429,6 +21501,7 @@ export default function App() {
         @keyframes popIn { from { opacity: 0; transform: scale(.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
+        @keyframes aladjLivePulse { 0%,100% { box-shadow: 0 0 0 3px rgba(181,40,58,.28); } 50% { box-shadow: 0 0 0 8px rgba(181,40,58,0); } }
         .aladj-spin { animation: spin 1s linear infinite; }
         /* (lot V) Etincelles du feu d'artifice des victoires cooperatives. */
         @keyframes aladjSpark {
