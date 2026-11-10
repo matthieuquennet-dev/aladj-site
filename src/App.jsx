@@ -6,7 +6,9 @@ import {
   ArrowRight, Crown, Mail, ShieldCheck, Gamepad2, ChevronDown, Award, Info, AlertTriangle, Eye, EyeOff,
   Euro, Lock, ArrowRightLeft, Package, ShoppingBag, Ticket, RefreshCw, CalendarPlus, Copy, HelpCircle,
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera,
-  Smartphone, Share2, Rocket, Wrench, CalendarCheck, Puzzle
+  Smartphone, Share2, Rocket, Wrench, CalendarCheck, Puzzle,
+  Newspaper, Megaphone, Lightbulb, Type, Heading2, ImagePlus, Quote, List, Scale,
+  MessageSquarePlus, Send, ArrowLeft, ArrowUp, ArrowDown, Save
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad, Confetti, playVictory } from "./PlayTimer";
@@ -5244,7 +5246,7 @@ function TextInput(props) {
 }
 
 /* ---- Champ image : URL OU import d'un fichier local (jpg, png...) avec compression auto ---- */
-function ImageField({ value, onChange }) {
+function ImageField({ value, onChange, maxSize = 800, maxKb = 250 }) {
   const [err, setErr] = useState("");
   const [working, setWorking] = useState(false);
   const [urlInput, setUrlInput] = useState("");
@@ -5256,7 +5258,7 @@ function ImageField({ value, onChange }) {
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 800;
+        const MAX = maxSize;   // (lot AI) 800 par defaut ; 1400 pour les images du Mag
         let { width, height } = img;
         if (width > MAX || height > MAX) {
           if (width >= height) { height = Math.round(height * MAX / width); width = MAX; }
@@ -5270,7 +5272,7 @@ function ImageField({ value, onChange }) {
         // qualité 0.8 ; on réduit si l'image reste trop lourde
         let quality = 0.8;
         let dataUrl = canvas.toDataURL("image/jpeg", quality);
-        while (dataUrl.length > 250 * 1024 && quality > 0.4) { // vise < ~250 Ko
+        while (dataUrl.length > maxKb * 1024 && quality > 0.4) { // vise < ~250 Ko par defaut
           quality -= 0.1;
           dataUrl = canvas.toDataURL("image/jpeg", quality);
         }
@@ -5498,6 +5500,8 @@ const NAV = [
   // (lot AA) L'association edite aussi ses propres jeux en ligne : ils ont
   // leur onglet, entre la veille des sorties et les outils de table.
   { key: "web-jeux", label: "Jeux en ligne", icon: Gamepad2 },
+  // (lot AI) Les articles ecrits par les membres. Lecture publique.
+  { key: "mag", label: "Le Mag", icon: Newspaper },
   { key: "chrono", label: "Chrono", icon: Clock },
   { key: "ma-ludo", label: "Mon espace", icon: BookOpen, auth: true },
   { key: "locations", label: "Mes locations", icon: ArrowRightLeft, auth: true },
@@ -5536,7 +5540,7 @@ function Navbar({ page, setPage, onAuth }) {
      sur un iPad, « Connexion » et « Adherer » basculaient sur une deuxieme
      ligne, formant un gros bloc.
 
-     Mais une ligne unique ne suffit pas : un membre decisionnaire a dix
+     Mais une ligne unique ne suffit pas : un membre decisionnaire a onze
      onglets, qui ne tiennent dans aucune largeur raisonnable. Ils defilent
      donc horizontalement — et surtout, ce defilement se VOIT et se COMMANDE :
      deux fleches apparaissent aux extremites des qu'il reste quelque chose a
@@ -6556,7 +6560,7 @@ function GuidePage() {
         {
           q: "Retrouver tous les onglets du menu",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Le menu du haut tient sur <b>une seule ligne</b>, pour ne pas manger l'écran. Quand les onglets sont trop nombreux pour la largeur disponible — c'est le cas d'un membre décisionnaire, qui en a dix —, la rangée <b>défile horizontalement</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Le menu du haut tient sur <b>une seule ligne</b>, pour ne pas manger l'écran. Quand les onglets sont trop nombreux pour la largeur disponible — c'est le cas d'un membre décisionnaire, qui en a onze —, la rangée <b>défile horizontalement</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Deux petites <b>flèches</b> apparaissent alors aux extrémités : un clic fait glisser la rangée. Sur une tablette ou un téléphone, on peut aussi la <b>faire glisser au doigt</b>. L'onglet où vous vous trouvez est toujours ramené automatiquement sous vos yeux.</p>
             <p style={{ margin: 0 }}>Sur un écran étroit, le menu se replie derrière le bouton <b>☰</b> : tous les onglets y figurent alors les uns sous les autres, sans rien à faire défiler.</p>
           </>,
@@ -7525,6 +7529,73 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}><b>Le Thalex — Le grimoire des liens.</b> Un jeu de cartes coopératif pour deux à cinq mages : vous voyez les arcanes de vos alliés, jamais les vôtres. Tout tient dans ce qu'on choisit de se dire, avec des indices comptés. Une campagne de douze chapitres, une partie libre, une initiation — et vingt à quarante minutes par partie.</p>
             <p style={{ margin: 0 }}>Les deux sont <b>en cours de développement</b>. Leurs fiches, leurs règles et leur avancement sont déjà consultables dans l'onglet.</p>
           </>,
+        },
+      ],
+    },
+    {
+      icon: "📰", title: "Le Mag",
+      items: [
+        {
+          q: "Le Mag, c'est quoi ?",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}><b>Le Mag</b> est la rubrique des articles écrits par les membres : <b>critiques de jeux</b>, <b>dossiers</b>, <b>actualités ludiques</b>, <b>récits de parties</b>, <b>conseils et stratégie</b>. On y accède par l'onglet « Le Mag » du menu ; les trois derniers articles s'affichent aussi sur la page d'accueil.</p>
+            <p style={{ margin: 0 }}><b>La lecture est ouverte à tous</b>, sans compte : un article se partage par un simple lien. <b>Écrire et contribuer</b> est réservé aux membres connectés.</p>
+          </>,
+        },
+        {
+          q: "Écrire un article",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dans Le Mag, cliquez sur <b>« Écrire un article »</b>. Choisissez une <b>rubrique</b>, donnez un <b>titre</b> et un <b>chapô</b> (deux ou trois phrases d'accroche), puis composez votre texte <b>bloc par bloc</b> : paragraphe, intertitre, image, citation, liste, « les + / les − », fiche de jeu. Chaque bloc se monte, se descend ou se supprime avec les boutons placés à sa droite.</p>
+            <Illu caption="Les blocs que l'on peut ajouter à la suite de l'article">
+              <MockBtn soft>Paragraphe</MockBtn><MockBtn soft>Intertitre</MockBtn><MockBtn soft>Image</MockBtn><MockBtn soft>Citation</MockBtn><MockBtn soft>Les + / les −</MockBtn><MockBtn soft>Fiche de jeu</MockBtn>
+            </Illu>
+            <p style={{ margin: "8px 0 8px" }}>L'article <b>naît en brouillon</b> : vous seul le voyez (et vos co-auteurs si vous en invitez), pas même les administrateurs. Enregistrez autant de fois que vous voulez, relisez-le avec le bouton <b>« Aperçu »</b>, puis cliquez sur <b>« Publier »</b> quand il est prêt. Vous pouvez ensuite le corriger, ou le <b>repasser en brouillon</b>.</p>
+            <p style={{ margin: 0 }}>Un filet de sécurité garde ce que vous écrivez <b>sur votre appareil, au fil de la frappe</b> : si la page se recharge ou si le téléphone se met en veille avant que vous ayez enregistré, votre texte vous est rendu à la réouverture de l'éditeur.</p>
+          </>,
+        },
+        {
+          q: "Mettre son texte en forme, lier un jeu",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Trois marques suffisent, faciles à taper sur un téléphone :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>**gras**</b> — deux étoiles de chaque côté ;</li>
+              <li><b>*italique*</b> — une étoile de chaque côté ;</li>
+              <li><b>[texte du lien](https://adresse)</b> — pour un lien cliquable.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>Dans un paragraphe, <b>une ligne vide</b> sépare deux paragraphes.</p>
+            <p style={{ margin: 0 }}>Le champ <b>« Jeu dont parle l'article »</b> rattache l'article à une fiche de la ludothèque : la fiche s'affiche en tête d'article avec <b>la note que vous avez donnée au jeu</b> (celle de la ludothèque — on ne la ressaisit pas), et l'article apparaît sur la fiche du jeu, rubrique « Dans Le Mag ».</p>
+          </>,
+        },
+        {
+          q: "Les encarts : contribuer à l'article d'un autre membre",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>C'est l'idée centrale du Mag : <b>on enrichit un article sans le dénaturer</b>. Le texte appartient à son auteur ; les autres membres y posent des <b>encarts signés</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>En lisant un article, cliquez sur <b>« Contribuer »</b> : un bouton <b>« Poser mon encart ici »</b> apparaît sous chaque passage. Choisissez l'endroit, le genre de votre encart, écrivez, publiez. Un bouton en bas de page permet aussi d'ajouter un encart <b>en fin d'article</b>.</p>
+            <Illu caption="Les cinq genres d'encart">
+              <MockBtn color={C.purple} soft>💬 Un autre avis</MockBtn><MockBtn soft>➕ Complément</MockBtn><MockBtn color={C.amber} soft>🎲 Anecdote de partie</MockBtn><MockBtn color={C.navy} soft>🔧 Variante</MockBtn><MockBtn color={C.red} soft>📌 Précision</MockBtn>
+            </Illu>
+            <p style={{ margin: "8px 0 8px" }}>L'encart paraît <b>tout de suite</b>, à votre nom, en retrait et bordé d'une couleur : impossible de le confondre avec le texte de l'auteur. Vous pouvez le <b>corriger</b> ou le <b>supprimer</b> à tout moment. L'auteur de l'article et ses co-auteurs sont prévenus par notification.</p>
+            <p style={{ margin: 0 }}>L'encart reste accroché à son passage : si l'auteur retouche son texte, il ne bouge pas. Si le passage est supprimé, l'encart rejoint ceux de fin d'article.</p>
+          </>,
+        },
+        {
+          q: "Écrire à plusieurs : les co-auteurs",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Pour un article vraiment écrit à plusieurs mains, l'auteur invite des <b>co-auteurs</b> dans l'éditeur, rubrique « À plusieurs ». Ils sont prévenus par notification, <b>modifient le texte avec lui</b> et signent l'article à ses côtés (« par Camille avec Léo »).</p>
+            <p style={{ margin: 0 }}><b>Publier, repasser en brouillon, choisir les co-auteurs et supprimer</b> l'article restent réservés à son auteur. Deux personnes qui écrivent en même temps risquent de s'écraser l'une l'autre : mieux vaut se passer la main, et enregistrer avant de la rendre.</p>
+          </>,
+        },
+        {
+          q: "Masquer un encart, fermer les encarts, retirer un article",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>L'auteur d'un article (et ses co-auteurs) peut <b>masquer</b> un encart avec l'icône en forme d'œil : les lecteurs ne le voient plus, <b>son signataire en est prévenu</b>, et l'encart peut être réaffiché à tout moment. L'auteur <b>ne peut ni réécrire ni supprimer</b> l'encart d'un autre — « sans dénaturer » vaut dans les deux sens.</p>
+            <p style={{ margin: "0 0 8px" }}>Pour ne recevoir aucun encart, décochez <b>« Ouvrir l'article aux encarts des membres »</b> dans l'éditeur.</p>
+            <p style={{ margin: 0 }}>Les <b>administrateurs</b> peuvent masquer ou supprimer un encart, et <b>retirer un article de la publication</b>. Un article retiré n'est plus visible que de son auteur et des administrateurs, et sa remise en ligne passe par un administrateur.</p>
+          </>,
+        },
+        {
+          q: "Partager un article",
+          a: <p style={{ margin: 0 }}>En haut de chaque article, le bouton <b>« Partager »</b> ouvre le partage du téléphone (Signal, messages…) ou, sur ordinateur, <b>copie le lien</b> de l'article. Ce lien fonctionne pour tout le monde, membre ou non.</p>,
         },
       ],
     },
@@ -9035,6 +9106,1651 @@ function WebGamesPage({ onAuth, setToast }) {
 }
 
 /* =============================================================================
+   (lot AI) LE MAG — LES ARTICLES DE L'ASSOCIATION
+   -----------------------------------------------------------------------------
+   Chaque membre peut écrire : une critique de jeu, un dossier, une actualité,
+   un récit de partie, un conseil. La lecture est publique — c'est une vitrine,
+   et un article se partage par un simple lien.
+
+   Le cœur du lot tient en une règle : ON CONTRIBUE SANS DÉNATURER.
+     · le texte appartient à son auteur (et aux co-auteurs qu'il invite) ;
+     · tous les autres membres posent des ENCARTS SIGNÉS sous le passage de
+       leur choix : un autre avis, un complément, une anecdote, une variante ;
+     · l'auteur ne réécrit jamais l'encart d'un autre — il peut le masquer ;
+     · celui qui signe un encart ne touche jamais au texte de l'article.
+   Le serveur applique exactement ces règles (migration lot_AI) : ce qui suit
+   n'en est que l'interface.
+
+   Le contenu d'un article est une liste de BLOCS (paragraphe, intertitre,
+   image, citation, liste, « les + / les − », fiche de jeu). Chaque bloc porte
+   un identifiant stable : c'est à lui que s'accrochent les encarts, qui
+   restent donc à leur place quand l'auteur retouche son texte.
+
+   Rien de tout cela ne passe par loadData : un article peut être long, et le
+   Mag ne doit pas alourdir chaque rechargement du site. La page charge sa
+   liste, l'article ouvert charge son texte.
+   ============================================================================= */
+const MAG_KINDS = [
+  { key: "review",  label: "Critique de jeu",      short: "Critique", color: C.teal,   icon: Star },
+  { key: "dossier", label: "Dossier",              short: "Dossier",  color: C.purple, icon: BookOpen },
+  { key: "actu",    label: "Actualité ludique",    short: "Actu",     color: C.red,    icon: Megaphone },
+  { key: "recit",   label: "Récit de partie",      short: "Récit",    color: C.amber,  icon: Dice5 },
+  { key: "conseil", label: "Conseil & stratégie",  short: "Conseil",  color: C.navy,   icon: Lightbulb },
+];
+const magKind = (k) => MAG_KINDS.find((x) => x.key === k) || MAG_KINDS[0];
+
+const MAG_ADDON_KINDS = [
+  { key: "avis",       label: "Un autre avis",           color: C.purple, emoji: "💬" },
+  { key: "complement", label: "Complément",              color: C.teal,   emoji: "➕" },
+  { key: "anecdote",   label: "Anecdote de partie",      color: C.amber,  emoji: "🎲" },
+  { key: "variante",   label: "Variante / règle maison", color: C.navy,   emoji: "🔧" },
+  { key: "precision",  label: "Précision",               color: C.red,    emoji: "📌" },
+];
+const magAddonKind = (k) => MAG_ADDON_KINDS.find((x) => x.key === k) || MAG_ADDON_KINDS[1];
+
+const MAG_BLOCK_TYPES = [
+  { type: "p",     label: "Paragraphe",    icon: Type },
+  { type: "h",     label: "Intertitre",    icon: Heading2 },
+  { type: "img",   label: "Image",         icon: ImagePlus },
+  { type: "quote", label: "Citation",      icon: Quote },
+  { type: "list",  label: "Liste",         icon: List },
+  { type: "pm",    label: "Les + / les −", icon: Scale },
+  { type: "game",  label: "Fiche de jeu",  icon: Dice5 },
+];
+const magBlockType = (t) => MAG_BLOCK_TYPES.find((x) => x.type === t) || MAG_BLOCK_TYPES[0];
+
+const MAG_ADDON_MAX = 2000;
+const MAG_CHAPO_MAX = 500;
+const MAG_LIST_COLS = "id,slug,title,chapo,kind,cover_url,game_id,read_minutes,status,collab_open,author_id,created_at,updated_at,published_at";
+const MAG_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const magNewId = () => "b" + Math.random().toString(36).slice(2, 10);
+
+/* Passage de relais vers le Mag depuis n'importe où dans le site (notification,
+   page d'accueil, fiche de jeu). On dépose la cible ici, puis on prévient : le
+   Shell ouvre l'onglet, et la page du Mag — déjà montée ou non — vient lire ce
+   qu'on lui a laissé. `key` est l'adresse courte de l'article ou son id. */
+const MAG_PENDING = { key: null };
+function magGoto(key) {
+  MAG_PENDING.key = key || null;
+  try { window.dispatchEvent(new CustomEvent("aladj:goto", { detail: { page: "mag" } })); }
+  catch (e) { /* très vieux navigateur : l'onglet reste accessible par le menu */ }
+}
+
+/* L'adresse de la page suit ce qu'on lit : ?page=mag&article=mon-article.
+   C'est ce qui rend un article partageable par simple copier-coller. */
+function magSetUrl(articleSlug, keepPage) {
+  if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
+  try {
+    const url = new URL(window.location.href);
+    if (articleSlug) { url.searchParams.set("page", "mag"); url.searchParams.set("article", articleSlug); }
+    else {
+      url.searchParams.delete("article");
+      if (keepPage) url.searchParams.set("page", "mag"); else if (url.searchParams.get("page") === "mag") url.searchParams.delete("page");
+    }
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  } catch (e) { /* sans gravité : seule l'adresse affichée est en cause */ }
+}
+function magShareUrl(articleSlug) {
+  const origin = (typeof window !== "undefined" && window.location && window.location.origin) || "https://aladj.fr";
+  return `${origin}/?page=mag&article=${encodeURIComponent(articleSlug || "")}`;
+}
+
+function magDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getDate()} ${FR_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function mapMagArticle(r) {
+  return {
+    id: r.id, slug: r.slug, title: r.title || "", chapo: r.chapo || "", kind: r.kind || "review",
+    cover: r.cover_url || "", gameId: r.game_id || null, readMinutes: r.read_minutes || 1,
+    status: r.status || "draft", collabOpen: r.collab_open !== false, authorId: r.author_id || null,
+    createdAt: r.created_at || null, updatedAt: r.updated_at || null, publishedAt: r.published_at || null,
+    blocks: Array.isArray(r.blocks) ? r.blocks : null,
+  };
+}
+function mapMagAddon(r) {
+  return {
+    id: r.id, articleId: r.article_id, authorId: r.author_id || null, anchor: r.anchor || null,
+    kind: r.kind || "complement", content: r.content || "", hidden: r.hidden === true,
+    hiddenBy: r.hidden_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
+  };
+}
+// Tant que la migration du lot AI n'a pas été jouée, les tables n'existent pas :
+// on le dit calmement au lieu d'afficher une erreur technique.
+const magIsMissing = (error) => !!error && /does not exist|schema cache|could not find the (table|function)/i.test(error.message || "");
+
+async function magFetchList() {
+  const [a, n, c] = await Promise.all([
+    supabase.from("mag_articles").select(MAG_LIST_COLS).order("published_at", { ascending: false, nullsFirst: false }).order("updated_at", { ascending: false }),
+    supabase.from("mag_addons").select("article_id").eq("hidden", false),
+    supabase.from("mag_coauthors").select("article_id,user_id"),
+  ]);
+  if (a.error) return { rows: [], counts: {}, co: {}, error: a.error.message || "erreur", missing: magIsMissing(a.error) };
+  const counts = {};
+  (n.data || []).forEach((r) => { counts[r.article_id] = (counts[r.article_id] || 0) + 1; });
+  const co = {};
+  (c.data || []).forEach((r) => { (co[r.article_id] ||= []).push(r.user_id); });
+  return { rows: (a.data || []).map(mapMagArticle), counts, co, error: null, missing: false };
+}
+
+async function magFetchArticle(key) {
+  if (!key) return { article: null };
+  const col = MAG_UUID_RE.test(String(key)) ? "id" : "slug";
+  const { data, error } = await supabase.from("mag_articles").select(MAG_LIST_COLS + ",blocks").eq(col, key).limit(1);
+  if (error) return { article: null, error: error.message || "erreur", missing: magIsMissing(error) };
+  const row = (data || [])[0];
+  return { article: row ? mapMagArticle(row) : null };
+}
+
+async function magFetchExtras(articleId) {
+  const [n, c] = await Promise.all([
+    supabase.from("mag_addons").select("*").eq("article_id", articleId).order("created_at", { ascending: true }),
+    supabase.from("mag_coauthors").select("user_id").eq("article_id", articleId),
+  ]);
+  return {
+    addons: (n.data || []).map(mapMagAddon),
+    coIds: (c.data || []).map((r) => r.user_id),
+  };
+}
+
+/* ---- Mise en forme légère du texte ----
+   Trois marques seulement, faciles à taper sur un téléphone :
+     **gras**   *italique*   [texte du lien](https://adresse)
+   Le texte n'est jamais injecté comme du HTML : il est découpé puis rendu
+   élément par élément, donc rien de ce qu'écrit un membre ne peut s'exécuter. */
+function magInline(text, keyBase) {
+  const s = String(text || "");
+  const re = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
+  const out = [];
+  let last = 0; let m; let i = 0;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const tok = m[0];
+    const k = `${keyBase}-${i}`;
+    if (tok.startsWith("**")) out.push(<b key={k}>{tok.slice(2, -2)}</b>);
+    else if (tok.startsWith("*")) out.push(<i key={k}>{tok.slice(1, -1)}</i>);
+    else {
+      const mm = /^\[([^\]]+)\]\((.+)\)$/.exec(tok);
+      const href = mm ? safeUrl(mm[2]) : "";
+      if (href) out.push(<a key={k} href={href} target="_blank" rel="noopener noreferrer" style={{ color: C.teal, fontWeight: 700, textDecorationThickness: 2, textUnderlineOffset: 3 }}>{mm[1]}</a>);
+      else out.push(tok);
+    }
+    last = m.index + tok.length; i += 1;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+// Un retour à la ligne simple reste un retour à la ligne.
+function magLines(text, keyBase) {
+  const lines = String(text || "").split("\n");
+  const out = [];
+  lines.forEach((ln, i) => {
+    if (i > 0) out.push(<br key={`${keyBase}-br${i}`} />);
+    magInline(ln, `${keyBase}-l${i}`).forEach((n) => out.push(n));
+  });
+  return out;
+}
+// Une ligne vide sépare deux paragraphes.
+function MagText({ text, style }) {
+  const paras = String(text || "").split(/\n{2,}/).map((x) => x.trim()).filter(Boolean);
+  return (
+    <>
+      {paras.map((p, i) => (
+        <p key={i} style={{ margin: i === paras.length - 1 ? 0 : "0 0 1em", ...style }}>{magLines(p, `p${i}`)}</p>
+      ))}
+    </>
+  );
+}
+
+const magSplitLines = (t) => String(t || "").split("\n").map((x) => x.trim()).filter(Boolean);
+
+/* Blocs tels que l'éditeur les manipule : les listes y sont un simple texte,
+   une ligne par élément — bien plus commode à saisir qu'une série de champs. */
+function magToEditor(blocks) {
+  return (blocks || []).map((b) => {
+    const base = { id: b.id || magNewId(), type: b.type };
+    if (b.type === "list") return { ...base, text: (b.items || []).join("\n") };
+    if (b.type === "pm") return { ...base, plusText: (b.plus || []).join("\n"), minusText: (b.minus || []).join("\n") };
+    if (b.type === "quote") return { ...base, text: b.text || "", by: b.by || "" };
+    if (b.type === "img") return { ...base, url: b.url || "", caption: b.caption || "" };
+    if (b.type === "game") return { ...base, gameId: b.gameId || null };
+    return { ...base, text: b.text || "" };
+  });
+}
+// Blocs tels qu'on les enregistre : nettoyés, et sans les blocs restés vides.
+function magCleanBlocks(blocks) {
+  const out = [];
+  (blocks || []).forEach((b) => {
+    if (!b || !b.type) return;
+    const base = { id: b.id || magNewId(), type: b.type };
+    if (b.type === "p" || b.type === "h") {
+      const text = String(b.text || "").trim();
+      if (text) out.push({ ...base, text });
+    } else if (b.type === "quote") {
+      const text = String(b.text || "").trim();
+      if (text) out.push({ ...base, text, by: String(b.by || "").trim() });
+    } else if (b.type === "img") {
+      if (b.url) out.push({ ...base, url: b.url, caption: String(b.caption || "").trim() });
+    } else if (b.type === "list") {
+      const items = b.items ? b.items.map((x) => String(x || "").trim()).filter(Boolean) : magSplitLines(b.text);
+      if (items.length) out.push({ ...base, items });
+    } else if (b.type === "pm") {
+      const plus = b.plus ? b.plus.map((x) => String(x || "").trim()).filter(Boolean) : magSplitLines(b.plusText);
+      const minus = b.minus ? b.minus.map((x) => String(x || "").trim()).filter(Boolean) : magSplitLines(b.minusText);
+      if (plus.length || minus.length) out.push({ ...base, plus, minus });
+    } else if (b.type === "game") {
+      if (b.gameId) out.push({ ...base, gameId: b.gameId });
+    }
+  });
+  return out;
+}
+
+function MagAvatar({ user, size = 28 }) {
+  const name = (user && user.name) || "?";
+  return (
+    <span style={{ width: size, height: size, borderRadius: "50%", overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: Math.round(size * 0.46), flexShrink: 0 }}>
+      {user && user.avatar
+        ? <img src={user.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        : (name[0] || "?").toUpperCase()}
+    </span>
+  );
+}
+
+function MagKindBadge({ kind, solid }) {
+  const k = magKind(kind);
+  const Icon = k.icon;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 11px", borderRadius: 999, background: solid ? k.color : `${k.color}1a`, color: solid ? "#fff" : k.color, whiteSpace: "nowrap" }}>
+      <Icon size={12} /> {k.short}
+    </span>
+  );
+}
+
+// Couverture d'un article ; sans image, un aplat aux couleurs de sa rubrique.
+function MagCover({ a, height, radius = 0 }) {
+  const k = magKind(a.kind);
+  const Icon = k.icon;
+  if (a.cover) {
+    return <img src={a.cover} alt="" loading="lazy" style={{ display: "block", width: "100%", height, objectFit: "cover", borderRadius: radius }} />;
+  }
+  return (
+    <div style={{ position: "relative", overflow: "hidden", height, borderRadius: radius, background: `linear-gradient(135deg, ${k.color} 0%, ${C.navyDeep} 100%)`, display: "grid", placeItems: "center" }}>
+      <Dice color="#fff" n={5} style={{ position: "absolute", width: 110, right: -18, bottom: -22, opacity: .1, transform: "rotate(14deg)" }} />
+      <Dice color="#fff" n={2} style={{ position: "absolute", width: 70, left: -12, top: -14, opacity: .08, transform: "rotate(-12deg)" }} />
+      <Icon size={44} color="rgba(255,255,255,.85)" />
+    </div>
+  );
+}
+
+// Ligne « auteur · date · temps de lecture · encarts ».
+function MagMeta({ a, author, coNames = [], count = 0, light }) {
+  const col = light ? "rgba(255,255,255,.78)" : "#8a7c6a";
+  const strong = light ? "#fff" : C.navy;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, color: col, lineHeight: 1.4 }}>
+      <MagAvatar user={author} size={26} />
+      <span style={{ fontWeight: 700, color: strong }}>
+        {author ? author.name : "Ancien membre"}
+        {coNames.length > 0 && <span style={{ fontWeight: 600, color: col }}> avec {frList(coNames)}</span>}
+      </span>
+      {(a.publishedAt || a.updatedAt) && <span>· {magDate(a.publishedAt || a.updatedAt)}</span>}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <Clock size={12} /> {a.readMinutes} min</span>
+      {count > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <MessageSquarePlus size={12} /> {count} encart{count > 1 ? "s" : ""}</span>}
+    </div>
+  );
+}
+
+function MagCard({ a, author, coNames, count, onOpen }) {
+  const draft = a.status !== "published";
+  return (
+    <button type="button" onClick={onOpen} className="aladj-mag-card" style={{
+      display: "flex", flexDirection: "column", textAlign: "left", padding: 0, cursor: "pointer", overflow: "hidden",
+      background: C.paper, borderRadius: 20, border: draft ? "2px dashed #d9cbb4" : "1px solid #ece2d0",
+      boxShadow: "0 4px 18px rgba(18,41,63,.06)", fontFamily: "inherit", width: "100%",
+    }}>
+      <div style={{ position: "relative", opacity: draft ? .75 : 1 }}>
+        <MagCover a={a} height={168} />
+        <span style={{ position: "absolute", left: 12, top: 12 }}><MagKindBadge kind={a.kind} solid /></span>
+        {draft && (
+          <span style={{ position: "absolute", right: 12, top: 12, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, padding: "4px 11px", borderRadius: 999, background: a.status === "withdrawn" ? C.red : "#fff", color: a.status === "withdrawn" ? "#fff" : C.navy }}>
+            {a.status === "withdrawn" ? "Retiré" : "Brouillon"}
+          </span>
+        )}
+      </div>
+      <div style={{ padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, lineHeight: 1.22, margin: 0, overflowWrap: "anywhere" }}>{a.title}</h3>
+        {a.chapo && (
+          <p style={{ margin: 0, fontSize: 14, color: "#6e6256", lineHeight: 1.55, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{a.chapo}</p>
+        )}
+        <div style={{ marginTop: "auto", paddingTop: 6 }}><MagMeta a={a} author={author} coNames={coNames} count={count} /></div>
+      </div>
+    </button>
+  );
+}
+
+/* Le corps d'un article. Sert à la lecture comme à l'aperçu de l'éditeur :
+   on est donc certain que ce qu'on prévisualise est ce qui sera publié.
+   `afterBlock` permet à la page de lecture de glisser, sous chaque bloc, les
+   encarts qui s'y rattachent. */
+function MagBody({ blocks, games, onOpenGame, afterBlock }) {
+  const gById = useMemo(() => {
+    const m = {}; (games || []).forEach((g) => { m[g.id] = g; }); return m;
+  }, [games]);
+  const bodyText = { fontSize: 17.5, lineHeight: 1.8, color: C.ink, overflowWrap: "anywhere" };
+  const render = (b) => {
+    if (b.type === "h") {
+      return (
+        <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(22px,3.2vw,28px)", lineHeight: 1.2, margin: "38px 0 14px", letterSpacing: "-0.01em", display: "flex", alignItems: "baseline", gap: 11 }}>
+          <span aria-hidden="true" style={{ width: 22, height: 5, borderRadius: 3, background: C.amber, flexShrink: 0, transform: "translateY(-5px)" }} />
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{b.text}</span>
+        </h2>
+      );
+    }
+    if (b.type === "p") {
+      return <div style={{ margin: "0 0 22px" }}><MagText text={b.text} style={bodyText} /></div>;
+    }
+    if (b.type === "img") {
+      return (
+        <figure style={{ margin: "30px 0" }}>
+          <img src={b.url} alt={b.caption || ""} loading="lazy" style={{ display: "block", width: "100%", borderRadius: 18, boxShadow: "0 10px 30px rgba(18,41,63,.12)" }} />
+          {b.caption && <figcaption style={{ textAlign: "center", fontSize: 13.5, color: "#8a7c6a", marginTop: 10, fontStyle: "italic" }}>{b.caption}</figcaption>}
+        </figure>
+      );
+    }
+    if (b.type === "quote") {
+      return (
+        <blockquote style={{ margin: "30px 0", padding: "6px 0 6px 22px", borderLeft: `5px solid ${C.amber}` }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 500, fontSize: "clamp(19px,2.6vw,23px)", lineHeight: 1.45, color: C.navy, overflowWrap: "anywhere" }}>
+            « {magLines(b.text, "q")} »
+          </div>
+          {b.by && <div style={{ marginTop: 8, fontSize: 14, color: "#8a7c6a", fontWeight: 700 }}>— {b.by}</div>}
+        </blockquote>
+      );
+    }
+    if (b.type === "list") {
+      return (
+        <ul style={{ listStyle: "none", padding: 0, margin: "0 0 24px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+          {(b.items || []).map((it, i) => (
+            <li key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", ...bodyText }}>
+              <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 3, background: C.teal, flexShrink: 0, marginTop: 12, transform: "rotate(45deg)" }} />
+              <span style={{ minWidth: 0 }}>{magInline(it, `li${i}`)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    if (b.type === "pm") {
+      const col = (title, items, color, sign) => (
+        <div style={{ background: `${color}0f`, border: `1.5px solid ${color}44`, borderRadius: 16, padding: "16px 18px" }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color, fontSize: 15, marginBottom: 10 }}>{title}</div>
+          {items.length === 0
+            ? <div style={{ fontSize: 14, color: "#a89a86" }}>—</div>
+            : (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+                {items.map((it, i) => (
+                  <li key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 15.5, lineHeight: 1.55, color: C.ink, overflowWrap: "anywhere" }}>
+                    <span aria-hidden="true" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color, flexShrink: 0, width: 14, textAlign: "center" }}>{sign}</span>
+                    <span style={{ minWidth: 0 }}>{magInline(it, `pm${sign}${i}`)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+        </div>
+      );
+      return (
+        <div className="aladj-mag-pm" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 14, margin: "30px 0" }}>
+          {col("On a aimé", b.plus || [], "#2F8F4E", "+")}
+          {col("On a moins aimé", b.minus || [], C.red, "−")}
+        </div>
+      );
+    }
+    if (b.type === "game") {
+      const g = gById[b.gameId];
+      if (!g) return null;   // jeu supprimé depuis : le bloc s'efface sans bruit
+      return <div style={{ margin: "26px 0" }}><MagGameCard g={g} onOpen={onOpenGame ? () => onOpenGame(g.id) : null} /></div>;
+    }
+    return null;
+  };
+  return (
+    <div>
+      {(blocks || []).map((b) => (
+        <React.Fragment key={b.id}>
+          {render(b)}
+          {afterBlock ? afterBlock(b) : null}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Une fiche de la ludothèque, citée dans un article. `authorId` fait apparaître
+// la note que l'auteur a donnée au jeu : elle vient de la ludothèque, on ne la
+// ressaisit pas — une seule note par membre et par jeu, partout sur le site.
+function MagGameCard({ g, onOpen, authorId, authorName }) {
+  const { avg, count } = gameStats(g);
+  const mine = authorId && g.ratings ? g.ratings[authorId] : null;
+  const inner = (
+    <>
+      {g.img
+        ? <img src={g.img} alt="" loading="lazy" style={{ width: 76, height: 76, borderRadius: 14, objectFit: "cover", flexShrink: 0 }} />
+        : <span style={{ width: 76, height: 76, borderRadius: 14, background: `linear-gradient(135deg, ${C.teal}, ${C.navy})`, display: "grid", placeItems: "center", flexShrink: 0 }}><Dice5 size={30} color="#fff" /></span>}
+      <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 18, lineHeight: 1.2, overflowWrap: "anywhere" }}>{g.name}</span>
+        <GameQuickFacts g={g} size={12.5} />
+        <span style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 13, color: "#8a7c6a" }}>
+          {count > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Star size={13} color={C.amber} fill={C.amber} /> <b style={{ color: C.navy }}>{avg.toFixed(1).replace(".", ",")}</b> · {count} note{count > 1 ? "s" : ""} de l'asso</span>}
+          {mine != null && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: C.teal, fontWeight: 700 }}>{authorName ? `Note de ${authorName}` : "Note de l'auteur"} : {String(mine).replace(".", ",")}/5</span>}
+        </span>
+      </span>
+      {onOpen && <ChevronRight size={20} color="#b6a78f" style={{ flexShrink: 0 }} />}
+    </>
+  );
+  const st = { display: "flex", alignItems: "center", gap: 16, width: "100%", textAlign: "left", background: C.paper, border: "1px solid #ece2d0", borderRadius: 18, padding: 14, boxShadow: "0 4px 16px rgba(18,41,63,.06)", fontFamily: "inherit" };
+  return onOpen
+    ? <button type="button" onClick={onOpen} title="Ouvrir la fiche du jeu" style={{ ...st, cursor: "pointer" }}>{inner}</button>
+    : <div style={st}>{inner}</div>;
+}
+
+const magIconBtn = { width: 30, height: 30, borderRadius: 9, border: "1px solid #e6dcc9", background: "#fff", color: C.navy, cursor: "pointer", display: "grid", placeItems: "center", padding: 0 };
+
+/* Un encart signé. Volontairement en retrait et bordé de la couleur de son
+   genre : on ne doit jamais pouvoir le confondre avec le texte de l'auteur. */
+function MagAddonCard({ addon, signer, isMine, canModerate, isAdmin, onEdit, onDelete, onToggleHidden }) {
+  const k = magAddonKind(addon.kind);
+  return (
+    <div style={{ margin: "0 0 18px 14px", padding: "13px 16px 14px", borderRadius: "4px 16px 16px 4px", borderLeft: `5px solid ${k.color}`, background: addon.hidden ? "rgba(120,110,95,.07)" : `${k.color}0d`, opacity: addon.hidden ? .72 : 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: ".05em", textTransform: "uppercase", color: k.color }}>{k.emoji} {k.label}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#8a7c6a" }}>
+          <MagAvatar user={signer} size={20} />
+          <b style={{ color: C.navy }}>{signer ? signer.name : "Ancien membre"}</b>
+          <span>· {timeAgoFr(addon.createdAt)}{addon.updatedAt ? " · modifié" : ""}</span>
+        </span>
+        {addon.hidden && <Badge color={C.red}><EyeOff size={11} /> Masqué</Badge>}
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+          {isMine && <button type="button" onClick={onEdit} title="Modifier mon encart" style={magIconBtn}><Pencil size={14} /></button>}
+          {canModerate && (
+            <button type="button" onClick={onToggleHidden} title={addon.hidden ? "Réafficher cet encart" : "Masquer cet encart"} style={magIconBtn}>
+              {addon.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
+            </button>
+          )}
+          {(isMine || isAdmin) && <button type="button" onClick={onDelete} title="Supprimer cet encart" style={{ ...magIconBtn, color: C.red }}><Trash2 size={14} /></button>}
+        </span>
+      </div>
+      <MagText text={addon.content} style={{ fontSize: 15.5, lineHeight: 1.7, color: "#3b4652", overflowWrap: "anywhere" }} />
+      {addon.hidden && (
+        <div style={{ fontSize: 12.5, color: "#8a7c6a", marginTop: 8 }}>
+          {isMine ? "Cet encart a été masqué par ceux qui tiennent l'article : vous seul et eux le voyez encore." : "Masqué : les lecteurs ne le voient pas."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Saisie (ou correction) d'un encart.
+function MagAddonForm({ initial, busy, onSubmit, onCancel }) {
+  const [kind, setKind] = useState((initial && initial.kind) || "avis");
+  const [content, setContent] = useState((initial && initial.content) || "");
+  const len = content.trim().length;
+  const ok = len >= 2 && len <= MAG_ADDON_MAX;
+  return (
+    <div style={{ margin: "0 0 20px 14px", padding: 16, borderRadius: 16, background: "#fff", border: `2px solid ${C.teal}`, boxShadow: "0 8px 24px rgba(30,138,138,.14)" }}>
+      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15, marginBottom: 10 }}>
+        {initial ? "Modifier mon encart" : "Mon encart"}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        {MAG_ADDON_KINDS.map((k) => {
+          const on = kind === k.key;
+          return (
+            <button key={k.key} type="button" onClick={() => setKind(k.key)} style={{
+              padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13,
+              border: `2px solid ${on ? k.color : "#e6dcc9"}`, background: on ? k.color : "#fff", color: on ? "#fff" : "#8a7c6a",
+            }}>{k.emoji} {k.label}</button>
+          );
+        })}
+      </div>
+      <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={5} maxLength={MAG_ADDON_MAX + 200}
+        placeholder="Votre avis, un complément, une anecdote de partie… Il paraîtra sous votre nom, à cet endroit de l'article."
+        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+        <span style={{ fontSize: 12, color: len > MAG_ADDON_MAX ? C.red : "#a89a86" }}>{len} / {MAG_ADDON_MAX}</span>
+        <span style={{ fontSize: 12, color: "#a89a86" }}>**gras** · *italique* · [lien](https://…)</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
+          <Btn variant="soft" size="sm" onClick={onCancel} disabled={busy}>Annuler</Btn>
+          <Btn variant="teal" size="sm" disabled={!ok || busy} onClick={() => onSubmit({ kind, content: content.trim() })}>
+            {busy ? <Loader2 size={14} className="aladj-spin" /> : <Send size={14} />} {initial ? "Enregistrer" : "Publier mon encart"}
+          </Btn>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================================
+   (lot AI) LE MAG — LECTURE D'UN ARTICLE
+   ============================================================================= */
+function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
+  const { currentUser, users, games, askConfirm } = useApp();
+  const [art, setArt] = useState(undefined);        // undefined = chargement · null = introuvable
+  const [addons, setAddons] = useState([]);
+  const [coIds, setCoIds] = useState([]);
+  const [contrib, setContrib] = useState(false);     // mode « je choisis où poser mon encart »
+  const [formAt, setFormAt] = useState(undefined);   // undefined = fermé · null = fin d'article · id de bloc
+  const [editId, setEditId] = useState(null);        // encart en cours de correction
+  const [busy, setBusy] = useState(false);
+  const [openGameId, setOpenGameId] = useState(null);
+
+  const userById = useMemo(() => {
+    const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
+  }, [users]);
+
+  const loadExtras = useCallback(async (articleId) => {
+    const x = await magFetchExtras(articleId);
+    setAddons(x.addons); setCoIds(x.coIds);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setArt(undefined); setAddons([]); setCoIds([]); setContrib(false); setFormAt(undefined); setEditId(null);
+    (async () => {
+      const r = await magFetchArticle(articleKey);
+      if (cancelled) return;
+      setArt(r.article || null);
+      if (r.article) {
+        const x = await magFetchExtras(r.article.id);
+        if (cancelled) return;
+        setAddons(x.addons); setCoIds(x.coIds);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [articleKey, currentUser?.id]);
+
+  // L'adresse et le titre de l'onglet suivent l'article lu.
+  useEffect(() => {
+    if (!art) return undefined;
+    magSetUrl(art.slug, true);
+    const before = typeof document !== "undefined" ? document.title : "";
+    try { document.title = `${art.title} — Le Mag de l'ALADJ`; } catch (e) { /* sans gravité */ }
+    return () => { try { document.title = before; } catch (e) { /* sans gravité */ } };
+  }, [art]);
+
+  // Une fiche de jeu ouverte par-dessus se referme si l'on saute vers un article
+  // (y compris celui-ci, depuis la rubrique « Dans Le Mag » de la fiche).
+  useEffect(() => { setOpenGameId(null); }, [articleKey]);
+  useEffect(() => {
+    const onGoto = () => setOpenGameId(null);
+    window.addEventListener("aladj:goto", onGoto);
+    return () => window.removeEventListener("aladj:goto", onGoto);
+  }, []);
+
+  if (art === undefined) {
+    return (
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "80px 24px", textAlign: "center", color: "#8a7c6a" }}>
+        <Loader2 size={30} className="aladj-spin" color={C.teal} />
+        <p style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, marginTop: 12 }}>Ouverture de l'article…</p>
+      </div>
+    );
+  }
+  if (art === null) {
+    return (
+      <div style={{ maxWidth: 620, margin: "0 auto", padding: "60px 24px" }}>
+        <EmptyHint icon={Newspaper} text="Cet article est introuvable : il a été retiré, ou n'est pas encore publié." />
+        <div style={{ textAlign: "center", marginTop: 20 }}><Btn variant="soft" onClick={onBack}><ArrowLeft size={16} /> Retour au Mag</Btn></div>
+      </div>
+    );
+  }
+
+  const me = currentUser ? currentUser.id : null;
+  const isAdmin = !!currentUser && currentUser.admin === true;
+  const isAuthor = !!me && art.authorId === me;
+  const canEdit = !!me && (isAuthor || isAdmin || coIds.includes(me));
+  const author = art.authorId ? userById[art.authorId] : null;
+  const coNames = coIds.map((id) => userById[id]).filter(Boolean).map((u) => u.name);
+  const published = art.status === "published";
+  const canAdd = !!me && published && art.collabOpen;
+  const linkedGame = art.gameId ? (games || []).find((g) => g.id === art.gameId) : null;
+
+  const blockIds = new Set((art.blocks || []).map((b) => b.id));
+  const byAnchor = {};
+  const tail = [];
+  addons.forEach((ad) => {
+    if (ad.anchor && blockIds.has(ad.anchor)) (byAnchor[ad.anchor] ||= []).push(ad);
+    else tail.push(ad);   // fin d'article, ou bloc d'origine supprimé depuis
+  });
+  const visibleCount = addons.filter((ad) => !ad.hidden).length;
+
+  const submitAddon = async ({ kind, content }) => {
+    if (!me) return;
+    setBusy(true);
+    const { error } = await supabase.from("mag_addons").insert({
+      article_id: art.id, author_id: me, anchor: formAt || null, kind, content,
+    });
+    setBusy(false);
+    if (error) { setToast("Encart non enregistré : " + (error.message || "erreur")); return; }
+    setFormAt(undefined); setContrib(false);
+    await loadExtras(art.id);
+    setToast("Votre encart est en ligne — merci !");
+  };
+  const saveAddon = async (addon, { kind, content }) => {
+    setBusy(true);
+    const { data, error } = await supabase.from("mag_addons").update({ kind, content }).eq("id", addon.id).select("id");
+    setBusy(false);
+    if (error || !data || !data.length) { setToast("Modification impossible : " + ((error && error.message) || "droits insuffisants")); return; }
+    setEditId(null);
+    await loadExtras(art.id);
+    setToast("Encart modifié.");
+  };
+  const deleteAddon = async (addon) => {
+    const ok = await askConfirm({ title: "Supprimer cet encart ?", message: "Il disparaîtra définitivement de l'article.", confirmLabel: "Supprimer" });
+    if (!ok) return;
+    const { error } = await supabase.from("mag_addons").delete().eq("id", addon.id);
+    if (error) { setToast("Suppression impossible : " + error.message); return; }
+    await loadExtras(art.id);
+    setToast("Encart supprimé.");
+  };
+  const toggleHidden = async (addon) => {
+    if (!addon.hidden) {
+      const signer = addon.authorId ? userById[addon.authorId] : null;
+      const ok = await askConfirm({
+        title: "Masquer cet encart ?",
+        message: `Les lecteurs ne le verront plus. ${signer ? signer.name : "Son signataire"} en sera prévenu, et vous pourrez le réafficher à tout moment.`,
+        confirmLabel: "Masquer", danger: false,
+      });
+      if (!ok) return;
+    }
+    const { data, error } = await supabase.from("mag_addons").update({ hidden: !addon.hidden }).eq("id", addon.id).select("id");
+    if (error || !data || !data.length) { setToast("Action impossible : " + ((error && error.message) || "droits insuffisants")); return; }
+    await loadExtras(art.id);
+    setToast(addon.hidden ? "Encart réaffiché." : "Encart masqué.");
+  };
+
+  // Retrait par un administrateur : l'auteur ne peut plus republier seul.
+  const setStatus = async (status, okMsg) => {
+    const { data, error } = await supabase.from("mag_articles").update({ status }).eq("id", art.id).select(MAG_LIST_COLS + ",blocks");
+    if (error || !data || !data.length) { setToast("Action impossible : " + ((error && error.message) || "droits insuffisants")); return; }
+    setArt(mapMagArticle(data[0]));
+    setToast(okMsg);
+  };
+  const withdraw = async () => {
+    const ok = await askConfirm({
+      title: "Retirer cet article de la publication ?",
+      message: "Il ne sera plus visible que de son auteur et des administrateurs. Son auteur ne pourra pas le remettre en ligne lui-même.",
+      confirmLabel: "Retirer l'article",
+    });
+    if (ok) await setStatus("withdrawn", "Article retiré de la publication.");
+  };
+
+  const share = async () => {
+    const url = magShareUrl(art.slug);
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) { await navigator.share({ title: art.title, text: art.chapo || art.title, url }); return; }
+    } catch (e) { /* partage annulé : on retombe sur la copie */ }
+    try { await navigator.clipboard.writeText(url); setToast("Lien de l'article copié."); }
+    catch (e) { setToast(url); }
+  };
+
+  const renderAddon = (ad) => (
+    editId === ad.id
+      ? <MagAddonForm key={ad.id} initial={ad} busy={busy} onCancel={() => setEditId(null)} onSubmit={(v) => saveAddon(ad, v)} />
+      : (
+        <MagAddonCard key={ad.id} addon={ad} signer={ad.authorId ? userById[ad.authorId] : null}
+          isMine={!!me && ad.authorId === me} canModerate={canEdit} isAdmin={isAdmin}
+          onEdit={() => { setEditId(ad.id); setFormAt(undefined); }}
+          onDelete={() => deleteAddon(ad)} onToggleHidden={() => toggleHidden(ad)} />
+      )
+  );
+  const slot = (anchor) => {
+    if (formAt !== undefined && (formAt || null) === (anchor || null)) {
+      return <MagAddonForm busy={busy} onCancel={() => setFormAt(undefined)} onSubmit={submitAddon} />;
+    }
+    if (!contrib || !canAdd) return null;
+    return (
+      <button type="button" onClick={() => { setFormAt(anchor || null); setEditId(null); }} style={{
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "calc(100% - 14px)", margin: "0 0 18px 14px",
+        padding: "9px 12px", borderRadius: 12, border: `2px dashed ${C.teal}`, background: "rgba(30,138,138,.06)", color: C.teal,
+        cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+      }}><Plus size={15} /> Poser mon encart ici</button>
+    );
+  };
+
+  return (
+    <article style={{ maxWidth: 780, margin: "0 auto", padding: "26px 24px 80px" }}>
+      {/* Barre d'outils */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+        <Btn variant="soft" size="sm" onClick={onBack}><ArrowLeft size={15} /> Le Mag</Btn>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+          {published && <Btn variant="soft" size="sm" onClick={share}><Share2 size={15} /> Partager</Btn>}
+          {canEdit && <Btn variant="ghost" size="sm" onClick={() => onEdit(art.id)}><Pencil size={15} /> Modifier</Btn>}
+          {isAdmin && published && !isAuthor && <Btn variant="danger" size="sm" onClick={withdraw}><EyeOff size={15} /> Retirer</Btn>}
+          {isAdmin && art.status === "withdrawn" && <Btn variant="teal" size="sm" onClick={() => setStatus("published", "Article remis en ligne.")}><Eye size={15} /> Remettre en ligne</Btn>}
+        </span>
+      </div>
+
+      {!published && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: art.status === "withdrawn" ? "rgba(181,40,58,.08)" : "rgba(232,163,23,.13)", border: `1.5px solid ${art.status === "withdrawn" ? C.red : C.amber}`, borderRadius: 14, padding: "12px 16px", marginBottom: 22, fontSize: 14, color: "#5e5346", lineHeight: 1.55 }}>
+          <Lock size={17} color={art.status === "withdrawn" ? C.red : C.amber} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>
+            {art.status === "withdrawn"
+              ? <><b>Article retiré de la publication</b> par un administrateur. Il n'est plus visible que de son auteur et des administrateurs.</>
+              : <><b>Brouillon.</b> Vous seul{coIds.length ? " et vos co-auteurs" : ""} le voyez. Il sera public dès que son auteur le publiera.</>}
+          </span>
+        </div>
+      )}
+
+      {/* En-tête */}
+      <header style={{ marginBottom: 30 }}>
+        <MagKindBadge kind={art.kind} />
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5.4vw,48px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{art.title}</h1>
+        {art.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600, overflowWrap: "anywhere" }}>{art.chapo}</p>}
+        <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} />
+      </header>
+
+      {art.cover && (
+        <img src={art.cover} alt="" style={{ display: "block", width: "100%", maxHeight: 440, objectFit: "cover", borderRadius: 24, boxShadow: "0 18px 46px rgba(18,41,63,.16)", marginBottom: 32 }} />
+      )}
+
+      {linkedGame && (
+        <div style={{ marginBottom: 30 }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 12.5, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Le jeu dont on parle</div>
+          <MagGameCard g={linkedGame} authorId={art.authorId} authorName={author ? author.name : ""} onOpen={() => setOpenGameId(linkedGame.id)} />
+        </div>
+      )}
+
+      {/* Invitation à contribuer — discrète tant qu'on lit, explicite quand on s'y met. */}
+      {published && art.collabOpen && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: contrib ? "rgba(30,138,138,.1)" : "rgba(26,58,92,.04)", border: `1.5px solid ${contrib ? C.teal : "transparent"}`, borderRadius: 14, padding: "11px 14px", marginBottom: 28 }}>
+          <MessageSquarePlus size={18} color={C.teal} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 200, fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+            {contrib
+              ? <><b style={{ color: C.navy }}>Choisissez l'endroit.</b> Un bouton est apparu sous chaque passage : votre encart se posera juste en dessous, sous votre nom.</>
+              : <><b style={{ color: C.navy }}>Article ouvert aux encarts.</b> Tout membre peut y ajouter son avis, un complément ou une anecdote — sans toucher au texte de l'auteur.</>}
+          </span>
+          {me
+            ? <Btn variant={contrib ? "soft" : "teal"} size="sm" onClick={() => { setContrib(!contrib); setFormAt(undefined); }}>{contrib ? "Terminer" : <><Plus size={14} /> Contribuer</>}</Btn>
+            : <Btn variant="teal" size="sm" onClick={() => onAuth("login")}>Se connecter pour contribuer</Btn>}
+        </div>
+      )}
+
+      {/* Corps de l'article, encarts intercalés */}
+      {(art.blocks || []).length === 0
+        ? <p style={{ color: "#a89a86", fontSize: 15, fontStyle: "italic" }}>Cet article n'a pas encore de texte.</p>
+        : (
+          <MagBody blocks={art.blocks} games={games} onOpenGame={(id) => setOpenGameId(id)}
+            afterBlock={(b) => (
+              <>
+                {(byAnchor[b.id] || []).map(renderAddon)}
+                {b.type !== "h" ? slot(b.id) : null}
+              </>
+            )} />
+        )}
+
+      {/* Fin d'article : les encarts généraux */}
+      {(tail.length > 0 || canAdd) && (
+        <section style={{ marginTop: 44, paddingTop: 26, borderTop: "2px solid #ece2d0" }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 9 }}>
+            <MessageSquarePlus size={20} color={C.teal} /> Les encarts des membres
+          </h2>
+          {tail.length === 0 && formAt !== null && (
+            <p style={{ fontSize: 14.5, color: "#8a7c6a", lineHeight: 1.6, margin: "0 0 16px" }}>Personne n'a encore ajouté d'encart général. Vous avez joué à ce jeu, vécu la même partie, un autre regard ? C'est ici.</p>
+          )}
+          <div style={{ marginLeft: -14 }}>
+            {tail.map(renderAddon)}
+            {formAt === null && <MagAddonForm busy={busy} onCancel={() => setFormAt(undefined)} onSubmit={submitAddon} />}
+          </div>
+          {canAdd && formAt !== null && (
+            <Btn variant="teal" onClick={() => { setFormAt(null); setEditId(null); }}><Plus size={16} /> Ajouter un encart en fin d'article</Btn>
+          )}
+        </section>
+      )}
+
+      {published && !art.collabOpen && (
+        <p style={{ marginTop: 36, fontSize: 13.5, color: "#a89a86", textAlign: "center" }}>
+          <Lock size={13} style={{ verticalAlign: "-2px" }} /> L'auteur n'a pas ouvert cet article aux encarts.
+        </p>
+      )}
+
+      <div style={{ textAlign: "center", marginTop: 46 }}>
+        <Btn variant="soft" onClick={onBack}><ArrowLeft size={16} /> Tous les articles</Btn>
+      </div>
+
+      {openGameId && <GameDetailModalById id={openGameId} onClose={() => setOpenGameId(null)} setToast={setToast} onAuth={onAuth} />}
+    </article>
+  );
+}
+
+/* =============================================================================
+   (lot AI) LE MAG — ÉCRITURE D'UN ARTICLE
+   L'éditeur manipule des blocs. Pas de barre d'outils flottante ni de zone
+   « riche » capricieuse au doigt : des champs simples, empilés, qui marchent
+   aussi bien sur un téléphone que sur un ordinateur.
+   ============================================================================= */
+function MagGamePicker({ value, onChange, games }) {
+  const [q, setQ] = useState("");
+  const sel = value ? (games || []).find((g) => g.id === value) : null;
+  const hits = useMemo(() => {
+    const n = normTitle(q);
+    if (n.length < 2) return [];
+    return (games || []).filter((g) => normTitle(g.name).includes(n)).slice(0, 6);
+  }, [q, games]);
+  if (sel) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(30,138,138,.08)", border: `1.5px solid ${C.teal}55`, borderRadius: 12, padding: "8px 10px" }}>
+        {sel.img
+          ? <img src={sel.img} alt="" style={{ width: 38, height: 38, borderRadius: 9, objectFit: "cover", flexShrink: 0 }} />
+          : <span style={{ width: 38, height: 38, borderRadius: 9, background: C.teal, flexShrink: 0 }} />}
+        <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sel.name}</span>
+        <button type="button" onClick={() => onChange(null)} title="Retirer ce jeu" style={{ ...magIconBtn, color: C.red }}><X size={15} /></button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Chercher un jeu de la ludothèque…" />
+      {hits.length > 0 && (
+        <div style={{ border: "1px solid #e6dcc9", borderRadius: 12, marginTop: 6, overflow: "hidden", background: "#fff" }}>
+          {hits.map((g) => (
+            <button key={g.id} type="button" onClick={() => { onChange(g.id); setQ(""); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 10px", background: "none", border: "none", borderBottom: "1px solid #f3ecdd", cursor: "pointer", fontFamily: "inherit" }}>
+              {g.img
+                ? <img src={g.img} alt="" style={{ width: 32, height: 32, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                : <span style={{ width: 32, height: 32, borderRadius: 8, background: C.teal, flexShrink: 0 }} />}
+              <span style={{ fontWeight: 700, color: C.navy, fontSize: 14.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Zone de texte qui grandit avec ce qu'on y écrit : on voit toujours tout son
+   paragraphe, sans ascenseur dans l'ascenseur — indispensable au doigt. */
+function MagAutoArea({ value, onText, placeholder, minRows = 3 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight + 2}px`;
+  }, [value]);
+  return (
+    <textarea ref={ref} value={value || ""} onChange={(e) => onText(e.target.value)} placeholder={placeholder} rows={minRows}
+      style={{ ...inputStyle, resize: "none", overflow: "hidden", lineHeight: 1.65, display: "block" }} />
+  );
+}
+
+function MagBlockEditor({ b, index, total, games, onChange, onMove, onRemove }) {
+  const t = magBlockType(b.type);
+  const Icon = t.icon;
+  const area = (value, onText, placeholder, minRows = 3) => (
+    <MagAutoArea value={value} onText={onText} placeholder={placeholder} minRows={minRows} />
+  );
+  return (
+    <div style={{ background: C.paper, border: "1px solid #e6dcc9", borderRadius: 16, padding: "12px 14px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, textTransform: "uppercase", letterSpacing: ".06em", color: C.teal }}>
+          <Icon size={14} /> {t.label}
+        </span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+          <button type="button" onClick={() => onMove(-1)} disabled={index === 0} title="Monter ce bloc" style={{ ...magIconBtn, opacity: index === 0 ? .35 : 1 }}><ArrowUp size={14} /></button>
+          <button type="button" onClick={() => onMove(1)} disabled={index === total - 1} title="Descendre ce bloc" style={{ ...magIconBtn, opacity: index === total - 1 ? .35 : 1 }}><ArrowDown size={14} /></button>
+          <button type="button" onClick={onRemove} title="Supprimer ce bloc" style={{ ...magIconBtn, color: C.red }}><Trash2 size={14} /></button>
+        </span>
+      </div>
+      {b.type === "p" && area(b.text, (v) => onChange({ text: v }), "Votre texte. Une ligne vide sépare deux paragraphes.", 4)}
+      {b.type === "h" && <TextInput value={b.text || ""} onChange={(e) => onChange({ text: e.target.value })} placeholder="Titre de cette partie de l'article" maxLength={120} style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 18 }} />}
+      {b.type === "quote" && (
+        <>
+          {area(b.text, (v) => onChange({ text: v }), "La phrase à mettre en avant", 2)}
+          <TextInput value={b.by || ""} onChange={(e) => onChange({ by: e.target.value })} placeholder="De qui ? (facultatif)" maxLength={80} style={{ marginTop: 8 }} />
+        </>
+      )}
+      {b.type === "img" && (
+        <>
+          <ImageField value={b.url || ""} onChange={(v) => onChange({ url: v })} maxSize={1400} maxKb={420} />
+          <TextInput value={b.caption || ""} onChange={(e) => onChange({ caption: e.target.value })} placeholder="Légende (facultatif)" maxLength={200} style={{ marginTop: 8 }} />
+        </>
+      )}
+      {b.type === "list" && area(b.text, (v) => onChange({ text: v }), "Un élément par ligne", 3)}
+      {b.type === "pm" && (
+        <div className="aladj-mag-pm" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#2F8F4E", fontSize: 13, marginBottom: 5 }}>+ On a aimé</div>
+            {area(b.plusText, (v) => onChange({ plusText: v }), "Un point par ligne", 3)}
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.red, fontSize: 13, marginBottom: 5 }}>− On a moins aimé</div>
+            {area(b.minusText, (v) => onChange({ minusText: v }), "Un point par ligne", 3)}
+          </div>
+        </div>
+      )}
+      {b.type === "game" && <MagGamePicker value={b.gameId || null} onChange={(id) => onChange({ gameId: id })} games={games} />}
+    </div>
+  );
+}
+
+const MAG_DRAFT_PREFIX = "aladj.mag.brouillon.";
+function magDraftRead(key) {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(MAG_DRAFT_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function magDraftWrite(key, value) {
+  try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(MAG_DRAFT_PREFIX + key, JSON.stringify(value)); }
+  catch (e) { /* stockage plein ou navigation privée : on s'en passe */ }
+}
+function magDraftClear(key) {
+  try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.removeItem(MAG_DRAFT_PREFIX + key); }
+  catch (e) { /* sans gravité */ }
+}
+
+const MAG_EMPTY_FORM = { title: "", chapo: "", kind: "review", cover: "", gameId: null, collabOpen: true };
+
+function MagEditor({ articleId, onClose, setToast }) {
+  const { currentUser, users, games, askConfirm } = useApp();
+  const [loading, setLoading] = useState(!!articleId);
+  const [base, setBase] = useState(null);            // l'article tel qu'enregistré (null = jamais enregistré)
+  const [f, setF] = useState(MAG_EMPTY_FORM);
+  const [blocks, setBlocks] = useState(() => [{ id: magNewId(), type: "p", text: "" }]);
+  const [coIds, setCoIds] = useState([]);
+  const [savedCoIds, setSavedCoIds] = useState([]);
+  const [coQuery, setCoQuery] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [preview, setPreview] = useState(false);
+  const [restored, setRestored] = useState(false);
+  // La cle du filet de securite suit l'article : « nouveau » tant que rien
+  // n'est enregistre, puis l'identifiant de l'article. Sans cela, un travail
+  // laisse en plan sur un article existant serait repris... dans un nouvel article.
+  const initialKey = articleId || "nouveau";
+  const draftKey = (base && base.id) || initialKey;
+
+  const userById = useMemo(() => {
+    const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
+  }, [users]);
+
+  const applyArticle = useCallback((a, co) => {
+    setBase(a);
+    setF({ title: a.title, chapo: a.chapo, kind: a.kind, cover: a.cover, gameId: a.gameId, collabOpen: a.collabOpen });
+    const eb = magToEditor(a.blocks || []);
+    setBlocks(eb.length ? eb : [{ id: magNewId(), type: "p", text: "" }]);
+    setCoIds(co || []); setSavedCoIds(co || []);
+  }, []);
+
+  // Chargement, puis reprise d'un éventuel travail non enregistré sur cet appareil.
+  useEffect(() => {
+    let cancelled = false;
+    let serverAt = 0;
+    (async () => {
+      if (articleId) {
+        const r = await magFetchArticle(articleId);
+        if (cancelled) return;
+        if (!r.article) { setErr("Cet article est introuvable."); setLoading(false); return; }
+        const x = await magFetchExtras(r.article.id);
+        if (cancelled) return;
+        applyArticle(r.article, x.coIds);
+        serverAt = r.article.updatedAt ? new Date(r.article.updatedAt).getTime() : 0;
+      }
+      // On ne reprend le travail local que s'il est plus recent que ce qui est
+      // enregistre : un co-auteur a pu passer par la entre-temps.
+      const local = magDraftRead(initialKey);
+      if (local && local.f && Array.isArray(local.blocks) && (Number(local.at) || 0) > serverAt) {
+        setF({ ...MAG_EMPTY_FORM, ...local.f });
+        setBlocks(local.blocks.length ? local.blocks : [{ id: magNewId(), type: "p", text: "" }]);
+        setDirty(true); setRestored(true);
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [articleId, initialKey, applyArticle]);
+
+  // Filet de sécurité : ce qu'on écrit est gardé sur l'appareil au fil de la
+  // frappe. Un rechargement malheureux, un téléphone qui se met en veille —
+  // le texte est toujours là en revenant. Les images en attente d'envoi sont
+  // écartées : trop lourdes pour ce stockage.
+  useEffect(() => {
+    if (!dirty || loading) return undefined;
+    const t = setTimeout(() => {
+      magDraftWrite(draftKey, {
+        at: Date.now(),
+        f: { ...f, cover: String(f.cover || "").startsWith("data:") ? "" : f.cover },
+        blocks: blocks.map((b) => (b.type === "img" && String(b.url || "").startsWith("data:") ? { ...b, url: "" } : b)),
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [f, blocks, dirty, loading, draftKey]);
+
+  const me = currentUser ? currentUser.id : null;
+  const isAdmin = !!currentUser && currentUser.admin === true;
+  // Tant que rien n'est enregistré, celui qui écrit est l'auteur.
+  const isSelfAuthor = !base || (!!me && base.authorId === me);
+  const isOwner = isSelfAuthor || isAdmin;
+  const status = base ? base.status : "draft";
+  const withdrawnLocked = status === "withdrawn" && !isAdmin;
+
+  const setField = (patch) => { setF((p) => ({ ...p, ...patch })); setDirty(true); };
+  const changeBlock = (id, patch) => { setBlocks((bs) => bs.map((b) => (b.id === id ? { ...b, ...patch } : b))); setDirty(true); };
+  const moveBlock = (i, dir) => {
+    setBlocks((bs) => {
+      const j = i + dir;
+      if (j < 0 || j >= bs.length) return bs;
+      const next = bs.slice();
+      const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+      return next;
+    });
+    setDirty(true);
+  };
+  const removeBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setDirty(true); };
+  const addBlock = (type) => { setBlocks((bs) => [...bs, { id: magNewId(), type }]); setDirty(true); };
+
+  const coHits = useMemo(() => {
+    const n = normTitle(coQuery);
+    if (n.length < 2) return [];
+    const authorId = base ? base.authorId : me;
+    return (users || []).filter((u) => !u.banned && u.id !== authorId && !coIds.includes(u.id) && normTitle(u.name).includes(n)).slice(0, 6);
+  }, [coQuery, users, coIds, base, me]);
+
+  const cleanPreview = useMemo(() => magCleanBlocks(blocks), [blocks]);
+
+  const save = async (nextStatus) => {
+    setErr("");
+    const title = f.title.trim();
+    if (title.length < 2) { setErr("Donnez un titre à l'article."); return; }
+    if (title.length > 140) { setErr("Ce titre est trop long (140 caractères au plus)."); return; }
+    if ((f.chapo || "").length > MAG_CHAPO_MAX) { setErr(`Le chapô est trop long (${MAG_CHAPO_MAX} caractères au plus).`); return; }
+    const clean = magCleanBlocks(blocks);
+    if (nextStatus === "published" && clean.length === 0) { setErr("Écrivez au moins un paragraphe avant de publier."); return; }
+    setBusy(nextStatus === "published" ? "publish" : "save");
+    try {
+      // 1) Les images partent d'abord sur l'hébergement d'images : en base, on
+      //    ne garde que leur adresse.
+      let cover = f.cover || "";
+      if (cover.startsWith("data:")) {
+        cover = await uploadImageToStorage(cover, "mag");
+        if (!cover || cover.startsWith("data:")) throw new Error("ALADJ_IMG");
+      }
+      for (let i = 0; i < clean.length; i++) {
+        const b = clean[i];
+        if (b.type === "img" && String(b.url || "").startsWith("data:")) {
+          const u = await uploadImageToStorage(b.url, "mag");
+          if (!u || u.startsWith("data:")) throw new Error("ALADJ_IMG");
+          b.url = u;
+        }
+      }
+      // 2) Premier enregistrement : l'article naît en brouillon, avec son adresse.
+      let id = base ? base.id : null;
+      if (!id) {
+        const { data, error } = await supabase.rpc("aladj_mag_create_article", { p_title: title, p_slug: slug(title) || null });
+        if (error) throw error;
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row || !row.id) throw new Error("ALADJ_CREATE");
+        id = row.id;
+        // Retenu tout de suite : si la suite echoue (reseau), le prochain
+        // essai completera CET article au lieu d'en creer un second.
+        setBase(mapMagArticle({ ...row, blocks: [] }));
+      }
+      // 3) Le contenu. Publier et régler les options restent à l'auteur : le
+      //    serveur l'impose de toute façon, inutile d'envoyer ce qu'il refusera.
+      const fields = {
+        title, chapo: (f.chapo || "").trim() || null, kind: f.kind,
+        cover_url: cover || null, game_id: f.gameId || null, blocks: clean,
+      };
+      if (isOwner) {
+        fields.collab_open = f.collabOpen !== false;
+        if (nextStatus && !withdrawnLocked) fields.status = nextStatus;
+      }
+      const { data: upd, error: e2 } = await supabase.from("mag_articles").update(fields).eq("id", id).select(MAG_LIST_COLS + ",blocks");
+      if (e2) throw e2;
+      if (!upd || !upd.length) throw new Error("ALADJ_RLS");
+      const saved = mapMagArticle(upd[0]);
+      // 4) Les co-auteurs (auteur et administrateurs seulement).
+      let nextCo = savedCoIds;
+      if (isOwner) {
+        const toAdd = coIds.filter((u) => !savedCoIds.includes(u));
+        const toDel = savedCoIds.filter((u) => !coIds.includes(u));
+        if (toAdd.length) {
+          const { error: e3 } = await supabase.from("mag_coauthors").insert(toAdd.map((u) => ({ article_id: id, user_id: u })));
+          if (e3 && !/duplicate|unique/i.test(e3.message || "")) throw e3;
+        }
+        for (let i = 0; i < toDel.length; i++) {
+          await supabase.from("mag_coauthors").delete().eq("article_id", id).eq("user_id", toDel[i]);
+        }
+        nextCo = coIds;
+      }
+      magDraftClear(draftKey); magDraftClear(initialKey); magDraftClear(id);
+      setDirty(false); setRestored(false);
+      applyArticle(saved, nextCo);
+      if (nextStatus === "published" && saved.status === "published") {
+        setToast("Article publié — il est en ligne !");
+        onClose(saved.slug);
+      } else {
+        setToast(saved.status === "published" ? "Modifications en ligne."
+          : saved.status === "withdrawn" ? "Article retiré de la publication." : "Brouillon enregistré.");
+      }
+    } catch (e) {
+      const m = (e && e.message) || String(e);
+      setErr(
+        /ALADJ_IMG/.test(m) ? "L'envoi d'une image a échoué. Vérifiez votre connexion, puis réessayez."
+          : /ALADJ_RLS/.test(m) ? "Enregistrement refusé : vous n'avez pas (ou plus) les droits sur cet article."
+          : /ALADJ_NOT_SIGNED_IN|ALADJ_NOT_ALLOWED/.test(m) ? "Connectez-vous avec votre compte de membre pour écrire dans Le Mag."
+          : /ALADJ_MAG_TITLE_REQUIRED|mag_articles_title_chk/.test(m) ? "Donnez un titre à l'article (140 caractères au plus)."
+          : /mag_articles_blocks_chk/.test(m) ? "Cet article est trop long pour être enregistré d'un seul tenant : scindez-le en deux."
+          : magIsMissing({ message: m }) ? "Le Mag n'est pas encore activé sur le serveur (migration du lot AI à jouer)."
+          : "Enregistrement impossible : " + m
+      );
+    }
+    setBusy("");
+  };
+
+  const leave = async () => {
+    if (dirty) {
+      const ok = await askConfirm({
+        title: "Quitter sans enregistrer ?",
+        message: "Vos dernières modifications ne sont pas enregistrées. Elles restent gardées sur cet appareil : vous les retrouverez en rouvrant l'éditeur.",
+        confirmLabel: "Quitter", danger: false,
+      });
+      if (!ok) return;
+    }
+    onClose(base && base.status === "published" ? base.slug : null);
+  };
+
+  const discardLocal = () => {
+    magDraftClear(draftKey); magDraftClear(initialKey);
+    setRestored(false); setDirty(false);
+    if (base) applyArticle(base, savedCoIds);
+    else { setF(MAG_EMPTY_FORM); setBlocks([{ id: magNewId(), type: "p", text: "" }]); }
+  };
+
+  const removeArticle = async () => {
+    if (!base) return;
+    const ok = await askConfirm({
+      title: "Supprimer cet article ?",
+      message: "L'article et tous les encarts que les membres y ont posés seront définitivement supprimés.",
+      confirmLabel: "Supprimer l'article",
+    });
+    if (!ok) return;
+    setBusy("delete");
+    const { error } = await supabase.from("mag_articles").delete().eq("id", base.id);
+    setBusy("");
+    if (error) { setErr("Suppression impossible : " + error.message); return; }
+    magDraftClear(draftKey); magDraftClear(initialKey);
+    setToast("Article supprimé.");
+    onClose(null);
+  };
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "80px 24px", textAlign: "center", color: "#8a7c6a" }}>
+        <Loader2 size={30} className="aladj-spin" color={C.teal} />
+      </div>
+    );
+  }
+
+  const authorUser = base && base.authorId ? userById[base.authorId] : currentUser;
+  const previewArticle = { ...f, readMinutes: base ? base.readMinutes : 1, publishedAt: base ? base.publishedAt : null, updatedAt: base ? base.updatedAt : null };
+  const linkedGame = f.gameId ? (games || []).find((g) => g.id === f.gameId) : null;
+
+  return (
+    <div style={{ maxWidth: 860, margin: "0 auto", padding: "26px 24px 120px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+        <Btn variant="soft" size="sm" onClick={leave}><ArrowLeft size={15} /> Le Mag</Btn>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 22, margin: "0 0 0 6px", flex: 1, minWidth: 160 }}>
+          {base ? "Modifier l'article" : "Nouvel article"}
+        </h1>
+        <Badge color={status === "published" ? C.teal : status === "withdrawn" ? C.red : C.amber}>
+          {status === "published" ? "En ligne" : status === "withdrawn" ? "Retiré" : "Brouillon"}
+        </Badge>
+        <Btn variant={preview ? "primary" : "ghost"} size="sm" onClick={() => setPreview(!preview)}><Eye size={15} /> {preview ? "Revenir à l'écriture" : "Aperçu"}</Btn>
+      </div>
+
+      {restored && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "rgba(30,138,138,.09)", border: `1.5px solid ${C.teal}55`, borderRadius: 14, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+          <RotateCcw size={16} color={C.teal} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 200 }}><b style={{ color: C.navy }}>Travail retrouvé.</b> Vos dernières modifications n'avaient pas été enregistrées : elles ont été reprises depuis cet appareil.</span>
+          <Btn variant="soft" size="sm" onClick={discardLocal}>Revenir à la version enregistrée</Btn>
+        </div>
+      )}
+      {withdrawnLocked && (
+        <div style={{ background: "rgba(181,40,58,.08)", border: `1.5px solid ${C.red}`, borderRadius: 14, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+          <b style={{ color: C.red }}>Article retiré de la publication</b> par un administrateur. Vous pouvez le corriger ; sa remise en ligne passe par un administrateur.
+        </div>
+      )}
+      {!isOwner && (
+        <div style={{ background: "rgba(107,58,122,.07)", border: `1.5px solid ${C.purple}44`, borderRadius: 14, padding: "11px 14px", marginBottom: 16, fontSize: 13.5, color: "#5e5346", lineHeight: 1.5 }}>
+          <b style={{ color: C.purple }}>Vous êtes co-auteur.</b> Vous écrivez le texte avec {authorUser ? authorUser.name : "l'auteur"} ; publier, choisir les co-auteurs et supprimer l'article lui reviennent.
+        </div>
+      )}
+
+      {preview ? (
+        <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 22, padding: "clamp(18px,4vw,36px)" }}>
+          <MagKindBadge kind={f.kind} />
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(28px,5vw,44px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{f.title || "Sans titre"}</h1>
+          {f.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600 }}>{f.chapo}</p>}
+          <div style={{ marginBottom: 26 }}><MagMeta a={previewArticle} author={authorUser} coNames={coIds.map((id) => userById[id]).filter(Boolean).map((u) => u.name)} /></div>
+          {f.cover && <img src={f.cover} alt="" style={{ display: "block", width: "100%", maxHeight: 420, objectFit: "cover", borderRadius: 20, marginBottom: 28 }} />}
+          {linkedGame && <div style={{ marginBottom: 26 }}><MagGameCard g={linkedGame} authorId={base ? base.authorId : me} authorName={authorUser ? authorUser.name : ""} /></div>}
+          {cleanPreview.length === 0
+            ? <p style={{ color: "#a89a86", fontStyle: "italic" }}>Rien à prévisualiser pour l'instant.</p>
+            : <MagBody blocks={cleanPreview} games={games} />}
+        </div>
+      ) : (
+        <>
+          {/* Carte d'identité de l'article */}
+          <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 20, padding: "20px 20px 8px", marginBottom: 18 }}>
+            <Field label="Rubrique">
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {MAG_KINDS.map((k) => {
+                  const on = f.kind === k.key; const KIcon = k.icon;
+                  return (
+                    <button key={k.key} type="button" onClick={() => setField({ kind: k.key })} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 999, cursor: "pointer",
+                      fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+                      border: `2px solid ${on ? k.color : "#e6dcc9"}`, background: on ? k.color : "#fff", color: on ? "#fff" : "#8a7c6a",
+                    }}><KIcon size={14} /> {k.label}</button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Titre">
+              <TextInput value={f.title} onChange={(e) => setField({ title: e.target.value })} maxLength={140} placeholder="Le titre de votre article"
+                style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 20 }} />
+            </Field>
+            <Field label="Chapô" hint={`Deux ou trois phrases qui donnent envie de lire — elles s'affichent sous le titre et sur la vignette. ${(f.chapo || "").length} / ${MAG_CHAPO_MAX}`}>
+              <textarea value={f.chapo || ""} onChange={(e) => setField({ chapo: e.target.value })} rows={3} maxLength={MAG_CHAPO_MAX}
+                placeholder="De quoi parle l'article, en quelques mots" style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} />
+            </Field>
+            <Field label="Jeu dont parle l'article (facultatif)" hint="Sa fiche s'affichera en tête d'article, avec la note que vous lui avez donnée dans la ludothèque — et l'article apparaîtra sur la fiche du jeu.">
+              <MagGamePicker value={f.gameId} onChange={(id) => setField({ gameId: id })} games={games} />
+            </Field>
+            <Field label="Image de couverture (facultatif)">
+              <ImageField value={f.cover || ""} onChange={(v) => setField({ cover: v })} maxSize={1400} maxKb={420} />
+            </Field>
+          </div>
+
+          {/* Le texte, bloc par bloc */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", margin: "26px 0 12px" }}>
+            <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, margin: 0 }}>Le texte</h2>
+            <span style={{ fontSize: 12.5, color: "#a89a86" }}>**gras** · *italique* · [texte du lien](https://…)</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+            {blocks.map((b, i) => (
+              <MagBlockEditor key={b.id} b={b} index={i} total={blocks.length} games={games}
+                onChange={(patch) => changeBlock(b.id, patch)} onMove={(dir) => moveBlock(i, dir)} onRemove={() => removeBlock(b.id)} />
+            ))}
+          </div>
+          <div style={{ marginTop: 12, background: "rgba(26,58,92,.04)", border: "2px dashed #d9cbb4", borderRadius: 16, padding: "12px 14px" }}>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Ajouter à la suite</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {MAG_BLOCK_TYPES.map((t) => {
+                const TIcon = t.icon;
+                return (
+                  <button key={t.type} type="button" onClick={() => addBlock(t.type)} style={{
+                    display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 11, cursor: "pointer",
+                    fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, border: "1.5px solid #e6dcc9", background: "#fff", color: C.navy,
+                  }}><TIcon size={15} color={C.teal} /> {t.label}</button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Réglages réservés à l'auteur */}
+          {isOwner && (
+            <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 20, padding: 20, marginTop: 26 }}>
+              <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, margin: "0 0 14px" }}>À plusieurs</h2>
+
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 11, cursor: "pointer", marginBottom: 18 }}>
+                <input type="checkbox" checked={f.collabOpen !== false} onChange={(e) => setField({ collabOpen: e.target.checked })} style={{ width: 20, height: 20, marginTop: 2, accentColor: C.teal, flexShrink: 0 }} />
+                <span>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15 }}>Ouvrir l'article aux encarts des membres</span>
+                  <span style={{ display: "block", fontSize: 13, color: "#8a7c6a", lineHeight: 1.55, marginTop: 2 }}>
+                    Une fois l'article publié, tout membre peut poser sous un passage un encart à son nom : un autre avis, un complément, une anecdote, une variante. Votre texte, lui, n'est jamais modifié — et vous pouvez masquer un encart.
+                  </span>
+                </span>
+              </label>
+
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13, marginBottom: 6 }}>Co-auteurs</div>
+              <div style={{ fontSize: 13, color: "#8a7c6a", lineHeight: 1.55, marginBottom: 10 }}>
+                Pour un article vraiment écrit à plusieurs : les co-auteurs modifient le texte avec vous et signent l'article à vos côtés. Ils sont prévenus par notification.
+              </div>
+              {coIds.length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                  {coIds.map((id) => (
+                    <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "4px 6px 4px 5px", borderRadius: 999, background: "rgba(107,58,122,.1)", border: `1.5px solid ${C.purple}44` }}>
+                      <MagAvatar user={userById[id]} size={22} />
+                      <span style={{ fontWeight: 700, color: C.navy, fontSize: 13.5 }}>{userById[id] ? userById[id].name : "Membre"}</span>
+                      <button type="button" onClick={() => { setCoIds((c) => c.filter((x) => x !== id)); setDirty(true); }} title="Retirer ce co-auteur"
+                        style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: "rgba(107,58,122,.16)", color: C.purple, cursor: "pointer", display: "grid", placeItems: "center", padding: 0 }}><X size={12} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <TextInput value={coQuery} onChange={(e) => setCoQuery(e.target.value)} placeholder="Chercher un membre à inviter…" />
+              {coHits.length > 0 && (
+                <div style={{ border: "1px solid #e6dcc9", borderRadius: 12, marginTop: 6, overflow: "hidden", background: "#fff" }}>
+                  {coHits.map((u) => (
+                    <button key={u.id} type="button" onClick={() => { setCoIds((c) => [...c, u.id]); setCoQuery(""); setDirty(true); }}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 10px", background: "none", border: "none", borderBottom: "1px solid #f3ecdd", cursor: "pointer", fontFamily: "inherit" }}>
+                      <MagAvatar user={u} size={28} />
+                      <span style={{ fontWeight: 700, color: C.navy, fontSize: 14.5 }}>{u.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {err && <div style={{ marginTop: 16, background: "rgba(181,40,58,.09)", border: `1.5px solid ${C.red}`, color: C.red, borderRadius: 12, padding: "10px 14px", fontSize: 14, fontWeight: 600 }}>{err}</div>}
+
+      {/* Barre d'actions, toujours sous la main */}
+      <div style={{ position: "sticky", bottom: 12, zIndex: 20, marginTop: 22, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: "rgba(255,254,251,.96)", backdropFilter: "blur(8px)", border: "1px solid #e6dcc9", borderRadius: 18, padding: "10px 12px", boxShadow: "0 10px 30px rgba(18,41,63,.14)" }}>
+        {base && isOwner && (
+          <Btn variant="danger" size="sm" onClick={removeArticle} disabled={!!busy}><Trash2 size={14} /> Supprimer</Btn>
+        )}
+        <span style={{ fontSize: 12.5, color: dirty ? C.amber : "#a89a86", fontWeight: 700 }}>
+          {dirty ? "Modifications non enregistrées" : (base ? "Tout est enregistré" : "")}
+        </span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+          {status === "published" ? (
+            <>
+              {/* L'auteur reprend son article en brouillon. Un administrateur qui
+                  intervient sur l'article d'un autre le RETIRE : un brouillon ne
+                  regarde que son auteur, il ne pourrait plus le voir ensuite. */}
+              {isSelfAuthor && <Btn variant="soft" size="sm" onClick={() => save("draft")} disabled={!!busy}>Repasser en brouillon</Btn>}
+              {!isSelfAuthor && isAdmin && <Btn variant="danger" size="sm" onClick={() => save("withdrawn")} disabled={!!busy}><EyeOff size={14} /> Retirer de la publication</Btn>}
+              <Btn variant="teal" onClick={() => save()} disabled={!!busy}>
+                {busy === "save" ? <Loader2 size={16} className="aladj-spin" /> : <Save size={16} />} Enregistrer les modifications
+              </Btn>
+            </>
+          ) : (
+            <>
+              <Btn variant="ghost" onClick={() => save(isOwner && !withdrawnLocked && !base ? "draft" : undefined)} disabled={!!busy}>
+                {busy === "save" ? <Loader2 size={16} className="aladj-spin" /> : <Save size={16} />} Enregistrer le brouillon
+              </Btn>
+              {isOwner && !withdrawnLocked && (
+                <Btn variant="amber" onClick={() => save("published")} disabled={!!busy}>
+                  {busy === "publish" ? <Loader2 size={16} className="aladj-spin" /> : <Send size={16} />} Publier
+                </Btn>
+              )}
+            </>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================================
+   (lot AI) LE MAG — LA PAGE
+   ============================================================================= */
+function MagPage({ onAuth, setToast }) {
+  const { currentUser, users } = useApp();
+  const [rows, setRows] = useState(null);            // null = chargement
+  const [counts, setCounts] = useState({});
+  const [coByArticle, setCoByArticle] = useState({});
+  const [missing, setMissing] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+  const [view, setView] = useState({ mode: "list" }); // list · read (key) · edit (id | null)
+  const [kind, setKind] = useState("all");
+  const [q, setQ] = useState("");
+
+  const userById = useMemo(() => {
+    const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
+  }, [users]);
+
+  const reload = useCallback(async () => {
+    const r = await magFetchList();
+    setRows(r.rows); setCounts(r.counts); setCoByArticle(r.co);
+    setMissing(!!r.missing); setLoadErr(r.error && !r.missing ? r.error : "");
+  }, []);
+  useEffect(() => { reload(); }, [reload, currentUser?.id]);
+
+  // Arrivée par un lien partagé (?article=…), une notification ou la page d'accueil.
+  useEffect(() => {
+    let key = MAG_PENDING.key; MAG_PENDING.key = null;
+    if (!key) {
+      try { key = new URLSearchParams(window.location.search).get("article"); } catch (e) { key = null; }
+    }
+    if (key) setView({ mode: "read", key });
+    const onGoto = () => {
+      if (!MAG_PENDING.key) return;
+      const k = MAG_PENDING.key; MAG_PENDING.key = null;
+      setView({ mode: "read", key: k });
+    };
+    window.addEventListener("aladj:goto", onGoto);
+    return () => { window.removeEventListener("aladj:goto", onGoto); magSetUrl(null, false); };
+  }, []);
+
+  useEffect(() => {
+    if (view.mode === "list") magSetUrl(null, true);
+    try { window.scrollTo({ top: 0 }); } catch (e) { /* sans gravité */ }
+  }, [view.mode, view.key, view.id]);
+
+  const me = currentUser ? currentUser.id : null;
+  const published = useMemo(() => (rows || []).filter((a) => a.status === "published"), [rows]);
+  const drafts = useMemo(() => (rows || []).filter((a) => a.status !== "published"), [rows]);
+  const shown = useMemo(() => {
+    const n = normTitle(q);
+    return published.filter((a) => (kind === "all" || a.kind === kind)
+      && (!n || normTitle(a.title).includes(n) || normTitle(a.chapo).includes(n)
+        || normTitle((userById[a.authorId] || {}).name).includes(n)));
+  }, [published, kind, q, userById]);
+
+  if (view.mode === "edit") {
+    return (
+      <MagEditor key={view.id || "nouveau"} articleId={view.id || null} setToast={setToast}
+        onClose={(articleSlug) => { reload(); setView(articleSlug ? { mode: "read", key: articleSlug } : { mode: "list" }); }} />
+    );
+  }
+  if (view.mode === "read") {
+    return (
+      <MagReader articleKey={view.key} onAuth={onAuth} setToast={setToast}
+        onBack={() => { reload(); setView({ mode: "list" }); }}
+        onEdit={(id) => setView({ mode: "edit", id })} />
+    );
+  }
+
+  const coNamesOf = (a) => (coByArticle[a.id] || []).map((id) => userById[id]).filter(Boolean).map((u) => u.name);
+  const filtering = kind !== "all" || q.trim() !== "";
+  const feature = !filtering && shown.length > 0 ? shown[0] : null;
+  const rest = feature ? shown.slice(1) : shown;
+  const usedKinds = MAG_KINDS.filter((k) => published.some((a) => a.kind === k.key));
+
+  return (
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 70px" }}>
+      {/* Bandeau */}
+      <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDeep} 55%, #0c1f30 100%)`, borderRadius: 26, padding: "clamp(26px,4vw,46px)", color: "#fff", marginBottom: 30 }}>
+        <Dice color={C.amber} n={3} style={{ position: "absolute", width: 96, top: -14, right: 34, opacity: .2, transform: "rotate(13deg)" }} />
+        <Dice color={C.teal} n={6} style={{ position: "absolute", width: 66, bottom: -10, right: 138, opacity: .16, transform: "rotate(-9deg)" }} />
+        <Badge color={C.amber} soft={false}><Newspaper size={13} /> Écrit par les membres</Badge>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(32px,5vw,52px)", margin: "16px 0 10px", lineHeight: 1.05, letterSpacing: "-0.02em" }}>Le Mag</h1>
+        <p style={{ color: "rgba(255,255,255,.85)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.65, margin: 0, maxWidth: 660 }}>
+          Critiques de jeux, dossiers, récits de parties, conseils : <b>ce que les membres de l'ALADJ ont à dire du jeu de société</b>.
+          Chaque article peut s'enrichir des <b>encarts</b> des autres membres — un autre avis, une anecdote, une variante — sans que le texte de son auteur soit jamais touché.
+        </p>
+        <div style={{ marginTop: 22, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          {me
+            ? <Btn variant="amber" onClick={() => setView({ mode: "edit", id: null })} disabled={missing}><PenLine size={16} /> Écrire un article</Btn>
+            : <Btn variant="amber" onClick={() => onAuth("login")}><LogIn size={16} /> Se connecter pour écrire</Btn>}
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,.72)", lineHeight: 1.5 }}>
+            {me ? "Il naît en brouillon : vous le publiez quand il est prêt." : "La lecture est libre ; écrire et contribuer est réservé aux membres."}
+          </span>
+        </div>
+      </div>
+
+      {missing && (
+        <div style={{ background: "rgba(232,163,23,.13)", border: `1.5px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", fontSize: 14.5, color: "#5e5346", lineHeight: 1.6 }}>
+          <b style={{ color: C.navy }}>Le Mag arrive.</b> La rubrique n'est pas encore activée sur le serveur — elle le sera sous peu.
+        </div>
+      )}
+      {loadErr && <div style={{ color: C.red, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Chargement impossible : {loadErr}</div>}
+
+      {/* Mes brouillons (et, pour les administrateurs, les articles retirés) */}
+      {drafts.length > 0 && (
+        <section style={{ marginBottom: 38 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 20, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}><Pencil size={18} color={C.amber} /> En cours d'écriture</h2>
+          <p style={{ fontSize: 13.5, color: "#8a7c6a", margin: "0 0 16px" }}>
+            Un brouillon n'est visible que de son auteur et de ses co-auteurs.
+            {currentUser && currentUser.admin ? " Les articles retirés de la publication figurent aussi ici." : ""}
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: 18 }}>
+            {drafts.map((a) => (
+              <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={0}
+                onOpen={() => setView(a.status === "withdrawn" && !(me && a.authorId === me) ? { mode: "read", key: a.id } : { mode: "edit", id: a.id })} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {rows === null && !missing && (
+        <div style={{ textAlign: "center", padding: "50px 0", color: "#8a7c6a" }}><Loader2 size={28} className="aladj-spin" color={C.teal} /></div>
+      )}
+
+      {rows !== null && !missing && published.length === 0 && (
+        <EmptyHint icon={Newspaper} text={me ? "Aucun article pour l'instant — le premier pourrait être le vôtre." : "Aucun article pour l'instant. Revenez bientôt !"} />
+      )}
+
+      {published.length > 0 && (
+        <>
+          {/* Filtres */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+            {[{ key: "all", short: "Tout", color: C.navy }, ...usedKinds].map((k) => {
+              const on = kind === k.key;
+              return (
+                <button key={k.key} type="button" onClick={() => setKind(k.key)} style={{
+                  padding: "8px 15px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14,
+                  border: `2px solid ${on ? k.color : "#e6dcc9"}`, background: on ? k.color : "#fff", color: on ? "#fff" : "#8a7c6a",
+                }}>{k.short}</button>
+              );
+            })}
+            <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 340, marginLeft: "auto" }}>
+              <Search size={16} color="#a89a86" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Un titre, un auteur…" style={{ paddingLeft: 38, paddingRight: q ? 38 : 14 }} />
+              {q && (
+                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 26, height: 26, borderRadius: 8, border: "none", background: "rgba(26,58,92,.07)", color: C.navy, cursor: "pointer", display: "grid", placeItems: "center", padding: 0 }}><X size={14} /></button>
+              )}
+            </div>
+          </div>
+
+          {/* À la une : le dernier article publié */}
+          {feature && (
+            <button type="button" onClick={() => setView({ mode: "read", key: feature.slug })} className="aladj-mag-card aladj-mag-feature" style={{
+              display: "grid", gridTemplateColumns: "minmax(0,1.15fr) minmax(0,1fr)", width: "100%", textAlign: "left", padding: 0, cursor: "pointer", overflow: "hidden",
+              background: C.paper, borderRadius: 26, border: "1px solid #ece2d0", boxShadow: "0 10px 34px rgba(18,41,63,.1)", marginBottom: 26, fontFamily: "inherit",
+            }}>
+              <div style={{ minHeight: 240, position: "relative" }}>
+                <div style={{ position: "absolute", inset: 0 }}><MagCover a={feature} height="100%" /></div>
+              </div>
+              <div style={{ padding: "clamp(20px,3vw,34px)", display: "flex", flexDirection: "column", gap: 12, justifyContent: "center" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: ".1em", textTransform: "uppercase", color: C.amber }}>À la une</span>
+                  <MagKindBadge kind={feature.kind} />
+                </div>
+                <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(24px,3.2vw,34px)", lineHeight: 1.12, letterSpacing: "-0.02em", margin: 0, overflowWrap: "anywhere" }}>{feature.title}</h2>
+                {feature.chapo && <p style={{ margin: 0, fontSize: 15.5, color: "#5e5346", lineHeight: 1.6, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 4, overflow: "hidden" }}>{feature.chapo}</p>}
+                <MagMeta a={feature} author={userById[feature.authorId]} coNames={coNamesOf(feature)} count={counts[feature.id] || 0} />
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14.5, marginTop: 2 }}>Lire l'article <ArrowRight size={16} /></span>
+              </div>
+            </button>
+          )}
+
+          {shown.length === 0
+            ? <EmptyHint icon={Search} text="Aucun article ne correspond à cette recherche." />
+            : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
+                {rest.map((a) => (
+                  <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={counts[a.id] || 0}
+                    onOpen={() => setView({ mode: "read", key: a.slug })} />
+                ))}
+              </div>
+            )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* (lot AI) Sur la page d'accueil : les trois derniers articles. Rien ne
+   s'affiche tant qu'aucun article n'est publié — mieux vaut pas de rubrique du
+   tout qu'une rubrique vide. */
+function MagHomeStrip() {
+  const { users } = useApp();
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.from("mag_articles").select(MAG_LIST_COLS)
+        .eq("status", "published").order("published_at", { ascending: false }).limit(3);
+      if (!cancelled && !error) setRows((data || []).map(mapMagArticle));
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const userById = useMemo(() => {
+    const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
+  }, [users]);
+  if (!rows.length) return null;
+  return (
+    <section style={{ maxWidth: 1180, margin: "0 auto", padding: "56px 24px 20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+        <SectionTitle kicker="Le Mag" title="Les membres prennent la plume" noMargin />
+        <Btn variant="soft" size="sm" onClick={() => magGoto(null)}>Tous les articles <ArrowRight size={15} /></Btn>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 32 }}>
+        {rows.map((a) => (
+          <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={[]} count={0} onOpen={() => magGoto(a.slug)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* (lot AI) Sur la fiche d'un jeu : les articles du Mag qui lui sont consacrés. */
+function MagGameLinks({ gameId }) {
+  const { users } = useApp();
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    setRows([]);
+    if (!gameId) return undefined;
+    (async () => {
+      const { data, error } = await supabase.from("mag_articles").select(MAG_LIST_COLS)
+        .eq("game_id", gameId).eq("status", "published").order("published_at", { ascending: false }).limit(6);
+      if (!cancelled && !error) setRows((data || []).map(mapMagArticle));
+    })();
+    return () => { cancelled = true; };
+  }, [gameId]);
+  if (!rows.length) return null;
+  const nameOf = (id) => ((users || []).find((u) => u.id === id) || {}).name || "un membre";
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+        <Newspaper size={17} color={C.teal} /> Dans Le Mag
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+        {rows.map((a) => (
+          <a key={a.id} href={magShareUrl(a.slug)} onClick={(e) => { e.preventDefault(); magGoto(a.slug); }}
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 13, background: "rgba(30,138,138,.07)", border: `1px solid ${C.teal}33`, textDecoration: "none" }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, lineHeight: 1.25, overflowWrap: "anywhere" }}>{a.title}</span>
+              <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 2 }}>{magKind(a.kind).short} · par {nameOf(a.authorId)} · {a.readMinutes} min de lecture</span>
+            </span>
+            <ChevronRight size={18} color={C.teal} style={{ flexShrink: 0 }} />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================================
    PAGE — LE CHRONOMETRE
    Vitrine et mode d'emploi illustre. Les illustrations reutilisent les vrais
    composants du site (MockBtn / Illu) : elles restent fideles a l'interface
@@ -9482,6 +11198,9 @@ function HomePage({ setPage, onAuth }) {
           {upcoming.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setPage("soirees")} />)}
         </div>
       </section>
+
+      {/* (lot AI) LE MAG — les trois derniers articles (rien tant qu'aucun n'est publié) */}
+      <MagHomeStrip />
 
       {/* ---- Nouveauté : moments jeux en ligne (BGA) ---- */}
       <section style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 0" }}>
@@ -13792,6 +15511,9 @@ function GameDetailModal({ g, onClose, onAuth, setToast }) {
 
       {/* extensions du jeu */}
       <GameExtensions g={g} onAuth={onAuth} onClose={onClose} setToast={setToast} />
+
+      {/* (lot AI) articles du Mag consacrés à ce jeu */}
+      <MagGameLinks gameId={g.id} />
 
       {/* commentaires sur le jeu */}
       <GameComments g={g} onAuth={onAuth} onClose={onClose} />
@@ -20756,7 +22478,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = personalReady ? notifications.filter((n) => !n.read).length : 0;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => (t || "").startsWith("loan") ? ArrowRightLeft : t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : Info;
+        const iconFor = (t) => (t || "").startsWith("loan") ? ArrowRightLeft : t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : (t || "").startsWith("mag_") ? Newspaper : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -20804,6 +22526,7 @@ function MyLudoPage({ setToast, setPage }) {
                     else if (n.linkKind === "event") setPage("soirees");
                     else if (n.linkKind === "loan") setPage("locations");
                     else if (n.linkKind === "webgame") setPage("web-jeux");
+                    else if (n.linkKind === "mag") magGoto(n.linkId);   // (lot AI) ouvre l'article concerne
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
                     background: n.read ? "#fff" : "rgba(30,138,138,.1)", border: n.read ? "1px solid #ece2d0" : `1px solid ${C.teal}`,
@@ -21382,7 +23105,7 @@ function Shell() {
   const [page, setPage] = useState(() => {
     try {
       const u = new URLSearchParams(window.location.search).get("page");
-      const valid = ["accueil", "soirees", "ludotheque", "chrono", "ma-ludo", "a-venir", "web-jeux", "locations", "guide"];
+      const valid = ["accueil", "soirees", "ludotheque", "chrono", "ma-ludo", "a-venir", "web-jeux", "mag", "locations", "guide"];
       return u && valid.includes(u) ? u : "accueil";
     } catch (e) { return "accueil"; }
   });
@@ -21395,6 +23118,13 @@ function Shell() {
   // deconnexion) : on ne laisse pas l'utilisateur bloque sur une page vide.
   useEffect(() => { if (page === "decideur" && !isDecideur(currentUser)) setPage("accueil"); }, [currentUser, page]);
   useEffect(() => { if (page === "soirees") markMomentsSeen(); }, [page]); // eslint-disable-line
+  // (lot AI) Ouverture du Mag demandee depuis ailleurs dans le site : une
+  // notification, la page d'accueil, la fiche d'un jeu (voir magGoto).
+  useEffect(() => {
+    const onGoto = (ev) => { if (ev && ev.detail && ev.detail.page === "mag") setPage("mag"); };
+    window.addEventListener("aladj:goto", onGoto);
+    return () => window.removeEventListener("aladj:goto", onGoto);
+  }, []);
 
   if (fatalError === "config") return <ConfigScreen />;
 
@@ -21425,6 +23155,7 @@ function Shell() {
         {page === "ma-ludo" && currentUser && <MyLudoPage setToast={setToast} setPage={setPage} />}
         {page === "a-venir" && <UpcomingPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "web-jeux" && <WebGamesPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
+        {page === "mag" && <MagPage onAuth={(m) => setAuth(m)} setToast={setToast} />}
         {page === "locations" && currentUser && <LocationsPage setToast={setToast} />}
         {page === "decideur" && currentUser && <DeciderPage setToast={setToast} />}
         {page === "guide" && <GuidePage />}
@@ -21530,6 +23261,14 @@ export default function App() {
           .aladj-ludo-aside { position: static !important; order: -1; display: block !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
           .aladj-ludo-aside .aladj-ludo-rank { margin-top: 18px; }
           .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
+        }
+        /* (lot AI) Le Mag. Vignettes qui se soulevent au survol, et colonnes qui
+           s'empilent sur telephone. */
+        .aladj-mag-card { transition: transform .18s ease, box-shadow .18s ease; }
+        @media (hover: hover) { .aladj-mag-card:hover { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(18,41,63,.15) !important; } }
+        @media (max-width: 760px) {
+          .aladj-mag-feature { grid-template-columns: minmax(0,1fr) !important; }
+          .aladj-mag-pm { grid-template-columns: minmax(0,1fr) !important; }
         }
         @media (max-width: 600px) {
           .aladj-cal-grid { gap: 3px !important; }
