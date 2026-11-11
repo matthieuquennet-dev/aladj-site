@@ -50,7 +50,11 @@ export default async function handler(req, res) {
     else if (rec.link_kind === 'webgame') url = '/?page=web-jeux';
     // (lot AJ) Le Mag : le clic ouvre directement l'article concerne
     // (le site accepte l'identifiant de l'article comme son adresse courte).
-    else if (rec.link_kind === 'mag' && rec.link_id) url = '/?page=mag&article=' + encodeURIComponent(String(rec.link_id));
+    else if (rec.link_kind === 'mag' && rec.link_id) {
+      url = '/?page=mag&article=' + encodeURIComponent(String(rec.link_id));
+      // (lot AK) Un nouveau commentaire : l'article s'ouvre sur ses commentaires.
+      if (rec.type === 'mag_comment') url += '&focus=comments';
+    }
     else if (rec.link_kind === 'mag') url = '/?page=mag';
 
     // Abonnements de ce destinataire
