@@ -6648,10 +6648,11 @@ function GuidePage() {
           q: "Activer les notifications",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Dans <b>Mon espace</b>, activez les notifications pour être prévenu sur votre téléphone : commentaires sur vos jeux, envies de découverte, invitations aux moments, parties à confirmer, quorum atteint…</p>
-            <p style={{ margin: "0 0 8px" }}>Deux notifications s'y ajoutent :</p>
+            <p style={{ margin: "0 0 8px" }}>D'autres notifications s'y ajoutent :</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
               <li><b>Désinscription d'un moment jeux</b> — quand un inscrit se retire, tous les autres participants (et le créateur) sont prévenus. Si son départ fait repasser le moment <b>sous son minimum de joueurs</b>, la notification le précise : c'est le moment de battre le rappel.</li>
               <li><b>Partie ajoutée à votre historique</b> — dès qu'une partie chronométrée est enregistrée, chaque joueur membre de la tablée reçoit une notification. <b>Une par partie</b> : trois manches du même jeu donnent trois notifications, et non une seule.</li>
+              <li><b>Le Mag</b> — un nouvel article paraît : un clic sur la notification l'ouvre directement. Les auteurs sont aussi prévenus des encarts posés sur leurs articles.</li>
               <li><b>Locations</b> — demande de location reçue, engagement d'un propriétaire, refus nominatif, annulation, prêt enregistré, et les rappels de retour (la veille, le jour J, puis chaque semaine de retard).</li>
             </ul>
             <p style={{ margin: "0 0 8px" }}>En revanche, la <b>messagerie n'alimente pas cette liste</b> : un échange un peu vif la remplirait à lui seul. Les nouveaux messages se signalent par une <b>pastille rouge</b> sur « Ma messagerie » et sur le compteur de Mon espace.</p>
@@ -7591,6 +7592,20 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>L'auteur d'un article (et ses co-auteurs) peut <b>masquer</b> un encart avec l'icône en forme d'œil : les lecteurs ne le voient plus, <b>son signataire en est prévenu</b>, et l'encart peut être réaffiché à tout moment. L'auteur <b>ne peut ni réécrire ni supprimer</b> l'encart d'un autre — « sans dénaturer » vaut dans les deux sens.</p>
             <p style={{ margin: "0 0 8px" }}>Pour ne recevoir aucun encart, décochez <b>« Ouvrir l'article aux encarts des membres »</b> dans l'éditeur.</p>
             <p style={{ margin: 0 }}>Les <b>administrateurs</b> peuvent masquer ou supprimer un encart, et <b>retirer un article de la publication</b>. Un article retiré n'est plus visible que de son auteur et des administrateurs, et sa remise en ligne passe par un administrateur.</p>
+          </>,
+        },
+        {
+          q: "Être prévenu des nouveaux articles",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Dès qu'un article <b>paraît</b>, <b>chaque membre reçoit une notification</b> : dans <b>Mon espace</b>, et sur son téléphone s'il a activé les notifications. <b>Un clic sur la notification ouvre directement l'article.</b></p>
+            <p style={{ margin: 0 }}>Seule la <b>première publication</b> est annoncée : un article repassé en brouillon pour corrections puis republié ne renvoie rien. L'auteur et ses co-auteurs ne sont pas prévenus de leur propre article. Si un article est supprimé, les notifications qui y menaient disparaissent avec lui.</p>
+          </>,
+        },
+        {
+          q: "Le compteur d'ouvertures",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Chaque article publié affiche, <b>en bas à droite de sa miniature</b>, le nombre de fois où il a été ouvert (l'œil <Eye size={13} style={{ verticalAlign: "-2px" }} />). On le retrouve aussi en tête de l'article, à côté du temps de lecture.</p>
+            <p style={{ margin: 0 }}>Toutes les lectures comptent, <b>visiteurs sans compte compris</b>. Pour que le chiffre reste parlant, <b>l'auteur et ses co-auteurs</b> qui relisent leur article ne le font pas monter, et un même appareil ne compte <b>qu'une fois par heure</b> : recharger la page ou revenir à l'article juste après ne gonfle pas le compteur.</p>
           </>,
         },
         {
@@ -9223,18 +9238,59 @@ function mapMagAddon(r) {
 // on le dit calmement au lieu d'afficher une erreur technique.
 const magIsMissing = (error) => !!error && /does not exist|schema cache|could not find the (table|function)/i.test(error.message || "");
 
+/* (lot AJ) Compteur d'ouvertures des articles. Renvoie { idArticle: nombre },
+   ou null si le compteur n'est pas lisible (migration du lot AJ pas encore
+   jouée) : dans ce cas, rien ne s'affiche plutôt qu'un faux « 0 ».
+   `ids` limite la lecture à quelques articles ; sans `ids`, on lit tout. */
+async function magFetchOpens(ids) {
+  if (Array.isArray(ids) && ids.length === 0) return {};
+  let qy = supabase.from("mag_article_opens").select("article_id,open_count");
+  if (Array.isArray(ids)) qy = qy.in("article_id", ids);
+  const { data, error } = await qy;
+  if (error) return null;
+  const m = {};
+  (data || []).forEach((r) => { m[r.article_id] = Number(r.open_count) || 0; });
+  return m;
+}
+
+/* (lot AJ) Compte une ouverture de l'article et renvoie le total (ou null si
+   le compteur est indisponible). Un même navigateur ne compte qu'une fois par
+   heure et par article : un rechargement ou un aller-retour entre la liste et
+   l'article ne gonfle pas le chiffre. Le serveur, lui, ne compte ni l'auteur
+   ni ses co-auteurs, ni un article qui n'est pas publié. */
+const MAG_OPEN_GAP_MS = 60 * 60 * 1000;
+async function magCountOpen(articleId) {
+  if (!articleId) return null;
+  const k = "aladj:mag-open:" + articleId;
+  let recent = false;
+  try {
+    const t = Number(window.localStorage.getItem(k) || 0);
+    recent = t > 0 && Date.now() - t < MAG_OPEN_GAP_MS;
+  } catch (e) { /* stockage indisponible (navigation privée) : on compte */ }
+  if (!recent) {
+    try { window.localStorage.setItem(k, String(Date.now())); } catch (e) { /* sans gravité */ }
+    const { data, error } = await supabase.rpc("aladj_mag_count_open", { p_article: articleId });
+    if (!error && data !== null && data !== undefined) return Number(data) || 0;
+    // Échec (réseau, migration pas encore jouée) : on retentera à la prochaine ouverture.
+    if (error) { try { window.localStorage.removeItem(k); } catch (e) { /* sans gravité */ } }
+  }
+  const m = await magFetchOpens([articleId]);
+  return m ? (m[articleId] || 0) : null;
+}
+
 async function magFetchList() {
-  const [a, n, c] = await Promise.all([
+  const [a, n, c, o] = await Promise.all([
     supabase.from("mag_articles").select(MAG_LIST_COLS).order("published_at", { ascending: false, nullsFirst: false }).order("updated_at", { ascending: false }),
     supabase.from("mag_addons").select("article_id").eq("hidden", false),
     supabase.from("mag_coauthors").select("article_id,user_id"),
+    magFetchOpens(),
   ]);
-  if (a.error) return { rows: [], counts: {}, co: {}, error: a.error.message || "erreur", missing: magIsMissing(a.error) };
+  if (a.error) return { rows: [], counts: {}, co: {}, opens: null, error: a.error.message || "erreur", missing: magIsMissing(a.error) };
   const counts = {};
   (n.data || []).forEach((r) => { counts[r.article_id] = (counts[r.article_id] || 0) + 1; });
   const co = {};
   (c.data || []).forEach((r) => { (co[r.article_id] ||= []).push(r.user_id); });
-  return { rows: (a.data || []).map(mapMagArticle), counts, co, error: null, missing: false };
+  return { rows: (a.data || []).map(mapMagArticle), counts, co, opens: o, error: null, missing: false };
 }
 
 async function magFetchArticle(key) {
@@ -9387,7 +9443,7 @@ function MagCover({ a, height, radius = 0 }) {
 }
 
 // Ligne « auteur · date · temps de lecture · encarts ».
-function MagMeta({ a, author, coNames = [], count = 0, light }) {
+function MagMeta({ a, author, coNames = [], count = 0, light, opens }) {
   const col = light ? "rgba(255,255,255,.78)" : "#8a7c6a";
   const strong = light ? "#fff" : C.navy;
   return (
@@ -9400,11 +9456,37 @@ function MagMeta({ a, author, coNames = [], count = 0, light }) {
       {(a.publishedAt || a.updatedAt) && <span>· {magDate(a.publishedAt || a.updatedAt)}</span>}
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <Clock size={12} /> {a.readMinutes} min</span>
       {count > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <MessageSquarePlus size={12} /> {count} encart{count > 1 ? "s" : ""}</span>}
+      {typeof opens === "number" && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Nombre de fois où l'article a été ouvert">
+          · <Eye size={12} /> ouvert {magFmtCount(opens)} fois
+        </span>
+      )}
     </div>
   );
 }
 
-function MagCard({ a, author, coNames, count, onOpen }) {
+/* (lot AJ) Le compteur d'ouvertures, en pastille dans le coin bas-droit d'une
+   miniature. `n` est un nombre ; la pastille ne se pose que sur un article publié. */
+const magFmtCount = (n) => {
+  const v = Math.max(0, Math.round(Number(n) || 0));
+  try { return v.toLocaleString("fr-FR"); } catch (e) { return String(v); }
+};
+function MagOpensPill({ n }) {
+  const v = Math.max(0, Math.round(Number(n) || 0));
+  const label = v === 0 ? "Pas encore ouvert" : `Ouvert ${magFmtCount(v)} fois`;
+  return (
+    <span title={label} aria-label={label} style={{
+      position: "absolute", right: 10, bottom: 10, display: "inline-flex", alignItems: "center", gap: 5,
+      padding: "4px 10px 4px 8px", borderRadius: 999, background: "rgba(12,31,48,.72)", color: "#fff",
+      fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, lineHeight: 1.2,
+      backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,.18)", pointerEvents: "none",
+    }}>
+      <Eye size={13} /> {magFmtCount(v)}
+    </span>
+  );
+}
+
+function MagCard({ a, author, coNames, count, onOpen, opens }) {
   const draft = a.status !== "published";
   return (
     <button type="button" onClick={onOpen} className="aladj-mag-card" style={{
@@ -9420,6 +9502,7 @@ function MagCard({ a, author, coNames, count, onOpen }) {
             {a.status === "withdrawn" ? "Retiré" : "Brouillon"}
           </span>
         )}
+        {!draft && typeof opens === "number" && <MagOpensPill n={opens} />}
       </div>
       <div style={{ padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, lineHeight: 1.22, margin: 0, overflowWrap: "anywhere" }}>{a.title}</h3>
@@ -9643,10 +9726,22 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
   const [editId, setEditId] = useState(null);        // encart en cours de correction
   const [busy, setBusy] = useState(false);
   const [openGameId, setOpenGameId] = useState(null);
+  const [opens, setOpens] = useState(null);         // (lot AJ) null = inconnu
 
   const userById = useMemo(() => {
     const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
   }, [users]);
+
+  // (lot AJ) Ouvrir un article publié le compte (voir magCountOpen).
+  const artId = art ? art.id : null;
+  const artPublished = !!art && art.status === "published";
+  useEffect(() => {
+    let cancelled = false;
+    setOpens(null);
+    if (!artId || !artPublished) return undefined;
+    magCountOpen(artId).then((v) => { if (!cancelled) setOpens(v); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [artId, artPublished]);
 
   const loadExtras = useCallback(async (articleId) => {
     const x = await magFetchExtras(articleId);
@@ -9846,7 +9941,7 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
         <MagKindBadge kind={art.kind} />
         <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5.4vw,48px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{art.title}</h1>
         {art.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600, overflowWrap: "anywhere" }}>{art.chapo}</p>}
-        <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} />
+        <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} opens={published && typeof opens === "number" ? opens : undefined} />
       </header>
 
       {art.cover && (
@@ -10159,6 +10254,8 @@ function MagEditor({ articleId, onClose, setToast }) {
   const cleanPreview = useMemo(() => magCleanBlocks(blocks), [blocks]);
 
   const save = async (nextStatus) => {
+    // (lot AJ) Première mise en ligne = notification à tous les membres (serveur).
+    const firstPublication = !(base && base.publishedAt);
     setErr("");
     const title = f.title.trim();
     if (title.length < 2) { setErr("Donnez un titre à l'article."); return; }
@@ -10227,7 +10324,7 @@ function MagEditor({ articleId, onClose, setToast }) {
       setDirty(false); setRestored(false);
       applyArticle(saved, nextCo);
       if (nextStatus === "published" && saved.status === "published") {
-        setToast("Article publié — il est en ligne !");
+        setToast(firstPublication ? "Article publié ! Tous les membres en sont prévenus par notification." : "Article remis en ligne.");
         onClose(saved.slug);
       } else {
         setToast(saved.status === "published" ? "Modifications en ligne."
@@ -10495,6 +10592,7 @@ function MagPage({ onAuth, setToast }) {
   const [rows, setRows] = useState(null);            // null = chargement
   const [counts, setCounts] = useState({});
   const [coByArticle, setCoByArticle] = useState({});
+  const [opens, setOpens] = useState(null);           // (lot AJ) null = compteur indisponible
   const [missing, setMissing] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [view, setView] = useState({ mode: "list" }); // list · read (key) · edit (id | null)
@@ -10507,7 +10605,7 @@ function MagPage({ onAuth, setToast }) {
 
   const reload = useCallback(async () => {
     const r = await magFetchList();
-    setRows(r.rows); setCounts(r.counts); setCoByArticle(r.co);
+    setRows(r.rows); setCounts(r.counts); setCoByArticle(r.co); setOpens(r.opens || null);
     setMissing(!!r.missing); setLoadErr(r.error && !r.missing ? r.error : "");
   }, []);
   useEffect(() => { reload(); }, [reload, currentUser?.id]);
@@ -10558,6 +10656,7 @@ function MagPage({ onAuth, setToast }) {
   }
 
   const coNamesOf = (a) => (coByArticle[a.id] || []).map((id) => userById[id]).filter(Boolean).map((u) => u.name);
+  const opensOf = (a) => (opens ? (opens[a.id] || 0) : undefined);
   const filtering = kind !== "all" || q.trim() !== "";
   const feature = !filtering && shown.length > 0 ? shown[0] : null;
   const rest = feature ? shown.slice(1) : shown;
@@ -10648,6 +10747,7 @@ function MagPage({ onAuth, setToast }) {
             }}>
               <div style={{ minHeight: 240, position: "relative" }}>
                 <div style={{ position: "absolute", inset: 0 }}><MagCover a={feature} height="100%" /></div>
+                {typeof opensOf(feature) === "number" && <MagOpensPill n={opensOf(feature)} />}
               </div>
               <div style={{ padding: "clamp(20px,3vw,34px)", display: "flex", flexDirection: "column", gap: 12, justifyContent: "center" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -10667,7 +10767,7 @@ function MagPage({ onAuth, setToast }) {
             : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
                 {rest.map((a) => (
-                  <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={counts[a.id] || 0}
+                  <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={counts[a.id] || 0} opens={opensOf(a)}
                     onOpen={() => setView({ mode: "read", key: a.slug })} />
                 ))}
               </div>
@@ -10684,12 +10784,17 @@ function MagPage({ onAuth, setToast }) {
 function MagHomeStrip() {
   const { users } = useApp();
   const [rows, setRows] = useState([]);
+  const [opens, setOpens] = useState(null);   // (lot AJ)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase.from("mag_articles").select(MAG_LIST_COLS)
         .eq("status", "published").order("published_at", { ascending: false }).limit(3);
-      if (!cancelled && !error) setRows((data || []).map(mapMagArticle));
+      if (cancelled || error) return;
+      const list = (data || []).map(mapMagArticle);
+      setRows(list);
+      const o = await magFetchOpens(list.map((a) => a.id));
+      if (!cancelled) setOpens(o);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -10705,7 +10810,7 @@ function MagHomeStrip() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 32 }}>
         {rows.map((a) => (
-          <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={[]} count={0} onOpen={() => magGoto(a.slug)} />
+          <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={[]} count={0} opens={opens ? (opens[a.id] || 0) : undefined} onOpen={() => magGoto(a.slug)} />
         ))}
       </div>
     </section>
