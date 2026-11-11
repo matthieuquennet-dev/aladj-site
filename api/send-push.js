@@ -47,6 +47,11 @@ export default async function handler(req, res) {
     let url = '/?page=ma-ludo';
     if (rec.link_kind === 'event') url = '/?page=soirees';
     else if (rec.link_kind === 'game') url = '/?page=ludotheque';
+    else if (rec.link_kind === 'webgame') url = '/?page=web-jeux';
+    // (lot AJ) Le Mag : le clic ouvre directement l'article concerne
+    // (le site accepte l'identifiant de l'article comme son adresse courte).
+    else if (rec.link_kind === 'mag' && rec.link_id) url = '/?page=mag&article=' + encodeURIComponent(String(rec.link_id));
+    else if (rec.link_kind === 'mag') url = '/?page=mag';
 
     // Abonnements de ce destinataire
     const { data: subs } = await supabase
