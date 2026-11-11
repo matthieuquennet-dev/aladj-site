@@ -6652,7 +6652,7 @@ function GuidePage() {
             <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
               <li><b>Désinscription d'un moment jeux</b> — quand un inscrit se retire, tous les autres participants (et le créateur) sont prévenus. Si son départ fait repasser le moment <b>sous son minimum de joueurs</b>, la notification le précise : c'est le moment de battre le rappel.</li>
               <li><b>Partie ajoutée à votre historique</b> — dès qu'une partie chronométrée est enregistrée, chaque joueur membre de la tablée reçoit une notification. <b>Une par partie</b> : trois manches du même jeu donnent trois notifications, et non une seule.</li>
-              <li><b>Le Mag</b> — un nouvel article paraît : un clic sur la notification l'ouvre directement. Les auteurs sont aussi prévenus des encarts posés sur leurs articles.</li>
+              <li><b>Le Mag</b> — un nouvel article paraît : un clic sur la notification l'ouvre directement. Les auteurs sont aussi prévenus des encarts posés sur leurs articles, et chaque nouveau commentaire prévient l'auteur et ceux qui ont déjà commenté (le clic mène alors droit aux commentaires).</li>
               <li><b>Locations</b> — demande de location reçue, engagement d'un propriétaire, refus nominatif, annulation, prêt enregistré, et les rappels de retour (la veille, le jour J, puis chaque semaine de retard).</li>
             </ul>
             <p style={{ margin: "0 0 8px" }}>En revanche, la <b>messagerie n'alimente pas cette liste</b> : un échange un peu vif la remplirait à lui seul. Les nouveaux messages se signalent par une <b>pastille rouge</b> sur « Ma messagerie » et sur le compteur de Mon espace.</p>
@@ -7540,7 +7540,18 @@ function GuidePage() {
           q: "Le Mag, c'est quoi ?",
           a: <>
             <p style={{ margin: "0 0 8px" }}><b>Le Mag</b> est la rubrique des articles écrits par les membres : <b>critiques de jeux</b>, <b>dossiers</b>, <b>actualités ludiques</b>, <b>récits de parties</b>, <b>conseils et stratégie</b>. On y accède par l'onglet « Le Mag » du menu ; les trois derniers articles s'affichent aussi sur la page d'accueil.</p>
-            <p style={{ margin: 0 }}><b>La lecture est ouverte à tous</b>, sans compte : un article se partage par un simple lien. <b>Écrire et contribuer</b> est réservé aux membres connectés.</p>
+            <p style={{ margin: 0 }}><b>La lecture est ouverte à tous</b>, sans compte : un article se partage par un simple lien. <b>Écrire, contribuer, commenter et noter</b> est réservé aux membres connectés.</p>
+          </>,
+        },
+        {
+          q: "Parcourir Le Mag par rubrique",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>La page du Mag s'ouvre sur l'<b>article à la une</b> (le dernier paru), puis présente <b>chaque rubrique</b> — critiques, dossiers, actus, récits, conseils — avec ses trois meilleurs articles selon le classement choisi :</p>
+            <Illu caption="Le sélecteur de classement, en tête de chaque rubrique">
+              <MockBtn soft>🕒 Les derniers</MockBtn><MockBtn color={C.amber} soft>⭐ Les mieux notés</MockBtn><MockBtn color={C.navy} soft>👁 Les plus vus</MockBtn>
+            </Illu>
+            <p style={{ margin: "8px 0 8px" }}><b>Les mieux notés</b> se classent par note moyenne ; à moyenne égale, l'article qui a reçu le plus de notes passe devant. <b>Les plus vus</b> se classent par nombre d'ouvertures.</p>
+            <p style={{ margin: 0 }}>Le bouton <b>« Voir les N articles »</b> sous une rubrique (ou la pastille de la rubrique, en haut) affiche <b>tous</b> ses articles, dans le classement de votre choix. La <b>recherche</b> (titre, chapô, auteur), elle, parcourt toutes les rubriques à la fois.</p>
           </>,
         },
         {
@@ -7592,6 +7603,21 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>L'auteur d'un article (et ses co-auteurs) peut <b>masquer</b> un encart avec l'icône en forme d'œil : les lecteurs ne le voient plus, <b>son signataire en est prévenu</b>, et l'encart peut être réaffiché à tout moment. L'auteur <b>ne peut ni réécrire ni supprimer</b> l'encart d'un autre — « sans dénaturer » vaut dans les deux sens.</p>
             <p style={{ margin: "0 0 8px" }}>Pour ne recevoir aucun encart, décochez <b>« Ouvrir l'article aux encarts des membres »</b> dans l'éditeur.</p>
             <p style={{ margin: 0 }}>Les <b>administrateurs</b> peuvent masquer ou supprimer un encart, et <b>retirer un article de la publication</b>. Un article retiré n'est plus visible que de son auteur et des administrateurs, et sa remise en ligne passe par un administrateur.</p>
+          </>,
+        },
+        {
+          q: "Noter un article",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque article publié, un encadré affiche la <b>note moyenne</b> sur 5 étoiles et le nombre de notes. Membre connecté, vous donnez <b>votre note</b> d'un clic sur les étoiles — par <b>demi-étoile</b>, comme pour les jeux de la ludothèque : la moitié gauche d'une étoile vaut une demi-étoile.</p>
+            <p style={{ margin: 0 }}>Vous pouvez changer votre note à tout moment, ou l'<b>effacer</b>. <b>L'auteur peut noter son propre article.</b> Les notes sont <b>anonymes</b> : seuls la moyenne et le nombre de notes s'affichent, jamais qui a donné quoi. La moyenne apparaît aussi, avec une étoile, en bas à gauche de la miniature de l'article.</p>
+          </>,
+        },
+        {
+          q: "Commenter un article",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Tout en bas de l'article, la zone <b>« Commentaires »</b> accueille la conversation : une question à l'auteur, un merci, un désaccord. Le commentaire paraît tout de suite, à votre nom ; vous pouvez le <b>corriger</b> ou le <b>supprimer</b>. Les administrateurs peuvent aussi supprimer un commentaire.</p>
+            <p style={{ margin: "0 0 8px" }}>À chaque nouveau commentaire, <b>l'auteur de l'article, ses co-auteurs et tous ceux qui ont déjà commenté</b> reçoivent une notification. Un clic dessus ouvre l'article <b>directement à ses commentaires</b>. On n'est jamais prévenu de son propre commentaire.</p>
+            <p style={{ margin: 0 }}><b>Commentaire ou encart ?</b> L'encart enrichit l'article lui-même : il se pose sous un passage précis et le complète (un autre avis, une variante, une anecdote). Le commentaire, lui, est la discussion qui suit l'article.</p>
           </>,
         },
         {
@@ -9185,9 +9211,11 @@ const magNewId = () => "b" + Math.random().toString(36).slice(2, 10);
    page d'accueil, fiche de jeu). On dépose la cible ici, puis on prévient : le
    Shell ouvre l'onglet, et la page du Mag — déjà montée ou non — vient lire ce
    qu'on lui a laissé. `key` est l'adresse courte de l'article ou son id. */
-const MAG_PENDING = { key: null };
-function magGoto(key) {
+const MAG_PENDING = { key: null, focus: null };
+// (lot AK) `focus` = "comments" : l'article s'ouvre directement sur ses commentaires.
+function magGoto(key, focus) {
   MAG_PENDING.key = key || null;
+  MAG_PENDING.focus = focus || null;
   try { window.dispatchEvent(new CustomEvent("aladj:goto", { detail: { page: "mag" } })); }
   catch (e) { /* très vieux navigateur : l'onglet reste accessible par le menu */ }
 }
@@ -9198,6 +9226,7 @@ function magSetUrl(articleSlug, keepPage) {
   if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
   try {
     const url = new URL(window.location.href);
+    url.searchParams.delete("focus");   // (lot AK) cible d'une notification : servie une fois
     if (articleSlug) { url.searchParams.set("page", "mag"); url.searchParams.set("article", articleSlug); }
     else {
       url.searchParams.delete("article");
@@ -9283,14 +9312,14 @@ async function magFetchList() {
     supabase.from("mag_articles").select(MAG_LIST_COLS).order("published_at", { ascending: false, nullsFirst: false }).order("updated_at", { ascending: false }),
     supabase.from("mag_addons").select("article_id").eq("hidden", false),
     supabase.from("mag_coauthors").select("article_id,user_id"),
-    magFetchOpens(),
+    magFetchStats(),   // (lot AK) ouvertures, notes, commentaires
   ]);
-  if (a.error) return { rows: [], counts: {}, co: {}, opens: null, error: a.error.message || "erreur", missing: magIsMissing(a.error) };
+  if (a.error) return { rows: [], counts: {}, co: {}, stats: null, error: a.error.message || "erreur", missing: magIsMissing(a.error) };
   const counts = {};
   (n.data || []).forEach((r) => { counts[r.article_id] = (counts[r.article_id] || 0) + 1; });
   const co = {};
   (c.data || []).forEach((r) => { (co[r.article_id] ||= []).push(r.user_id); });
-  return { rows: (a.data || []).map(mapMagArticle), counts, co, opens: o, error: null, missing: false };
+  return { rows: (a.data || []).map(mapMagArticle), counts, co, stats: o, error: null, missing: false };
 }
 
 async function magFetchArticle(key) {
@@ -9443,7 +9472,7 @@ function MagCover({ a, height, radius = 0 }) {
 }
 
 // Ligne « auteur · date · temps de lecture · encarts ».
-function MagMeta({ a, author, coNames = [], count = 0, light, opens }) {
+function MagMeta({ a, author, coNames = [], count = 0, light, opens, rating, comments = 0 }) {
   const col = light ? "rgba(255,255,255,.78)" : "#8a7c6a";
   const strong = light ? "#fff" : C.navy;
   return (
@@ -9456,6 +9485,12 @@ function MagMeta({ a, author, coNames = [], count = 0, light, opens }) {
       {(a.publishedAt || a.updatedAt) && <span>· {magDate(a.publishedAt || a.updatedAt)}</span>}
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <Clock size={12} /> {a.readMinutes} min</span>
       {count > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>· <MessageSquarePlus size={12} /> {count} encart{count > 1 ? "s" : ""}</span>}
+      {comments > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Commentaires">· <MessageCircle size={12} /> {comments}</span>}
+      {rating && rating.count > 0 && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title={`Note moyenne sur ${rating.count} note${rating.count > 1 ? "s" : ""}`}>
+          · <Star size={12} fill={C.amber} color={C.amber} /> {magFmtRating(rating.avg)}/5 ({rating.count})
+        </span>
+      )}
       {typeof opens === "number" && (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Nombre de fois où l'article a été ouvert">
           · <Eye size={12} /> ouvert {magFmtCount(opens)} fois
@@ -9486,7 +9521,7 @@ function MagOpensPill({ n }) {
   );
 }
 
-function MagCard({ a, author, coNames, count, onOpen, opens }) {
+function MagCard({ a, author, coNames, count, onOpen, opens, rating, comments }) {
   const draft = a.status !== "published";
   return (
     <button type="button" onClick={onOpen} className="aladj-mag-card" style={{
@@ -9503,13 +9538,14 @@ function MagCard({ a, author, coNames, count, onOpen, opens }) {
           </span>
         )}
         {!draft && typeof opens === "number" && <MagOpensPill n={opens} />}
+        {!draft && rating && rating.count > 0 && <MagRatingPill avg={rating.avg} count={rating.count} />}
       </div>
       <div style={{ padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, lineHeight: 1.22, margin: 0, overflowWrap: "anywhere" }}>{a.title}</h3>
         {a.chapo && (
           <p style={{ margin: 0, fontSize: 14, color: "#6e6256", lineHeight: 1.55, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{a.chapo}</p>
         )}
-        <div style={{ marginTop: "auto", paddingTop: 6 }}><MagMeta a={a} author={author} coNames={coNames} count={count} /></div>
+        <div style={{ marginTop: "auto", paddingTop: 6 }}><MagMeta a={a} author={author} coNames={coNames} count={count} comments={comments || 0} /></div>
       </div>
     </button>
   );
@@ -9716,7 +9752,7 @@ function MagAddonForm({ initial, busy, onSubmit, onCancel }) {
 /* =============================================================================
    (lot AI) LE MAG — LECTURE D'UN ARTICLE
    ============================================================================= */
-function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
+function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusNonce }) {
   const { currentUser, users, games, askConfirm } = useApp();
   const [art, setArt] = useState(undefined);        // undefined = chargement · null = introuvable
   const [addons, setAddons] = useState([]);
@@ -9742,6 +9778,57 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
     magCountOpen(artId).then((v) => { if (!cancelled) setOpens(v); }).catch(() => {});
     return () => { cancelled = true; };
   }, [artId, artPublished]);
+
+  // (lot AK) Commentaires, note moyenne et note du lecteur.
+  const [comments, setComments] = useState([]);
+  const [artStats, setArtStats] = useState(null);
+  const [myStars, setMyStars] = useState(0);
+  const [rateBusy, setRateBusy] = useState(false);
+  const [socialReady, setSocialReady] = useState(false);
+  const meId = currentUser ? currentUser.id : null;
+  const loadSocial = useCallback(async (articleId) => {
+    const [cm, st, mine] = await Promise.all([
+      supabase.from("mag_comments").select("*").eq("article_id", articleId).order("created_at", { ascending: true }),
+      magFetchStats([articleId]),
+      meId
+        ? supabase.from("mag_ratings").select("stars").eq("article_id", articleId).eq("user_id", meId).limit(1)
+        : Promise.resolve({ data: [] }),
+    ]);
+    return {
+      comments: (cm.data || []).map(mapMagComment),
+      stats: st ? (st[articleId] || MAG_NO_STATS) : null,
+      myStars: mine && mine.data && mine.data[0] ? Number(mine.data[0].stars) || 0 : 0,
+    };
+  }, [meId]);
+  useEffect(() => {
+    let cancelled = false;
+    setComments([]); setArtStats(null); setMyStars(0); setSocialReady(false);
+    if (!artId) return undefined;
+    loadSocial(artId).then((x) => {
+      if (cancelled) return;
+      setComments(x.comments); setArtStats(x.stats); setMyStars(x.myStars); setSocialReady(true);
+    }).catch(() => { if (!cancelled) setSocialReady(true); });
+    return () => { cancelled = true; };
+  }, [artId, loadSocial]);
+  const reloadSocial = useCallback(async () => {
+    if (!artId) return;
+    const x = await loadSocial(artId);
+    setComments(x.comments); setArtStats(x.stats); setMyStars(x.myStars);
+  }, [artId, loadSocial]);
+
+  // (lot AK) Arrivée par la notification d'un commentaire : on descend aux commentaires.
+  const focusDone = useRef(null);
+  useEffect(() => {
+    if (focus !== "comments" || !socialReady || !focusNonce || focusDone.current === focusNonce) return undefined;
+    const t = setTimeout(() => {
+      focusDone.current = focusNonce;
+      try {
+        const el = document.getElementById("mag-commentaires");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (e) { /* sans gravité */ }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [focus, focusNonce, socialReady]);
 
   const loadExtras = useCallback(async (articleId) => {
     const x = await magFetchExtras(articleId);
@@ -9863,6 +9950,30 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
     setToast(addon.hidden ? "Encart réaffiché." : "Encart masqué.");
   };
 
+  // (lot AK) Noter l'article (v = null : effacer sa note).
+  const rate = async (v) => {
+    setRateBusy(true);
+    const { data, error } = await supabase.rpc("aladj_mag_rate", { p_article: art.id, p_stars: v === null ? null : v });
+    setRateBusy(false);
+    if (error) {
+      const m = error.message || "erreur";
+      setToast(/ALADJ_NOT_ALLOWED|ALADJ_NOT_SIGNED_IN/.test(m) ? "Connectez-vous avec votre compte de membre pour noter."
+        : /ALADJ_MAG_NOT_PUBLISHED/.test(m) ? "Cet article n'est plus publié : il ne peut pas être noté."
+        : "Note non enregistrée : " + m);
+      return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    setMyStars(v || 0);
+    if (row) {
+      setArtStats((st) => ({
+        ...(st || MAG_NO_STATS),
+        ratingAvg: row.rating_avg === null || row.rating_avg === undefined ? null : Number(row.rating_avg),
+        ratingCount: Number(row.rating_count) || 0,
+      }));
+    }
+    setToast(v ? "Merci, votre note est enregistrée." : "Votre note est effacée.");
+  };
+
   // Retrait par un administrateur : l'auteur ne peut plus republier seul.
   const setStatus = async (status, okMsg) => {
     const { data, error } = await supabase.from("mag_articles").update({ status }).eq("id", art.id).select(MAG_LIST_COLS + ",blocks");
@@ -9941,7 +10052,9 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
         <MagKindBadge kind={art.kind} />
         <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5.4vw,48px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{art.title}</h1>
         {art.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600, overflowWrap: "anywhere" }}>{art.chapo}</p>}
-        <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} opens={published && typeof opens === "number" ? opens : undefined} />
+        <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} opens={published && typeof opens === "number" ? opens : undefined}
+          rating={published && artStats && artStats.ratingCount > 0 ? { avg: artStats.ratingAvg, count: artStats.ratingCount } : null}
+          comments={published ? comments.length : 0} />
       </header>
 
       {art.cover && (
@@ -10006,6 +10119,16 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast }) {
         <p style={{ marginTop: 36, fontSize: 13.5, color: "#a89a86", textAlign: "center" }}>
           <Lock size={13} style={{ verticalAlign: "-2px" }} /> L'auteur n'a pas ouvert cet article aux encarts.
         </p>
+      )}
+
+      {/* (lot AK) La note de l'article, puis la conversation qui le suit */}
+      {published && (
+        <>
+          <MagRatingBox stats={artStats} myStars={myStars} canRate={!!me} busy={rateBusy} onRate={rate} onAuth={onAuth} />
+          <MagComments article={art} comments={comments} userById={userById}
+            writerIds={[art.authorId, ...coIds].filter(Boolean)} me={me} isAdmin={isAdmin}
+            onAuth={onAuth} onChanged={reloadSocial} setToast={setToast} />
+        </>
       )}
 
       <div style={{ textAlign: "center", marginTop: 46 }}>
@@ -10585,6 +10708,309 @@ function MagEditor({ articleId, onClose, setToast }) {
 }
 
 /* =============================================================================
+   (lot AK) LE MAG — NOTES, COMMENTAIRES, CLASSEMENTS
+   -----------------------------------------------------------------------------
+   · Chaque article publié se note sur 5 étoiles (par demi-étoile, comme les
+     jeux de la ludothèque). L'auteur peut noter son propre article. Les notes
+     individuelles restent privées : on n'affiche que la moyenne.
+   · Sous l'article, une zone de commentaires. Chaque nouveau commentaire
+     prévient l'auteur, ses co-auteurs et tous ceux qui ont déjà commenté
+     (le serveur s'en charge, migration lot_AK).
+   · La page du Mag se lit par rubrique : pour chacune, les derniers articles,
+     les mieux notés et les plus vus.
+   Les encarts (lot AI) restent ce qu'ils sont : une contribution posée DANS
+   l'article. Le commentaire, lui, est la conversation qui suit l'article.
+   ============================================================================= */
+
+const MAG_COMMENT_MAX = 3000;
+const MAG_NO_STATS = { opens: 0, ratingAvg: null, ratingCount: 0, comments: 0 };
+
+/* Statistiques des articles : { idArticle: { opens, ratingAvg, ratingCount,
+   comments } }, ou null si rien n'est lisible. Tant que la migration du lot AK
+   n'est pas jouée, on se replie sur le seul compteur d'ouvertures (lot AJ). */
+async function magFetchStats(ids) {
+  if (Array.isArray(ids) && ids.length === 0) return {};
+  const { data, error } = await supabase.rpc("aladj_mag_stats", { p_ids: Array.isArray(ids) ? ids : null });
+  if (error) {
+    const o = await magFetchOpens(ids);
+    if (!o) return null;
+    const m = {};
+    Object.keys(o).forEach((k) => { m[k] = { ...MAG_NO_STATS, opens: o[k] }; });
+    return m;
+  }
+  const m = {};
+  (data || []).forEach((r) => {
+    m[r.article_id] = {
+      opens: Number(r.open_count) || 0,
+      ratingAvg: r.rating_avg === null || r.rating_avg === undefined ? null : Number(r.rating_avg),
+      ratingCount: Number(r.rating_count) || 0,
+      comments: Number(r.comment_count) || 0,
+    };
+  });
+  return m;
+}
+// Stats d'un article : null si les statistiques sont indisponibles.
+const magStatsOf = (stats, id) => (stats ? (stats[id] || MAG_NO_STATS) : null);
+// Ce qu'une vignette affiche d'un article : ouvertures, note, commentaires.
+function magCardStats(stats, id) {
+  const s = magStatsOf(stats, id);
+  if (!s) return { opens: undefined, rating: null, comments: 0 };
+  return { opens: s.opens, rating: s.ratingCount > 0 && s.ratingAvg !== null ? { avg: s.ratingAvg, count: s.ratingCount } : null, comments: s.comments };
+}
+const magFmtRating = (v) => (Math.round((Number(v) || 0) * 10) / 10).toFixed(1).replace(".", ",");
+
+/* Les trois classements. « Les mieux notés » : moyenne, puis nombre de notes
+   (à moyenne égale, l'avis de dix membres pèse plus que celui d'un seul),
+   puis date. « Les plus vus » : ouvertures, puis date. */
+const MAG_SORTS = [
+  { key: "recent", label: "Les derniers", short: "Derniers", icon: Clock },
+  { key: "top", label: "Les mieux notés", short: "Mieux notés", icon: Star },
+  { key: "views", label: "Les plus vus", short: "Plus vus", icon: Eye },
+];
+function magSortArticles(list, sort, stats) {
+  const ts = (a) => new Date(a.publishedAt || a.updatedAt || 0).getTime() || 0;
+  const st = (a) => magStatsOf(stats, a.id) || MAG_NO_STATS;
+  const arr = [...(list || [])];
+  if (sort === "top") {
+    arr.sort((x, y) => {
+      const a = st(x); const b = st(y);
+      const av = a.ratingCount > 0 ? a.ratingAvg : -1;
+      const bv = b.ratingCount > 0 ? b.ratingAvg : -1;
+      return (bv - av) || (b.ratingCount - a.ratingCount) || (ts(y) - ts(x));
+    });
+  } else if (sort === "views") {
+    arr.sort((x, y) => (st(y).opens - st(x).opens) || (ts(y) - ts(x)));
+  } else {
+    arr.sort((x, y) => ts(y) - ts(x));
+  }
+  return arr;
+}
+
+// La note moyenne, en pastille dans le coin bas-gauche d'une miniature.
+function MagRatingPill({ avg, count }) {
+  const label = `Note moyenne ${magFmtRating(avg)} sur 5 (${count} note${count > 1 ? "s" : ""})`;
+  return (
+    <span title={label} aria-label={label} style={{
+      position: "absolute", left: 10, bottom: 10, display: "inline-flex", alignItems: "center", gap: 5,
+      padding: "4px 10px 4px 8px", borderRadius: 999, background: "rgba(12,31,48,.72)", color: "#fff",
+      fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, lineHeight: 1.2,
+      backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,.18)", pointerEvents: "none",
+    }}>
+      <Star size={13} fill={C.amber} color={C.amber} /> {magFmtRating(avg)}
+    </span>
+  );
+}
+
+// Sélecteur « Les derniers · Les mieux notés · Les plus vus ».
+function MagSortSwitch({ value, onChange }) {
+  return (
+    <div role="tablist" style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, padding: 4, borderRadius: 14, background: "rgba(26,58,92,.06)" }}>
+      {MAG_SORTS.map((s) => {
+        const on = value === s.key;
+        const Icon = s.icon;
+        return (
+          <button key={s.key} type="button" role="tab" aria-selected={on} onClick={() => onChange(s.key)} style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 10, border: "none", cursor: "pointer",
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+            background: on ? "#fff" : "transparent", color: on ? C.navy : "#8a7c6a",
+            boxShadow: on ? "0 2px 8px rgba(18,41,63,.1)" : "none",
+          }}>
+            <Icon size={14} color={on ? C.teal : "#a89a86"} fill={s.key === "top" && on ? C.amber : "none"} /> {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Une rubrique sur la page du Mag : son nom, le sélecteur de classement, les
+   trois premiers articles, et l'accès à toute la rubrique. */
+function MagCategorySection({ kind, list, stats, renderCard, onSeeAll }) {
+  const [sort, setSort] = useState("recent");
+  const k = magKind(kind);
+  const Icon = k.icon;
+  const canRank = !!stats;
+  const eff = canRank ? sort : "recent";
+  const pool = eff === "top" ? list.filter((a) => (magStatsOf(stats, a.id) || MAG_NO_STATS).ratingCount > 0)
+    : eff === "views" ? list.filter((a) => (magStatsOf(stats, a.id) || MAG_NO_STATS).opens > 0)
+    : list;
+  const ranked = magSortArticles(pool, eff, stats).slice(0, 3);
+  return (
+    <section style={{ marginBottom: 46 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <span style={{ width: 42, height: 42, borderRadius: 13, background: k.color, display: "grid", placeItems: "center", flexShrink: 0 }}>
+          <Icon size={21} color="#fff" />
+        </span>
+        <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+          <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 23, margin: 0, lineHeight: 1.15 }}>{k.label}</h2>
+          <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2 }}>{list.length} article{list.length > 1 ? "s" : ""}</div>
+        </div>
+        {canRank && <MagSortSwitch value={sort} onChange={setSort} />}
+      </div>
+      {ranked.length === 0 ? (
+        <p style={{ margin: 0, padding: "18px 20px", borderRadius: 16, background: "rgba(26,58,92,.04)", color: "#8a7c6a", fontSize: 14.5, lineHeight: 1.55 }}>
+          {eff === "top" ? "Aucun article de cette rubrique n'a encore été noté. Lisez-en un et donnez votre note !" : "Aucun article de cette rubrique n'a encore été ouvert."}
+        </p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
+          {ranked.map((a) => renderCard(a))}
+        </div>
+      )}
+      {list.length > 3 && (
+        <div style={{ marginTop: 16, textAlign: "right" }}>
+          <Btn variant="soft" size="sm" onClick={onSeeAll}>Voir les {list.length} articles « {k.short} » <ArrowRight size={15} /></Btn>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* Sous l'article : la note moyenne, et la note du lecteur. */
+function MagRatingBox({ stats, myStars, canRate, busy, onRate, onAuth }) {
+  const count = stats ? stats.ratingCount : 0;
+  const avg = stats && stats.ratingAvg !== null ? stats.ratingAvg : 0;
+  return (
+    <section style={{ marginTop: 44, padding: "22px 24px", borderRadius: 22, background: C.paper, border: "1px solid #ece2d0", boxShadow: "0 6px 22px rgba(18,41,63,.06)", display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 40, color: count ? C.navy : "#cdb9a0", lineHeight: 1 }}>{count ? magFmtRating(avg) : "–"}</div>
+        <div>
+          <Stars value={count ? Math.round(avg * 2) / 2 : 0} readOnly size={20} />
+          <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 4 }}>
+            {count ? `${count} note${count > 1 ? "s" : ""} de membre${count > 1 ? "s" : ""}` : "Pas encore noté"}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 15 }}>
+          {myStars > 0 ? "Votre note" : "Qu'en avez-vous pensé ?"}
+        </div>
+        {canRate ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, opacity: busy ? .6 : 1, pointerEvents: busy ? "none" : "auto" }}>
+            <Stars value={myStars} size={26} onRate={(v) => onRate(v)} onClear={() => onRate(null)} />
+          </span>
+        ) : (
+          <Btn variant="soft" size="sm" onClick={() => onAuth("login")}><LogIn size={14} /> Se connecter pour noter</Btn>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* La zone de commentaires, sous l'article. */
+function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAuth, onChanged, setToast }) {
+  const { askConfirm } = useApp();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  const post = async () => {
+    const content = text.trim();
+    if (!content || !me) return;
+    setBusy(true);
+    const { error } = await supabase.from("mag_comments").insert({ article_id: article.id, author_id: me, content });
+    setBusy(false);
+    if (error) { setToast("Commentaire non publié : " + (error.message || "erreur")); return; }
+    setText("");
+    await onChanged();
+    setToast("Commentaire publié.");
+  };
+  const saveEdit = async (c) => {
+    const content = editText.trim();
+    if (!content) return;
+    setBusy(true);
+    const { data, error } = await supabase.from("mag_comments").update({ content }).eq("id", c.id).select("id");
+    setBusy(false);
+    if (error || !data || !data.length) { setToast("Modification impossible : " + ((error && error.message) || "droits insuffisants")); return; }
+    setEditId(null); setEditText("");
+    await onChanged();
+  };
+  const remove = async (c) => {
+    const mine = c.authorId === me;
+    const ok = await askConfirm({
+      title: "Supprimer ce commentaire ?",
+      message: mine ? "Votre commentaire sera supprimé définitivement." : "Ce commentaire sera supprimé définitivement (action d'administrateur).",
+      confirmLabel: "Supprimer",
+    });
+    if (!ok) return;
+    const { error } = await supabase.from("mag_comments").delete().eq("id", c.id);
+    if (error) { setToast("Suppression impossible : " + error.message); return; }
+    await onChanged();
+    setToast("Commentaire supprimé.");
+  };
+
+  return (
+    <section id="mag-commentaires" style={{ marginTop: 36, scrollMarginTop: 90 }}>
+      <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: "0 0 16px", display: "flex", alignItems: "center", gap: 9 }}>
+        <MessageCircle size={20} color={C.teal} /> Commentaires{comments.length ? ` (${comments.length})` : ""}
+      </h2>
+      {comments.length === 0 && (
+        <p style={{ fontSize: 14.5, color: "#8a7c6a", lineHeight: 1.6, margin: "0 0 16px" }}>Aucun commentaire pour l'instant. Une question, un avis, un merci ? Lancez la conversation.</p>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12, marginBottom: 18 }}>
+        {comments.map((c) => {
+          const u = c.authorId ? userById[c.authorId] : null;
+          const mine = !!me && c.authorId === me;
+          const isWriter = !!c.authorId && writerIds.includes(c.authorId);
+          return (
+            <div key={c.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", background: mine ? "rgba(30,138,138,.06)" : "rgba(26,58,92,.04)", borderRadius: 16, padding: "12px 14px" }}>
+              <MagAvatar user={u} size={34} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>{u ? u.name : "Ancien membre"}{mine ? " (vous)" : ""}</span>
+                  {isWriter && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 999, background: C.teal, color: "#fff" }}>Auteur</span>}
+                  <span style={{ fontSize: 12.5, color: "#a89a86" }}>{timeAgoFr(c.createdAt)}{c.updatedAt ? " · modifié" : ""}</span>
+                  {(mine || isAdmin) && editId !== c.id && (
+                    <span style={{ marginLeft: "auto", display: "inline-flex", gap: 10 }}>
+                      {mine && <button type="button" title="Modifier" aria-label="Modifier" onClick={() => { setEditId(c.id); setEditText(c.content); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 0 }}><Edit3 size={15} /></button>}
+                      <button type="button" title="Supprimer" aria-label="Supprimer" onClick={() => remove(c)} style={{ background: "none", border: "none", cursor: "pointer", color: C.red, padding: 0 }}><Trash2 size={15} /></button>
+                    </span>
+                  )}
+                </div>
+                {editId === c.id ? (
+                  <div>
+                    <textarea value={editText} maxLength={MAG_COMMENT_MAX} onChange={(e) => setEditText(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn size="sm" variant="teal" onClick={() => saveEdit(c)} disabled={busy || !editText.trim()}><Check size={14} /> Enregistrer</Btn>
+                      <Btn size="sm" variant="soft" onClick={() => setEditId(null)}>Annuler</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 15, color: "#4d443a", lineHeight: 1.6, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{c.content}</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {me ? (
+        <div>
+          <textarea value={text} maxLength={MAG_COMMENT_MAX} onChange={(e) => setText(e.target.value)} rows={3}
+            placeholder="Votre commentaire…" style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn variant="teal" onClick={post} disabled={busy || !text.trim()}>
+              {busy ? <Loader2 size={16} className="aladj-spin" /> : <Send size={16} />} Publier le commentaire
+            </Btn>
+            <span style={{ fontSize: 12.5, color: "#a89a86", lineHeight: 1.45, flex: "1 1 220px" }}>
+              L'auteur de l'article et les membres qui ont déjà commenté seront prévenus.
+            </span>
+          </div>
+        </div>
+      ) : (
+        <Btn variant="soft" onClick={() => onAuth("login")}><LogIn size={15} /> Se connecter pour commenter</Btn>
+      )}
+    </section>
+  );
+}
+
+function mapMagComment(r) {
+  return {
+    id: r.id, articleId: r.article_id, authorId: r.author_id || null, content: r.content || "",
+    createdAt: r.created_at || null, updatedAt: r.updated_at || null,
+  };
+}
+
+/* =============================================================================
    (lot AI) LE MAG — LA PAGE
    ============================================================================= */
 function MagPage({ onAuth, setToast }) {
@@ -10592,12 +11018,13 @@ function MagPage({ onAuth, setToast }) {
   const [rows, setRows] = useState(null);            // null = chargement
   const [counts, setCounts] = useState({});
   const [coByArticle, setCoByArticle] = useState({});
-  const [opens, setOpens] = useState(null);           // (lot AJ) null = compteur indisponible
+  const [stats, setStats] = useState(null);           // (lot AJ/AK) null = statistiques indisponibles
   const [missing, setMissing] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [view, setView] = useState({ mode: "list" }); // list · read (key) · edit (id | null)
   const [kind, setKind] = useState("all");
   const [q, setQ] = useState("");
+  const [catSort, setCatSort] = useState("recent");   // (lot AK) classement dans une rubrique
 
   const userById = useMemo(() => {
     const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
@@ -10605,22 +11032,27 @@ function MagPage({ onAuth, setToast }) {
 
   const reload = useCallback(async () => {
     const r = await magFetchList();
-    setRows(r.rows); setCounts(r.counts); setCoByArticle(r.co); setOpens(r.opens || null);
+    setRows(r.rows); setCounts(r.counts); setCoByArticle(r.co); setStats(r.stats || null);
     setMissing(!!r.missing); setLoadErr(r.error && !r.missing ? r.error : "");
   }, []);
   useEffect(() => { reload(); }, [reload, currentUser?.id]);
 
   // Arrivée par un lien partagé (?article=…), une notification ou la page d'accueil.
   useEffect(() => {
-    let key = MAG_PENDING.key; MAG_PENDING.key = null;
+    let key = MAG_PENDING.key; let focus = MAG_PENDING.focus;
+    MAG_PENDING.key = null; MAG_PENDING.focus = null;
     if (!key) {
-      try { key = new URLSearchParams(window.location.search).get("article"); } catch (e) { key = null; }
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        key = sp.get("article"); focus = sp.get("focus");
+      } catch (e) { key = null; focus = null; }
     }
-    if (key) setView({ mode: "read", key });
+    if (key) setView({ mode: "read", key, focus: focus || null, nonce: Date.now() });
     const onGoto = () => {
       if (!MAG_PENDING.key) return;
-      const k = MAG_PENDING.key; MAG_PENDING.key = null;
-      setView({ mode: "read", key: k });
+      const k = MAG_PENDING.key; const f = MAG_PENDING.focus;
+      MAG_PENDING.key = null; MAG_PENDING.focus = null;
+      setView({ mode: "read", key: k, focus: f || null, nonce: Date.now() });
     };
     window.addEventListener("aladj:goto", onGoto);
     return () => { window.removeEventListener("aladj:goto", onGoto); magSetUrl(null, false); };
@@ -10649,17 +11081,29 @@ function MagPage({ onAuth, setToast }) {
   }
   if (view.mode === "read") {
     return (
-      <MagReader articleKey={view.key} onAuth={onAuth} setToast={setToast}
+      <MagReader articleKey={view.key} focus={view.focus || null} focusNonce={view.nonce || null} onAuth={onAuth} setToast={setToast}
         onBack={() => { reload(); setView({ mode: "list" }); }}
         onEdit={(id) => setView({ mode: "edit", id })} />
     );
   }
 
   const coNamesOf = (a) => (coByArticle[a.id] || []).map((id) => userById[id]).filter(Boolean).map((u) => u.name);
-  const opensOf = (a) => (opens ? (opens[a.id] || 0) : undefined);
-  const filtering = kind !== "all" || q.trim() !== "";
-  const feature = !filtering && shown.length > 0 ? shown[0] : null;
-  const rest = feature ? shown.slice(1) : shown;
+  // (lot AK) Trois façons de lire la page : une recherche (résultats à plat),
+  // « Tout » (l'article à la une puis une section par rubrique, chacune avec ses
+  // derniers / mieux notés / plus vus), ou une rubrique choisie (tous ses
+  // articles, dans le classement de son choix).
+  const cardStats = (a) => magCardStats(stats, a.id);
+  const searching = q.trim() !== "";
+  const feature = !searching && kind === "all" && shown.length > 0 ? shown[0] : null;
+  const renderCard = (a) => {
+    const st = cardStats(a);
+    return (
+      <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={counts[a.id] || 0}
+        opens={st.opens} rating={st.rating} comments={st.comments}
+        onOpen={() => setView({ mode: "read", key: a.slug })} />
+    );
+  };
+  const seeKind = (k) => { setKind(k); try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) { /* sans gravité */ } };
   const usedKinds = MAG_KINDS.filter((k) => published.some((a) => a.kind === k.key));
 
   return (
@@ -10747,7 +11191,8 @@ function MagPage({ onAuth, setToast }) {
             }}>
               <div style={{ minHeight: 240, position: "relative" }}>
                 <div style={{ position: "absolute", inset: 0 }}><MagCover a={feature} height="100%" /></div>
-                {typeof opensOf(feature) === "number" && <MagOpensPill n={opensOf(feature)} />}
+                {typeof cardStats(feature).opens === "number" && <MagOpensPill n={cardStats(feature).opens} />}
+                {cardStats(feature).rating && <MagRatingPill avg={cardStats(feature).rating.avg} count={cardStats(feature).rating.count} />}
               </div>
               <div style={{ padding: "clamp(20px,3vw,34px)", display: "flex", flexDirection: "column", gap: 12, justifyContent: "center" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -10756,22 +11201,45 @@ function MagPage({ onAuth, setToast }) {
                 </div>
                 <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(24px,3.2vw,34px)", lineHeight: 1.12, letterSpacing: "-0.02em", margin: 0, overflowWrap: "anywhere" }}>{feature.title}</h2>
                 {feature.chapo && <p style={{ margin: 0, fontSize: 15.5, color: "#5e5346", lineHeight: 1.6, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 4, overflow: "hidden" }}>{feature.chapo}</p>}
-                <MagMeta a={feature} author={userById[feature.authorId]} coNames={coNamesOf(feature)} count={counts[feature.id] || 0} />
+                <MagMeta a={feature} author={userById[feature.authorId]} coNames={coNamesOf(feature)} count={counts[feature.id] || 0} comments={cardStats(feature).comments} />
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 14.5, marginTop: 2 }}>Lire l'article <ArrowRight size={16} /></span>
               </div>
             </button>
           )}
 
-          {shown.length === 0
-            ? <EmptyHint icon={Search} text="Aucun article ne correspond à cette recherche." />
-            : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
-                {rest.map((a) => (
-                  <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={coNamesOf(a)} count={counts[a.id] || 0} opens={opensOf(a)}
-                    onOpen={() => setView({ mode: "read", key: a.slug })} />
-                ))}
+          {searching ? (
+            shown.length === 0
+              ? <EmptyHint icon={Search} text="Aucun article ne correspond à cette recherche." />
+              : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
+                  {shown.map(renderCard)}
+                </div>
+              )
+          ) : kind === "all" ? (
+            <div style={{ marginTop: 16 }}>
+              {usedKinds.map((k) => (
+                <MagCategorySection key={k.key} kind={k.key} list={published.filter((a) => a.kind === k.key)} stats={stats}
+                  renderCard={renderCard} onSeeAll={() => seeKind(k.key)} />
+              ))}
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
+                <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                  <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: 0 }}>{magKind(kind).label}</h2>
+                  <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2 }}>{shown.length} article{shown.length > 1 ? "s" : ""}</div>
+                </div>
+                {stats && <MagSortSwitch value={catSort} onChange={setCatSort} />}
               </div>
-            )}
+              {shown.length === 0
+                ? <EmptyHint icon={Newspaper} text="Aucun article dans cette rubrique pour l'instant." />
+                : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
+                    {magSortArticles(shown, stats ? catSort : "recent", stats).map(renderCard)}
+                  </div>
+                )}
+            </>
+          )}
         </>
       )}
     </div>
@@ -10784,7 +11252,7 @@ function MagPage({ onAuth, setToast }) {
 function MagHomeStrip() {
   const { users } = useApp();
   const [rows, setRows] = useState([]);
-  const [opens, setOpens] = useState(null);   // (lot AJ)
+  const [stats, setStats] = useState(null);   // (lot AJ/AK)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -10793,8 +11261,8 @@ function MagHomeStrip() {
       if (cancelled || error) return;
       const list = (data || []).map(mapMagArticle);
       setRows(list);
-      const o = await magFetchOpens(list.map((a) => a.id));
-      if (!cancelled) setOpens(o);
+      const o = await magFetchStats(list.map((a) => a.id));
+      if (!cancelled) setStats(o);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -10810,7 +11278,7 @@ function MagHomeStrip() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginTop: 32 }}>
         {rows.map((a) => (
-          <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={[]} count={0} opens={opens ? (opens[a.id] || 0) : undefined} onOpen={() => magGoto(a.slug)} />
+          <MagCard key={a.id} a={a} author={userById[a.authorId]} coNames={[]} count={0} {...magCardStats(stats, a.id)} onOpen={() => magGoto(a.slug)} />
         ))}
       </div>
     </section>
@@ -22583,7 +23051,7 @@ function MyLudoPage({ setToast, setPage }) {
       {notifications.length > 0 && (() => {
         const unreadCount = personalReady ? notifications.filter((n) => !n.read).length : 0;
         const shown = notifications.slice(0, 12); // on affiche les 12 plus récentes
-        const iconFor = (t) => (t || "").startsWith("loan") ? ArrowRightLeft : t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : (t || "").startsWith("mag_") ? Newspaper : Info;
+        const iconFor = (t) => (t || "").startsWith("loan") ? ArrowRightLeft : t === "game_comment" ? PenLine : (t === "poll_open" || t === "poll_closed") ? Crown : (t === "idea_new" || t === "idea_comment") ? Sparkles : t === "poll_comment" ? MessageCircle : (t === "event_comment" || t === "event_invite" || t === "event_join") ? Calendar : t === "discovery" ? Heart : t === "play_recorded" ? Gamepad2 : (t === "household_invite" || t === "household_accepted" || t === "household_declined") ? Users : (t === "quorum_reached" || t === "quorum_lost") ? Users : t === "mag_comment" ? MessageCircle : (t || "").startsWith("mag_") ? Newspaper : Info;
         return (
           <div style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -22631,7 +23099,7 @@ function MyLudoPage({ setToast, setPage }) {
                     else if (n.linkKind === "event") setPage("soirees");
                     else if (n.linkKind === "loan") setPage("locations");
                     else if (n.linkKind === "webgame") setPage("web-jeux");
-                    else if (n.linkKind === "mag") magGoto(n.linkId);   // (lot AI) ouvre l'article concerne
+                    else if (n.linkKind === "mag") magGoto(n.linkId, n.type === "mag_comment" ? "comments" : null);   // (lot AI/AK) ouvre l'article concerne (sur ses commentaires)
                   }} style={{
                     display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 11, textAlign: "left", cursor: "pointer",
                     background: n.read ? "#fff" : "rgba(30,138,138,.1)", border: n.read ? "1px solid #ece2d0" : `1px solid ${C.teal}`,
