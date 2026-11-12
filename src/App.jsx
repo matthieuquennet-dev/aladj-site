@@ -5542,6 +5542,37 @@ const NAV_ME = [
   { key: "decideur", label: "Espace décisionnaire", desc: "Votes en ligne, idées et informations", tint: "#6B3A7A", decider: true },
   { key: "guide", desc: "Le mode d'emploi du site, rubrique par rubrique", tint: "#1A3A5C", open: true },
 ];
+/* (lot AL) Apparence du site : clair ou sombre, memorise sur l'appareil.
+   L'attribut pose sur <html> declenche la feuille de style sombre. */
+function readSiteTheme() {
+  try { return window.localStorage.getItem("aladj.site.theme") === "dark" ? "dark" : "light"; } catch (e) { return "light"; }
+}
+function applySiteTheme(t) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-site-theme", t);
+  document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", t === "dark" ? "#0E1C29" : "#1A3A5C");
+}
+function useSiteTheme() {
+  const [theme, setTheme] = useState(readSiteTheme);
+  useEffect(() => {
+    const on = () => setTheme(readSiteTheme());
+    window.addEventListener("aladj:theme", on);
+    return () => window.removeEventListener("aladj:theme", on);
+  }, []);
+  const set = (t) => {
+    try { window.localStorage.setItem("aladj.site.theme", t); } catch (e) { /* stockage indisponible */ }
+    applySiteTheme(t);
+    setTheme(t);
+    try { window.dispatchEvent(new CustomEvent("aladj:theme")); } catch (e) { /* sans gravite */ }
+  };
+  return [theme, set];
+}
+const ThemeIcon = ({ dark, size = 18 }) => (dark
+  ? <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5" /><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" /></svg>
+  : <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" /></svg>);
+
 const NAV_STRIPE = "linear-gradient(90deg, #1A3A5C 0%, #1A3A5C 20%, #1E8A8A 20%, #1E8A8A 40%, #E8A317 40%, #E8A317 60%, #B5283A 60%, #B5283A 80%, #6B3A7A 80%, #6B3A7A 100%)";
 const navOf = (k) => NAV.find((n) => n.key === k) || { key: k, label: k, icon: HelpCircle };
 
@@ -5592,6 +5623,19 @@ function Navbar({ page, setPage, onAuth }) {
   const [menu, setMenu] = useState(null);             // "jeux" | "moi" | null (ordinateur)
   const [editProfile, setEditProfile] = useState(false);
   const barRef = useRef(null);
+  const [siteTheme, setSiteTheme] = useSiteTheme();
+  const themeSwitch = (
+    <div role="radiogroup" aria-label="Apparence du site" style={{ display: "flex", gap: 4, padding: 4, borderRadius: 14, background: "#F3EDE0" }}>
+      {[["light", "Clair"], ["dark", "Sombre"]].map(([k, l]) => (
+        <button key={k} type="button" role="radio" aria-checked={siteTheme === k} onClick={() => setSiteTheme(k)}
+          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 38, borderRadius: 11, border: "none", cursor: "pointer",
+            background: siteTheme === k ? "linear-gradient(160deg, #24507A, #12293F)" : "transparent", color: siteTheme === k ? "#fff" : C.navy,
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14 }}>
+          <ThemeIcon dark={k === "light"} size={15} /> {l}
+        </button>
+      ))}
+    </div>
+  );
 
   // Un panneau ouvert se ferme au clic a cote, avec Echap, et a chaque changement de page.
   useEffect(() => {
@@ -5724,7 +5768,11 @@ function Navbar({ page, setPage, onAuth }) {
                   {meItems.map((it) => (
                     <NavMenuRow key={it.key} item={it} active={page === it.key} badge={badgeOf(it.key)} onClick={() => go(it.key)} />
                   ))}
-                  <div style={{ display: "flex", gap: 8, padding: "10px 4px 4px", borderTop: "1.5px solid #F0E8DA", marginTop: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 6px 4px", borderTop: "1.5px solid #F0E8DA", marginTop: 6 }}>
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: C.navy, flexShrink: 0 }}>Apparence</span>
+                    <div style={{ flex: 1 }}>{themeSwitch}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, padding: "10px 4px 4px" }}>
                     <Btn variant="soft" size="sm" onClick={() => { setEditProfile(true); setMenu(null); }} style={{ flex: 1 }}><Users size={15} /> Mon profil</Btn>
                     <Btn variant="ghost" size="sm" onClick={() => { setMenu(null); logout(); }} style={{ flex: 1 }}><LogOut size={15} /> Se déconnecter</Btn>
                   </div>
@@ -5732,6 +5780,11 @@ function Navbar({ page, setPage, onAuth }) {
             </div>
           ) : (
             <>
+              <button type="button" onClick={() => setSiteTheme(siteTheme === "dark" ? "light" : "dark")}
+                aria-label={siteTheme === "dark" ? "Passer en mode clair" : "Passer en mode sombre"} title={siteTheme === "dark" ? "Mode clair" : "Mode sombre"}
+                style={{ width: 44, height: 44, borderRadius: 13, border: "none", cursor: "pointer", display: "grid", placeItems: "center", background: "#F3EDE0", color: C.navy, padding: 0 }}>
+                <ThemeIcon dark={siteTheme === "dark"} />
+              </button>
               <button type="button" onClick={() => go("guide")} title="Le mode d'emploi du site"
                 style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 10px", border: "none", background: "transparent", cursor: "pointer",
                   color: page === "guide" ? C.teal : C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
@@ -5784,6 +5837,8 @@ function Navbar({ page, setPage, onAuth }) {
             {NAV_JEUX.map((it) => mRow(it.key))}
             {head(currentUser ? currentUser.name : "Aide")}
             {meItems.map((it) => mRow(it.key, it.label))}
+            {head("Apparence")}
+            {themeSwitch}
             <div style={{ height: 1, background: "#ece2d0", margin: "6px 0" }} />
             {currentUser ? (
               <>
@@ -6652,6 +6707,14 @@ function GuidePage() {
           </>,
         },
         {
+          q: "Le mode sombre",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Le site existe en <b>clair</b> (par défaut) et en <b>sombre</b>, plus reposant le soir. Pour changer : le menu à votre nom, ligne <b>« Apparence »</b> ; sans être connecté, le bouton lune / soleil en haut à droite ; sur un téléphone, la rubrique « Apparence » du menu ☰.</p>
+            <p style={{ margin: "0 0 8px" }}>Le choix est retenu <b>sur l'appareil</b> : on peut lire le site en sombre sur son téléphone et en clair sur l'ordinateur.</p>
+            <p style={{ margin: 0 }}>Le <b>chrono</b> a son propre réglage (le bouton lune / soleil de l'écran de partie). Si un recoin du site reste trop clair en mode sombre, signalez-le : c'est un mode tout neuf.</p>
+          </>,
+        },
+        {
           q: "Créer un compte et se connecter",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Depuis l'accueil, cliquez sur <b>Adhérer</b> pour créer un compte (e-mail + mot de passe, ou directement avec Google).</p>
@@ -7057,6 +7120,20 @@ function GuidePage() {
       icon: "📅", title: "Les moments jeux",
       items: [
         {
+          q: "La page des moments jeux : une carte par moment",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Les moments à venir s'affichent en <b>grandes cartes</b>, du plus proche au plus lointain. Chacune montre d'un coup d'œil :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>le <b>ticket de date</b>, à la couleur du moment (turquoise confirmé, rouge en attente, violet ou ambre en ligne, noir annulé) ;</li>
+              <li>le titre, l'heure, le lieu et qui l'a proposé ;</li>
+              <li>les <b>photos des inscrits</b> et une jauge des places (ou du nombre qu'il manque pour confirmer) ;</li>
+              <li>les <b>jeux proposés</b> les mieux notés, avec leur score de vote.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}><b>« Je viens »</b> vous inscrit d'un seul appui. Une fois inscrit, le bouton devient <b>« Je suis inscrit »</b> : il ouvre la fiche du moment, où l'on peut se désinscrire, proposer et voter pour des jeux, ou laisser un message. « Voir le détail » ouvre la même fiche.</p>
+            <p style={{ margin: 0 }}>À droite (en dessous sur un téléphone) : le <b>calendrier du mois</b> en petit, la légende, le lien pour <b>s'abonner au calendrier</b>, le groupe Signal « Organisation jeux » et le <b>dernier moment passé</b>.</p>
+          </>,
+        },
+        {
           q: "Donner un titre à un moment jeux (soirée à thème)",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Un moment jeux ordinaire se reconnaît à sa date : il n'a pas besoin de nom. Mais certaines soirées ont un <b>thème</b> — une <i>soirée Magic</i>, une soirée réservée aux <i>jeux à deux</i> — et la date ne dit alors plus de quoi il s'agit.</p>
@@ -7135,7 +7212,7 @@ function GuidePage() {
                 <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" /><Legend color="#9A8F7E" label="Privé — vue administrateur" /><Legend color={C.navy} label="Aujourd'hui" outline />
               </span>
             </Illu>
-            <p style={{ margin: "6px 0 0" }}>Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un.</p>
+            <p style={{ margin: "6px 0 0" }}>Le calendrier du mois est posé à droite de la liste (en dessous sur un téléphone) : chaque moment y est un <b>point de couleur</b> sous la date. Un clic sur un jour avec un moment ouvre sa fiche ; un clic sur un jour libre propose d'en créer un.</p>
             <p style={{ margin: "6px 0 0" }}>Un 🎂 signale l'anniversaire d'un membre. <b>Cliquez sur ce jour</b> pour savoir de qui il s'agit : la fenêtre donne le nom, la photo et l'âge fêté, et un clic sur la personne ouvre sa fiche. Pratique pour souhaiter un anniversaire qui ne tombe pas un jour de moment jeux — et si l'envie vous prend, un bouton propose d'organiser quelque chose ce jour-là. Quand un moment existe déjà à cette date, sa fiche le rappelle fièrement.</p>
             <p style={{ margin: "6px 0 0" }}>L'anniversaire apparaît aussi sur la <b>fiche de chaque membre</b>, sous son nom, avec son âge si l'année est renseignée. Il passe en ambre quand il approche (moins de 30 jours).</p>
           </>,
@@ -7180,7 +7257,7 @@ function GuidePage() {
         },
         {
           q: "Recevoir les moments dans mon agenda personnel",
-          a: <p style={{ margin: 0 }}>Sous la légende du calendrier, <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les moments jeux apparaissent ensuite tout seuls dans votre agenda (ceux en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
+          a: <p style={{ margin: 0 }}>Sous le calendrier du mois (ou avec le bouton <b>« Dans mon agenda »</b> du bandeau), <b style={{ color: C.teal }}>« S'abonner au calendrier »</b> donne un lien à ajouter dans Google Agenda ou le Calendrier iPhone. Les moments jeux apparaissent ensuite tout seuls dans votre agenda (ceux en attente de quorum y figurent comme « provisoires »), et se mettent à jour automatiquement.</p>,
         },
       ],
     },
@@ -7643,6 +7720,14 @@ function GuidePage() {
     {
       icon: "📰", title: "Le Mag",
       items: [
+        {
+          q: "La page d'un article : le jeu, ses durées réelles, ceux qui ont participé",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Un article s'ouvre sur sa <b>couverture</b> en grand (un motif aux couleurs de sa rubrique quand l'auteur n'a pas mis de photo).</p>
+            <p style={{ margin: "0 0 8px" }}>Sur un ordinateur ou une tablette, une colonne à droite accompagne la lecture : <b>le jeu dont parle l'article</b> (sa fiche s'ouvre d'un clic), ses <b>durées réelles au club</b> — mise en place, partie, rangement, mesurées au chrono dès qu'il a été chronométré quelques fois — et la liste de <b>ceux qui ont participé</b> : l'auteur, ses co-auteurs et les signataires des encarts.</p>
+            <p style={{ margin: 0 }}>Sur un téléphone, le jeu et ses durées passent juste avant le texte.</p>
+          </>,
+        },
         {
           q: "Le Mag, c'est quoi ?",
           a: <>
@@ -9557,7 +9642,7 @@ function MagKindBadge({ kind, solid }) {
   const k = magKind(kind);
   const Icon = k.icon;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 11px", borderRadius: 999, background: solid ? k.color : `${k.color}1a`, color: solid ? "#fff" : k.color, whiteSpace: "nowrap" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 11px", borderRadius: 999, background: solid ? `linear-gradient(180deg, ${k.color}cc, ${k.color})` : `${k.color}1a`, color: solid ? "#fff" : k.color, whiteSpace: "nowrap", boxShadow: solid ? "0 4px 10px rgba(18,41,63,.22)" : "none" }}>
       <Icon size={12} /> {k.short}
     </span>
   );
@@ -9572,9 +9657,23 @@ function MagCover({ a, height, radius = 0 }) {
   }
   return (
     <div style={{ position: "relative", overflow: "hidden", height, borderRadius: radius, background: `linear-gradient(135deg, ${k.color} 0%, ${C.navyDeep} 100%)`, display: "grid", placeItems: "center" }}>
-      <Dice color="#fff" n={5} style={{ position: "absolute", width: 110, right: -18, bottom: -22, opacity: .1, transform: "rotate(14deg)" }} />
-      <Dice color="#fff" n={2} style={{ position: "absolute", width: 70, left: -12, top: -14, opacity: .08, transform: "rotate(-12deg)" }} />
-      <Icon size={44} color="rgba(255,255,255,.85)" />
+      {/* (lot AL) Un motif de tuiles et de jetons, pour qu'une couverture sans
+          photo ait tout de meme de l'allure. Toujours le meme pour un article. */}
+      <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" style={{ position: "absolute", inset: 0 }}>
+        <g fill="#fff" opacity=".13">
+          {(() => {
+            const seed = String(a.id || a.title || "x").split("").reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 9973, 7);
+            return Array.from({ length: 7 }, (_, i) => {
+              const x = (seed * 37 + i * 61) % 400, y = ((seed * 23 + i * 47) % 220) - 10, sz = 28 + ((seed * 7 + i * 13) % 40), r = ((seed * 11 + i * 29) % 50) - 25;
+              return (i + seed) % 3 === 0
+                ? <circle key={i} cx={x} cy={y} r={sz / 2} />
+                : <rect key={i} x={x} y={y} width={sz} height={sz} rx={sz / 4} transform={`rotate(${r} ${x + sz / 2} ${y + sz / 2})`} />;
+            });
+          })()}
+        </g>
+      </svg>
+      <Dice color="#fff" n={5} style={{ position: "absolute", width: 110, right: -18, bottom: -22, opacity: .12, transform: "rotate(14deg)" }} />
+      <Icon size={44} color="rgba(255,255,255,.9)" style={{ position: "relative" }} />
     </div>
   );
 }
@@ -9634,8 +9733,8 @@ function MagCard({ a, author, coNames, count, onOpen, opens, rating, comments })
   return (
     <button type="button" onClick={onOpen} className="aladj-mag-card" style={{
       display: "flex", flexDirection: "column", textAlign: "left", padding: 0, cursor: "pointer", overflow: "hidden",
-      background: C.paper, borderRadius: 20, border: draft ? "2px dashed #d9cbb4" : "1px solid #ece2d0",
-      boxShadow: "0 4px 18px rgba(18,41,63,.06)", fontFamily: "inherit", width: "100%",
+      background: C.paper, borderRadius: 26, border: draft ? "2px dashed #d9cbb4" : "1px solid #ece2d0",
+      boxShadow: "0 14px 30px rgba(18,41,63,.09)", fontFamily: "inherit", width: "100%",
     }}>
       <div style={{ position: "relative", opacity: draft ? .75 : 1 }}>
         <MagCover a={a} height={168} />
@@ -9649,11 +9748,11 @@ function MagCard({ a, author, coNames, count, onOpen, opens, rating, comments })
         {!draft && rating && rating.count > 0 && <MagRatingPill avg={rating.avg} count={rating.count} />}
       </div>
       <div style={{ padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
-        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 19, lineHeight: 1.22, margin: 0, overflowWrap: "anywhere" }}>{a.title}</h3>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, lineHeight: 1.2, margin: 0, overflowWrap: "anywhere" }}>{a.title}</h3>
         {a.chapo && (
           <p style={{ margin: 0, fontSize: 14, color: "#6e6256", lineHeight: 1.55, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{a.chapo}</p>
         )}
-        <div style={{ marginTop: "auto", paddingTop: 6 }}><MagMeta a={a} author={author} coNames={coNames} count={count} comments={comments || 0} /></div>
+        <div style={{ marginTop: "auto", paddingTop: 12, borderTop: "2px dashed #efe6d6" }}><MagMeta a={a} author={author} coNames={coNames} count={count} comments={comments || 0} /></div>
       </div>
     </button>
   );
@@ -9690,11 +9789,13 @@ function MagBody({ blocks, games, onOpenGame, afterBlock }) {
     }
     if (b.type === "quote") {
       return (
-        <blockquote style={{ margin: "30px 0", padding: "6px 0 6px 22px", borderLeft: `5px solid ${C.amber}` }}>
-          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 500, fontSize: "clamp(19px,2.6vw,23px)", lineHeight: 1.45, color: C.navy, overflowWrap: "anywhere" }}>
+        <blockquote style={{ position: "relative", overflow: "hidden", margin: "30px 0", padding: "24px 28px", borderRadius: 26,
+          background: "linear-gradient(150deg, #1D4468, #0C1F30)", color: "#fff", boxShadow: "0 16px 34px rgba(18,41,63,.2)" }}>
+          <svg aria-hidden="true" width="64" height="64" viewBox="0 0 24 24" style={{ position: "absolute", right: 16, top: 8, opacity: .2 }}><path fill="#F6C24A" d="M4 18v-5a7 7 0 0 1 7-7v3a4 4 0 0 0-4 4h4v5zm10 0v-5a7 7 0 0 1 7-7v3a4 4 0 0 0-4 4h4v5z" /></svg>
+          <div style={{ position: "relative", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: "clamp(19px,2.6vw,25px)", lineHeight: 1.35, color: "#fff", overflowWrap: "anywhere" }}>
             « {magLines(b.text, "q")} »
           </div>
-          {b.by && <div style={{ marginTop: 8, fontSize: 14, color: "#8a7c6a", fontWeight: 700 }}>— {b.by}</div>}
+          {b.by && <div style={{ position: "relative", marginTop: 10, fontSize: 14, color: "#F6C24A", fontWeight: 800 }}>— {b.by}</div>}
         </blockquote>
       );
     }
@@ -9757,6 +9858,53 @@ function MagBody({ blocks, games, onOpenGame, afterBlock }) {
 // Une fiche de la ludothèque, citée dans un article. `authorId` fait apparaître
 // la note que l'auteur a donnée au jeu : elle vient de la ludothèque, on ne la
 // ressaisit pas — une seule note par membre et par jeu, partout sur le site.
+/* (lot AL) Les temps reellement mesures au chrono pour ce jeu : mise en place,
+   partie, rangement. Rien ne s'affiche tant que le jeu n'a pas ete chronometre
+   (ou si les vues de statistiques ne sont pas installees). */
+function MagGameTimes({ gameId }) {
+  const [t, setT] = useState(null);
+  useEffect(() => {
+    let go = true;
+    (async () => {
+      try {
+        const [ph, du] = await Promise.all([
+          supabase.from("v_game_phase_time").select("avg_setup_seconds,avg_teardown_seconds").eq("game_id", gameId).maybeSingle(),
+          supabase.from("v_game_avg_duration").select("avg_seconds,play_count").eq("game_id", gameId).maybeSingle(),
+        ]);
+        if (!go) return;
+        const play = Number(du && du.data && du.data.avg_seconds) || 0;
+        if (!play) { setT(null); return; }
+        setT({
+          setup: Number(ph && ph.data && ph.data.avg_setup_seconds) || 0,
+          play,
+          down: Number(ph && ph.data && ph.data.avg_teardown_seconds) || 0,
+          n: Number(du.data.play_count) || 0,
+        });
+      } catch (e) { if (go) setT(null); }
+    })();
+    return () => { go = false; };
+  }, [gameId]);
+  if (!t) return null;
+  const mins = (sec) => Math.max(1, Math.round(sec / 60));
+  const total = t.setup + t.play + t.down || 1;
+  const seg = (sec, col) => (sec > 0 ? <span style={{ width: `${Math.max(4, Math.round((sec / total) * 100))}%`, background: col }} /> : null);
+  return (
+    <div style={{ marginTop: 14, padding: "0 4px" }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#55493C", marginBottom: 7 }}>
+        Durées réelles au club <span style={{ fontWeight: 600, color: "#8C806F" }}>· chrono, {t.n} partie{t.n > 1 ? "s" : ""}</span>
+      </div>
+      <div style={{ display: "flex", height: 14, borderRadius: 7, overflow: "hidden", background: "#F3EDE0" }}>
+        {seg(t.setup, C.teal)}{seg(t.play, C.amber)}{seg(t.down, C.purple)}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 6, flexWrap: "wrap", marginTop: 6, fontSize: 12.5, color: "#55493C" }}>
+        {t.setup > 0 && <span><b style={{ color: "#12605F" }}>{mins(t.setup)}</b> min en place</span>}
+        <span><b style={{ color: "#7A5200" }}>{mins(t.play)}</b> min de jeu</span>
+        {t.down > 0 && <span><b style={{ color: C.purple }}>{mins(t.down)}</b> min rangement</span>}
+      </div>
+    </div>
+  );
+}
+
 function MagGameCard({ g, onOpen, authorId, authorName }) {
   const { avg, count } = gameStats(g);
   const mine = authorId && g.ratings ? g.ratings[authorId] : null;
@@ -10131,8 +10279,24 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
     );
   };
 
+  // (lot AL) Ceux qui ont fait l'article : l'auteur, ses co-auteurs, les
+  // signataires des encarts visibles.
+  const contributors = (() => {
+    const out = [];
+    const push = (id, role) => {
+      if (!id) return;
+      const hit = out.find((x) => x.id === id);
+      if (hit) { if (role === "encart") hit.n += 1; return; }
+      out.push({ id, role, n: role === "encart" ? 1 : 0 });
+    };
+    push(art && art.authorId, "auteur");
+    (coIds || []).forEach((id) => push(id, "co"));
+    (addons || []).filter((x) => !x.hidden).forEach((x) => push(x.authorId, "encart"));
+    return out;
+  })();
+
   return (
-    <article style={{ maxWidth: 780, margin: "0 auto", padding: "26px 24px 80px" }}>
+    <article style={{ maxWidth: 1160, margin: "0 auto", padding: "26px 24px 80px" }}>
       {/* Barre d'outils */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
         <Btn variant="soft" size="sm" onClick={onBack}><ArrowLeft size={15} /> Le Mag</Btn>
@@ -10156,8 +10320,8 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
       )}
 
       {/* En-tête */}
-      <header style={{ marginBottom: 30 }}>
-        <MagKindBadge kind={art.kind} />
+      <header style={{ marginBottom: 30, maxWidth: 880 }}>
+        <MagKindBadge kind={art.kind} solid />
         <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5.4vw,48px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{art.title}</h1>
         {art.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600, overflowWrap: "anywhere" }}>{art.chapo}</p>}
         <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} opens={published && typeof opens === "number" ? opens : undefined}
@@ -10165,16 +10329,41 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
           comments={published ? comments.length : 0} />
       </header>
 
-      {art.cover && (
-        <img src={art.cover} alt="" style={{ display: "block", width: "100%", maxHeight: 440, objectFit: "cover", borderRadius: 24, boxShadow: "0 18px 46px rgba(18,41,63,.16)", marginBottom: 32 }} />
-      )}
-
-      {linkedGame && (
-        <div style={{ marginBottom: 30 }}>
-          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 12.5, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Le jeu dont on parle</div>
-          <MagGameCard g={linkedGame} authorId={art.authorId} authorName={author ? author.name : ""} onOpen={() => setOpenGameId(linkedGame.id)} />
+      {art.cover ? (
+        <img src={art.cover} alt="" style={{ display: "block", width: "100%", maxHeight: 440, objectFit: "cover", borderRadius: 30, boxShadow: "0 22px 46px rgba(18,41,63,.18)", marginBottom: 34 }} />
+      ) : (
+        <div style={{ marginBottom: 34, borderRadius: 30, overflow: "hidden", boxShadow: "0 22px 46px rgba(18,41,63,.18)" }}>
+          <MagCover a={art} height={220} />
         </div>
       )}
+
+      {/* (lot AL) Deux colonnes sur grand ecran : l'article, et a droite le jeu,
+          ses durees reelles et ceux qui ont participe. Sur telephone, la
+          colonne passe avant le texte (le jeu dont on parle d'abord). */}
+      <div className="aladj-mag-read" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 300px", gap: 48, alignItems: "start" }}>
+        <aside className="aladj-mag-aside" style={{ gridColumn: 2, gridRow: 1, position: "sticky", top: 96, display: "flex", flexDirection: "column", gap: 16 }}>
+          {linkedGame && (
+            <section aria-label="Le jeu dont parle l'article" style={{ background: C.paper, borderRadius: 26, padding: 14, border: "1px solid #ece2d0", boxShadow: "0 14px 30px rgba(18,41,63,.09)" }}>
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 12.5, textTransform: "uppercase", letterSpacing: ".1em", margin: "2px 4px 10px" }}>Le jeu dont on parle</div>
+              <MagGameCard g={linkedGame} authorId={art.authorId} authorName={author ? author.name : ""} onOpen={() => setOpenGameId(linkedGame.id)} />
+              <MagGameTimes gameId={linkedGame.id} />
+            </section>
+          )}
+          {contributors.length > 1 && (
+            <section className="aladj-mag-who" aria-label="Ont participé à l'article" style={{ background: C.paper, borderRadius: 26, padding: "16px 18px", border: "1px solid #ece2d0", boxShadow: "0 10px 24px rgba(18,41,63,.07)" }}>
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, color: C.navy, marginBottom: 10 }}>Ont participé</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {contributors.map((c) => (
+                  <span key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14.5, color: "#5e5346" }}>
+                    <MagAvatar user={userById[c.id]} size={34} />
+                    <span><b style={{ color: C.navy }}>{(userById[c.id] || {}).name || "Ancien membre"}</b> · {c.role === "auteur" ? "a écrit l'article" : (c.role === "co" ? "co-auteur" : `${c.n} encart${c.n > 1 ? "s" : ""}`)}</span>
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+        </aside>
+        <div className="aladj-mag-main" style={{ gridColumn: 1, gridRow: 1, minWidth: 0 }}>
 
       {/* Invitation à contribuer — discrète tant qu'on lit, explicite quand on s'y met. */}
       {published && art.collabOpen && (
@@ -10241,6 +10430,8 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
 
       <div style={{ textAlign: "center", marginTop: 46 }}>
         <Btn variant="soft" onClick={onBack}><ArrowLeft size={16} /> Tous les articles</Btn>
+      </div>
+        </div>
       </div>
 
       {openGameId && <GameDetailModalById id={openGameId} onClose={() => setOpenGameId(null)} setToast={setToast} onAuth={onAuth} />}
@@ -13896,6 +14087,232 @@ function CalendarSubscribeModal({ onClose, setToast }) {
   );
 }
 
+/* =============================================================================
+   (lot AL) MOMENTS JEUX : LA LISTE EN GRANDES CARTES, LE CALENDRIER EN COLONNE
+   Chaque moment a sa carte : ticket de date, qui vient (avec les photos), les
+   places, les jeux proposes et leur vote, et le bouton pour venir. A cote, le
+   calendrier du mois en petit (un point par moment, le gateau des
+   anniversaires), la legende, le lien d'abonnement, le groupe Signal et le
+   dernier moment passe.
+   ============================================================================= */
+const momentNavBtn = { background: "rgba(26,58,92,.07)", border: "none", borderRadius: 12, width: 44, height: 44, cursor: "pointer", display: "grid", placeItems: "center", color: C.navy, flexShrink: 0 };
+const MOMENT_DOW = ["DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"];
+const MOMENT_MON = ["JANV.", "FÉVR.", "MARS", "AVR.", "MAI", "JUIN", "JUIL.", "AOÛT", "SEPT.", "OCT.", "NOV.", "DÉC."];
+
+/* Couleur d'un moment : la meme regle que les pastilles du calendrier. */
+function momentTone(e, currentUser) {
+  const reached = ((e.players || []).length + ((e.guests || []).length)) >= (e.min || 0);
+  if (isEventDimmed(e, currentUser)) return { c1: "#B3A897", c2: "#9A8F7E", edge: "#776d5e", ink: "#fff", reached };
+  if (isEventExpired(e)) return { c1: "#555", c2: "#2B2B2B", edge: "#111", ink: "#fff", reached };
+  if (e.online) return reached ? { c1: "#A66BB8", c2: C.purple, edge: "#45204F", ink: "#fff", reached } : { c1: "#F6C24A", c2: C.amber, edge: "#B47A06", ink: C.navyDeep, reached };
+  return reached ? { c1: "#2BB3AE", c2: C.teal, edge: "#12605F", ink: "#fff", reached } : { c1: "#E25B6E", c2: C.red, edge: "#7E1626", ink: "#fff", reached };
+}
+
+function MomentFaces({ people, users, size = 38, max = 6 }) {
+  const shown = people.slice(0, max);
+  const rest = people.length - shown.length;
+  return (
+    <span style={{ display: "flex", alignItems: "center" }}>
+      {shown.map((p, i) => {
+        const u = p.id ? (users || []).find((x) => x.id === p.id) : null;
+        const av = u && u.avatar;
+        return (
+          <span key={(p.id || p.name) + i} title={p.name} style={{ width: size, height: size, borderRadius: Math.round(size * 0.3), marginLeft: i ? -Math.round(size / 4) : 0,
+            boxShadow: "0 0 0 3px var(--aladj-card, #fff)", overflow: "hidden", background: p.id ? C.teal : C.amber, color: "#fff", display: "grid", placeItems: "center",
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: Math.round(size * 0.42), position: "relative", zIndex: 20 - i, flexShrink: 0 }}>
+            {av ? <img src={av} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : String(p.name || "?")[0].toUpperCase()}
+          </span>
+        );
+      })}
+      {rest > 0 && (
+        <span style={{ width: size, height: size, borderRadius: Math.round(size * 0.3), marginLeft: -Math.round(size / 4), boxShadow: "0 0 0 3px var(--aladj-card, #fff)",
+          background: "#F3EDE0", color: C.navy, display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, position: "relative" }}>+{rest}</span>
+      )}
+    </span>
+  );
+}
+
+function MomentCard({ e, onOpen, onJoin, onAuth }) {
+  const { currentUser, users } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const tone = momentTone(e, currentUser);
+  const d = new Date(e.date + "T00:00:00");
+  const people = [...(e.players || []), ...((e.guests || []).map((g) => ({ id: g.memberId || null, name: g.name })))];
+  const filled = people.length;
+  const cap = e.max ? Number(e.max) : null;
+  const pct = cap ? Math.min(100, Math.round((filled / cap) * 100)) : Math.min(100, Math.round((filled / Math.max(1, e.min || 1)) * 100));
+  const isIn = !!currentUser && (e.players || []).some((p) => p.id === currentUser.id);
+  const full = cap != null && filled >= cap && !isIn;
+  const closed = !isIn && isSignupClosed(e) && !(currentUser && currentUser.admin);
+  const expired = isEventExpired(e);
+  const host = (users || []).find((u) => u.id === e.hostId);
+  const today = new Date().toISOString().slice(0, 10);
+  const inDays = Math.round((d.getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+  const when = inDays === 0 ? "Aujourd'hui" : (inDays === 1 ? "Demain" : (inDays > 1 && inDays < 7 ? `Dans ${inDays} jours` : null));
+  const tag = (label, bg, fg, key) => (
+    <span key={key || label} style={{ display: "inline-flex", alignItems: "center", gap: 5, minHeight: 26, padding: "0 11px", borderRadius: 999, background: bg, color: fg,
+      fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>{label}</span>
+  );
+  const join = async (ev) => {
+    ev.stopPropagation();
+    if (!currentUser) { onAuth && onAuth("login"); return; }
+    setBusy(true); setErr("");
+    const r = await onJoin(e.id);
+    setBusy(false);
+    if (r && r.error) setErr(r.error);
+  };
+  const sugg = (e.suggestions || []).slice(0, 3);
+  return (
+    <article className="aladj-moment" onClick={onOpen} role="button" tabIndex={0}
+      onKeyDown={(ev) => { if (ev.key === "Enter") onOpen(); }}
+      style={{ position: "relative", display: "grid", gridTemplateColumns: "96px minmax(0,1fr)", gap: "14px 20px", alignItems: "start",
+        background: "var(--aladj-card, #fff)", borderRadius: 26, padding: "22px 22px 20px 26px", cursor: "pointer", overflow: "hidden",
+        boxShadow: "0 14px 34px rgba(18,41,63,.09)", border: "1px solid var(--aladj-line, #efe6d6)", transition: "transform .15s, box-shadow .15s" }}>
+      <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 7, background: tone.c2 }} />
+      {/* Ticket de date */}
+      <div className="aladj-moment-ticket" style={{ transform: "rotate(-4deg)", marginTop: 2, borderRadius: 18, overflow: "hidden", textAlign: "center", background: "#fff",
+        boxShadow: "0 10px 20px rgba(18,41,63,.18)" }}>
+        <div style={{ background: `linear-gradient(160deg, ${tone.c1}, ${tone.c2})`, color: tone.ink, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, letterSpacing: ".1em", padding: "6px 0" }}>{MOMENT_DOW[d.getDay()]}</div>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 44, lineHeight: 1, color: C.navy, paddingTop: 6 }}>{d.getDate()}</div>
+        <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, letterSpacing: ".08em", color: "#6f6355", margin: "5px 10px 0", padding: "2px 0 8px", borderTop: "2px dashed #EFE7D8" }}>{MOMENT_MON[d.getMonth()]}</div>
+      </div>
+
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+          {when && tag(when, "rgba(232,163,23,.18)", "#7A5200")}
+          {expired ? tag("Annulé — quorum non atteint", "#2B2B2B", "#fff")
+            : tone.reached ? tag("Confirmé", "rgba(30,138,138,.14)", "#12605F") : tag(`En attente · ${Math.max(0, (e.min || 0) - filled)} de plus pour confirmer`, "rgba(181,40,58,.1)", C.red)}
+          {e.online && tag("En ligne", "rgba(107,58,122,.12)", C.purple)}
+          {e.isPrivate && tag(isEventDimmed(e, currentUser) ? "Privé · vue admin" : "Privé · sur invitation", "rgba(120,110,95,.14)", "#5e5346")}
+        </div>
+        <h3 style={{ margin: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: "clamp(21px,2.2vw,26px)", lineHeight: 1.15, color: "var(--aladj-ink, #1A3A5C)" }}>
+          {e.title || (e.online ? "Moment jeux en ligne" : `Moment jeux du ${FR_DAYS[d.getDay()].toLowerCase()}`)}
+        </h3>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px", marginTop: 7, color: "var(--aladj-sub, #55493C)", fontSize: 15 }}>
+          {e.time && <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Clock size={16} color={tone.c2} /><b>{e.time}</b></span>}
+          {(e.place || e.online) && <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>{e.online ? <Globe size={16} color={tone.c2} /> : <MapPin size={16} color={tone.c2} />}{e.online ? "Board Game Arena" : e.place}</span>}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 24, height: 24, borderRadius: 8, overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700 }}>
+              {host && host.avatar ? <img src={host.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : String(e.hostName || "?")[0].toUpperCase()}
+            </span>
+            proposé par <b>{e.hostName}</b>
+          </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
+          {filled > 0 ? <MomentFaces people={people} users={users} /> : <span style={{ fontSize: 14, color: "#8a7c6a" }}>Personne pour l'instant : soyez le premier !</span>}
+          <div style={{ flex: "1 1 180px", minWidth: 160 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 14, color: "var(--aladj-sub, #55493C)" }}>
+              <b>{cap ? `${filled} / ${cap} places` : `${filled} inscrit${filled > 1 ? "s" : ""}${e.min ? ` · ${e.min} pour confirmer` : ""}`}</b>
+              {cap && filled < cap && <span style={{ fontWeight: 800, color: tone.c2 }}>encore {cap - filled}</span>}
+            </div>
+            <div style={{ height: 10, borderRadius: 5, background: "var(--aladj-soft, #F3EDE0)", marginTop: 6, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", borderRadius: 5, background: `linear-gradient(90deg, ${tone.c1}, ${tone.c2})` }} />
+            </div>
+          </div>
+        </div>
+
+        {sugg.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 12, borderTop: "2px dashed var(--aladj-line, #EFE7D8)" }}>
+            <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, color: "var(--aladj-ink, #1A3A5C)" }}>Jeux proposés</span>
+            {sugg.map((s) => (
+              <span key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 34, padding: "3px 5px 3px 12px", borderRadius: 12,
+                background: "var(--aladj-card, #fff)", boxShadow: "0 0 0 2px var(--aladj-line, #E7DFCF)", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, color: "var(--aladj-ink, #1A3A5C)" }}>
+                {s.gameName}
+                <span style={{ minWidth: 30, height: 26, padding: "0 7px", boxSizing: "border-box", borderRadius: 9, background: "var(--aladj-soft, #F3EDE0)", display: "inline-grid", placeItems: "center", fontSize: 13 }}>
+                  {s.score > 0 ? `+${s.score}` : s.score}
+                </span>
+              </span>
+            ))}
+            {(e.suggestions || []).length > 3 && <span style={{ fontSize: 13.5, color: "#8a7c6a" }}>et {(e.suggestions || []).length - 3} autre{(e.suggestions || []).length - 3 > 1 ? "s" : ""}</span>}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 16 }} onClick={(ev) => ev.stopPropagation()}>
+          {isIn ? (
+            <button type="button" onClick={onOpen}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 48, padding: "0 18px", borderRadius: 15, border: "none", cursor: "pointer",
+                background: "rgba(30,138,138,.12)", boxShadow: `inset 0 0 0 2.5px ${C.teal}`, color: "#12605F", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16 }}>
+              <Check size={18} /> Je suis inscrit
+            </button>
+          ) : expired ? null : full || closed ? (
+            <span style={{ display: "inline-flex", alignItems: "center", minHeight: 48, padding: "0 16px", borderRadius: 15, background: "var(--aladj-soft, #F3EDE0)", color: "#6f6355", fontWeight: 800, fontSize: 14.5 }}>
+              {full ? "Complet" : "Inscriptions closes"}
+            </span>
+          ) : (
+            <button type="button" onClick={join} disabled={busy}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 48, padding: "0 22px", borderRadius: 15, border: "none", cursor: busy ? "default" : "pointer",
+                background: `linear-gradient(180deg, ${tone.c1}, ${tone.c2})`, boxShadow: `0 5px 0 ${tone.edge}`, color: tone.ink,
+                fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, opacity: busy ? .7 : 1 }}>
+              {busy ? <Loader2 size={18} className="aladj-spin" /> : null}{currentUser ? "Je viens" : "Je viens (connexion)"} <ArrowRight size={18} />
+            </button>
+          )}
+          <button type="button" onClick={onOpen}
+            style={{ minHeight: 44, padding: "0 6px", border: "none", background: "transparent", cursor: "pointer", color: "var(--aladj-link, #17706F)", fontWeight: 800, fontSize: 14.5 }}>
+            Voir le détail{(e.comments || []).length ? ` · ${(e.comments || []).length} message${(e.comments || []).length > 1 ? "s" : ""}` : ""}
+          </button>
+          {err && <span style={{ flexBasis: "100%", color: C.red, fontWeight: 700, fontSize: 13.5 }}>{err}</span>}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/* Le calendrier du mois, en petit : un point par moment, le gateau des
+   anniversaires. Meme comportement au clic que le grand calendrier d'avant. */
+function MomentMiniCalendar({ cal, monthCursor, setMonthCursor, users, currentUser, onDay }) {
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <section aria-label="Calendrier du mois" style={{ background: "var(--aladj-card, #fff)", borderRadius: 26, padding: "18px 16px 16px", boxShadow: "0 14px 34px rgba(18,41,63,.1)", border: "1px solid var(--aladj-line, #efe6d6)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <button type="button" aria-label="Mois précédent" onClick={() => setMonthCursor((c) => { const m = c.m - 1; return m < 0 ? { y: c.y - 1, m: 11 } : { ...c, m }; })}
+          style={momentNavBtn}><ChevronRight size={18} style={{ transform: "rotate(180deg)" }} /></button>
+        <h3 style={{ flex: 1, margin: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 19, color: "var(--aladj-ink, #1A3A5C)", textTransform: "capitalize" }}>{FR_MONTHS[monthCursor.m]} {monthCursor.y}</h3>
+        <button type="button" aria-label="Mois suivant" onClick={() => setMonthCursor((c) => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { ...c, m }; })}
+          style={momentNavBtn}><ChevronRight size={18} /></button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 3, textAlign: "center" }}>
+        {["L", "M", "M", "J", "V", "S", "D"].map((x, i) => <span key={i} style={{ fontSize: 12, fontWeight: 800, color: "#8C806F", paddingBottom: 4 }}>{x}</span>)}
+        {cal.map((cell, i) => {
+          if (!cell) return <span key={i} />;
+          const isToday = cell.iso === today;
+          const isPast = cell.iso < today;
+          const hasEv = cell.events.length > 0;
+          const bd = birthdayMembersOn(cell.iso, users);
+          const clickable = hasEv || bd.length > 0 || (!isPast && currentUser);
+          const label = hasEv ? `${cell.d} : ${cell.events.length} moment${cell.events.length > 1 ? "s" : ""} jeux`
+            : (bd.length ? `${cell.d} : anniversaire de ${bd.map((u) => u.name).join(", ")}` : (!isPast && currentUser ? `Proposer un moment jeux le ${cell.d}` : String(cell.d)));
+          return (
+            <button key={i} type="button" onClick={clickable ? () => onDay(cell, bd, isPast) : undefined} aria-label={label} title={label}
+              style={{ position: "relative", height: 42, minWidth: 0, borderRadius: 12, padding: 0, cursor: clickable ? "pointer" : "default",
+                border: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14,
+                background: isToday ? "linear-gradient(160deg, #24507A, #12293F)" : (hasEv ? "var(--aladj-soft, #F7F2E8)" : "transparent"),
+                color: isToday ? "#fff" : (isPast && !hasEv ? "#B8AD9C" : "var(--aladj-ink, #1A3A5C)"),
+                boxShadow: isToday ? "0 6px 12px rgba(18,41,63,.3)" : "none" }}>
+              {cell.d}
+              {bd.length > 0 && <span aria-hidden="true" style={{ position: "absolute", top: 1, right: 2, fontSize: 9, lineHeight: 1 }}>🎂</span>}
+              {hasEv && (
+                <span style={{ position: "absolute", left: 0, right: 0, bottom: 4, display: "flex", justifyContent: "center", gap: 2 }}>
+                  {cell.events.slice(0, 3).map((ev) => <span key={ev.id} style={{ width: 6, height: 6, borderRadius: "50%", background: momentTone(ev, currentUser).c2 }} />)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px", marginTop: 12 }}>
+        <Legend color={C.teal} label="Confirmé" /><Legend color={C.red} label="En attente" />
+        <Legend color={C.purple} label="En ligne, confirmé" /><Legend color={C.amber} label="En ligne, en attente" />
+        <Legend color="#2B2B2B" label="Annulé" />{currentUser?.admin && <Legend color="#9A8F7E" label="Privé (vue admin)" />}
+      </div>
+      <p style={{ margin: "10px 2px 0", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.45 }}>
+        {currentUser ? "Touchez un jour libre pour y proposer un moment jeux." : "Touchez un jour pour voir le moment jeux."}
+      </p>
+    </section>
+  );
+}
+
 function EventsPage({ onAuth, setToast }) {
   const { events, currentUser, users, addEvent, toggleJoin, removeEvent } = useApp();
   const [showCreate, setShowCreate] = useState(false);
@@ -13948,7 +14365,7 @@ function EventsPage({ onAuth, setToast }) {
           <span style={{ background: "linear-gradient(90deg, #7FE0DA, #F6C24A 45%, #EF6B7E 75%, #C59AD4)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>: on joue quand ?</span>
         </h1>
         <p style={{ color: "rgba(255,255,255,.82)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.6, margin: 0, maxWidth: 640 }}>
-          Soirées, après-midi en famille, parties en ligne : touchez un jour du calendrier pour voir le moment, vous inscrire et proposer vos jeux.
+          Soirées, après-midi en famille, parties en ligne : inscrivez-vous en un clic, proposez vos jeux et votez pour ceux des autres.
         </p>
         <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           {currentUser
@@ -13966,72 +14383,83 @@ function EventsPage({ onAuth, setToast }) {
         </div>
       </div>
 
-      {/* CALENDRIER */}
-      <div style={{ background: C.paper, borderRadius: 22, border: "1px solid #ece2d0", padding: "20px 22px", marginBottom: 36, boxShadow: "0 4px 18px rgba(18,41,63,.05)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <button onClick={() => setMonthCursor((c) => { const m = c.m - 1; return m < 0 ? { y: c.y - 1, m: 11 } : { ...c, m }; })} style={navBtnStyle}><ChevronRight size={18} style={{ transform: "rotate(180deg)" }} /></button>
-          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 21, margin: 0, textTransform: "capitalize" }}>{FR_MONTHS[monthCursor.m]} {monthCursor.y}</h3>
-          <button onClick={() => setMonthCursor((c) => { const m = c.m + 1; return m > 11 ? { y: c.y + 1, m: 0 } : { ...c, m }; })} style={navBtnStyle}><ChevronRight size={18} /></button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 6 }} className="aladj-cal-grid">
-          {["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map((d) => (
-            <div key={d} style={{ textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#a89a86", fontSize: 12.5, padding: "4px 0", minWidth: 0 }}>{d}</div>
+      {/* (lot AL) A gauche les moments a venir, en grandes cartes ; a droite le
+          calendrier du mois en petit, la legende, l'abonnement, Signal et le
+          dernier moment passe. Sur telephone, la colonne passe dessous. */}
+      <div className="aladj-moments" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 340px", gap: 26, alignItems: "start" }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <h2 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 26, margin: 0 }}>À venir</h2>
+            <span style={{ fontSize: 15, color: "#8a7c6a" }}>{sorted.length === 0 ? "rien de prévu pour l'instant" : `${sorted.length} moment${sorted.length > 1 ? "s" : ""}`}</span>
+          </div>
+          {sorted.length === 0 && <EmptyHint icon={Calendar} text="Aucun moment jeux à venir. Proposez-en un !" />}
+          {sorted.map((e) => (
+            <MomentCard key={e.id} e={e} onOpen={() => setSelected(e.id)} onAuth={onAuth}
+              onJoin={async (id) => { const r = await toggleJoin(id); if (!(r && r.error)) setToast("C'est noté : à bientôt autour de la table !"); return r; }} />
           ))}
-          {cal.map((cell, i) => {
-            if (!cell) return <div key={i} style={{ minWidth: 0 }} />;
-            const isToday = cell.iso === new Date().toISOString().slice(0, 10);
-            const todayIso = new Date().toISOString().slice(0, 10);
-            const isPast = cell.iso < todayIso;
-            const hasEv = cell.events.length > 0;
-            const cellBirthdays = birthdayMembersOn(cell.iso, users);
-            // clic : sur un événement → ouvre sa fiche ; sur un anniversaire seul → dit
-            // de qui il s'agit (l'infobulle du gateau est invisible au doigt) ;
-            // sur case vide future → propose de créer un moment à cette date.
-            const handleClick = () => {
-              if (hasEv) {
+        </div>
+
+        <aside className="aladj-moments-side" style={{ position: "sticky", top: 96, display: "flex", flexDirection: "column", gap: 18 }}>
+          <MomentMiniCalendar cal={cal} monthCursor={monthCursor} setMonthCursor={setMonthCursor} users={users} currentUser={currentUser}
+            onDay={(cell, bd, isPast) => {
+              if (cell.events.length > 0) {
                 if (cell.events.length === 1) setSelected(cell.events[0].id);
                 else setDayPicker(cell.events);
                 return;
               }
-              if (cellBirthdays.length > 0) { setBirthdayDay({ iso: cell.iso, members: cellBirthdays, past: isPast }); return; }
+              if (bd.length > 0) { setBirthdayDay({ iso: cell.iso, members: bd, past: isPast }); return; }
               if (!isPast && currentUser) { setPresetDate(cell.iso); setShowCreate(true); }
-            };
-            const clickable = hasEv || cellBirthdays.length > 0 || (!isPast && currentUser);
+            }} />
+          <button type="button" onClick={() => setCalSub(true)}
+            style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 52, padding: "0 16px", borderRadius: 18, border: "none", cursor: "pointer",
+              background: C.paper, boxShadow: "0 8px 20px rgba(18,41,63,.08)", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15.5, textAlign: "left" }}>
+            <CalendarPlus size={20} color={C.teal} /> S'abonner au calendrier
+            <span style={{ marginLeft: "auto", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 12.5, color: "#8a7c6a" }}>Google, iPhone…</span>
+          </button>
+          {SIGNAL_GROUPS[0] && (
+            <section style={{ position: "relative", overflow: "hidden", borderRadius: 24, padding: 20, background: "linear-gradient(150deg, #2BB3AE, #14605F)", color: "#fff", boxShadow: "0 16px 30px rgba(30,138,138,.3)" }}>
+              <div aria-hidden="true" style={{ position: "absolute", right: -24, top: -24, width: 110, height: 110, borderRadius: "50%", background: "rgba(255,255,255,.12)" }} />
+              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ width: 48, height: 48, borderRadius: 15, background: "rgba(255,255,255,.18)", display: "grid", placeItems: "center" }}><MessageCircle size={24} /></span>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, lineHeight: 1.15 }}>Groupe Signal « {SIGNAL_GROUPS[0].name} »</span>
+              </div>
+              <p style={{ position: "relative", margin: "10px 0 14px", fontSize: 14.5, color: "#E8F8F6", lineHeight: 1.5 }}>
+                Places qui se libèrent, covoiturage, changement de dernière minute : c'est là que tout s'annonce.
+              </p>
+              <a href={SIGNAL_GROUPS[0].url} target="_blank" rel="noopener noreferrer"
+                style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 48, borderRadius: 15,
+                  background: "#fff", boxShadow: "0 4px 0 rgba(0,0,0,.18)", color: "#12605F", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, textDecoration: "none" }}>
+                Rejoindre la conversation <ArrowRight size={17} />
+              </a>
+            </section>
+          )}
+          {(() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const last = [...visibleEvents].filter((e) => e.date < today && !isEventExpired(e))
+              .sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")))[0];
+            if (!last) return null;
+            const nb = (last.players || []).length + ((last.guests || []).length);
+            const nGames = (last.playedGames || []).reduce((acc, g) => acc + (g.playCount || 1), 0);
             return (
-              <button key={i} onClick={handleClick} title={!hasEv && !isPast && currentUser ? "Proposer un moment jeux ce jour" : undefined} className="aladj-cal-cell" style={{
-                aspectRatio: "1", minWidth: 0, border: isToday ? `2px solid ${C.navy}` : "1px solid #efe6d6", borderRadius: 12, background: hasEv ? "rgba(30,138,138,.08)" : "#fff",
-                cursor: clickable ? "pointer" : "default", padding: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", position: "relative", overflow: "hidden", opacity: isPast && !hasEv ? 0.5 : 1,
-              }}>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: C.navy }}>{cell.d}</span>
-                {cellBirthdays.length > 0 && (
-                  <span title={`Anniversaire de ${cellBirthdays.map((u) => u.name).join(", ")} 🎉`}
-                    style={{ position: "absolute", top: 2, right: 4, fontSize: 11, lineHeight: 1 }}>🎂</span>
-                )}
-                {cell.events.slice(0, 2).map((e) => {
-                  const reached = (e.players.length + (e.guests?.length || 0)) >= e.min;
-                  const dimmed = isEventDimmed(e, currentUser);
-                  const pillBg = dimmed ? "#9A8F7E" : (isEventExpired(e) ? "#2B2B2B" : (e.online ? (reached ? C.purple : C.amber) : (reached ? C.teal : C.red)));
-                  return <span key={e.id} title={e.isPrivate ? (dimmed ? "Moment privé (vue administrateur)" : "Moment privé — sur invitation") : undefined}
-                    style={{ maxWidth: "92%", marginTop: 3, fontSize: 9.5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", background: pillBg, borderRadius: 5, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{e.isPrivate ? "🔒" : ""}{e.time}</span>;
-                })}
-                {!hasEv && !isPast && currentUser && <Plus size={12} color="#cdb9a0" style={{ marginTop: 2 }} />}
+              <button type="button" onClick={() => setSelected(last.id)}
+                style={{ display: "block", width: "100%", padding: 0, border: "none", cursor: "pointer", textAlign: "left", borderRadius: 24, overflow: "hidden",
+                  background: C.paper, boxShadow: "0 12px 28px rgba(18,41,63,.1)" }}>
+                <div style={{ position: "relative", height: 86, background: "linear-gradient(135deg, #E8A317 0%, #B5283A 55%, #6B3A7A 100%)" }}>
+                  <span style={{ position: "absolute", left: 14, bottom: 10, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, background: "rgba(12,31,48,.55)", color: "#fff", padding: "4px 12px", borderRadius: 999 }}>
+                    Le dernier moment · {formatDateShort(last.date)}
+                  </span>
+                </div>
+                <div style={{ padding: "12px 16px 14px" }}>
+                  <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, color: C.navy }}>{last.title || (last.online ? "Moment en ligne" : `Moment jeux du ${FR_DAYS[new Date(last.date + "T00:00:00").getDay()].toLowerCase()}`)}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                    <MomentFaces people={(last.players || []).map((p) => ({ id: p.id, name: p.name }))} users={users} size={30} max={5} />
+                    <span style={{ fontSize: 14, color: "#5e5346" }}><b>{nb} joueur{nb > 1 ? "s" : ""}</b>{nGames ? ` · ${nGames} partie${nGames > 1 ? "s" : ""}` : ""}</span>
+                  </div>
+                </div>
               </button>
             );
-          })}
-        </div>
-        <div style={{ display: "flex", gap: 18, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Legend color={C.teal} label="Présentiel — confirmé" /><Legend color={C.red} label="Présentiel — en attente" /><Legend color={C.purple} label="En ligne — confirmé" /><Legend color={C.amber} label="En ligne — en attente" /><Legend color="#2B2B2B" label="Annulé — quorum non atteint" />{currentUser?.admin && <Legend color="#9A8F7E" label="Privé — vue administrateur" />}<Legend color={C.navy} label="Aujourd'hui" outline />
-          <button onClick={() => setCalSub(true)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, padding: "2px 4px" }}>
-            <CalendarPlus size={15} /> S'abonner au calendrier
-          </button>
-        </div>
-      </div>
-
-      {/* LISTE À VENIR */}
-      <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: "0 0 18px" }}>À venir</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
-        {sorted.length === 0 && <EmptyHint icon={Calendar} text="Aucun moment jeux à venir. Proposez-en un !" />}
-        {sorted.map((e) => <EventCardMini key={e.id} e={e} onOpen={() => setSelected(e.id)} />)}
+          })()}
+        </aside>
       </div>
 
       {showCreate && <CreateEventModal presetDate={presetDate} onClose={() => { setShowCreate(false); setPresetDate(null); }} onCreate={async (d) => { const res = await addEvent(d); if (res?.error) return res; setShowCreate(false); setPresetDate(null); setToast("Moment jeux créé !"); if (!d.isPrivate) setJustCreated(d); return {}; }} />}
@@ -14097,7 +14525,6 @@ function EventsPage({ onAuth, setToast }) {
     </div>
   );
 }
-const navBtnStyle = { background: "rgba(26,58,92,.07)", border: "none", borderRadius: 10, width: 38, height: 38, cursor: "pointer", display: "grid", placeItems: "center", color: C.navy };
 function Legend({ color, label, outline }) {
   return <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#6e6256" }}>
     <span style={{ width: 14, height: 14, borderRadius: 5, background: outline ? "transparent" : color, border: outline ? `2px solid ${color}` : "none" }} /> {label}
@@ -23973,6 +24400,8 @@ function Shell() {
     return () => window.removeEventListener("aladj:goto", onGoto);
   }, []);
 
+  useEffect(() => { applySiteTheme(readSiteTheme()); }, []);
+
   if (fatalError === "config") return <ConfigScreen />;
 
   if (!ready) {
@@ -23987,7 +24416,8 @@ function Shell() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: C.cream, display: "flex", flexDirection: "column" }}>
+    <>
+    <div className="aladj-site" style={{ minHeight: "100vh", background: C.cream, display: "flex", flexDirection: "column" }}>
       <Navbar page={page} setPage={setPage} onAuth={(m) => setAuth(m)} />
       {fatalError && fatalError !== "config" && (
         <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 20px", textAlign: "center", fontSize: 14, fontWeight: 600 }}>
@@ -24028,19 +24458,21 @@ function Shell() {
           </div>
         </Modal>
       )}
-      {chrono && (
-        <PlayTimer
-          supabase={supabase}
-          currentUser={currentUser ? { id: currentUser.id, name: currentUser.name, avatar_url: currentUser.avatar } : null}
-          gameId={chrono.gameId}
-          eventId={chrono.eventId}
-          joinCode={chrono.joinCode}
-          catalog={chronoCatalog}
-          onExit={closeChrono}
-        />
-      )}
       <Toast msg={toast} onDone={() => setToast("")} />
     </div>
+    {/* Le chrono a son propre mode clair / sombre : il reste hors du theme du site. */}
+      {chrono && (
+      <PlayTimer
+        supabase={supabase}
+        currentUser={currentUser ? { id: currentUser.id, name: currentUser.name, avatar_url: currentUser.avatar } : null}
+        gameId={chrono.gameId}
+        eventId={chrono.eventId}
+        joinCode={chrono.joinCode}
+        catalog={chronoCatalog}
+        onExit={closeChrono}
+      />
+    )}
+    </>
   );
 }
 
@@ -24076,8 +24508,147 @@ export default function App() {
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-thumb { background: #d9cbb4; border-radius: 99px; }
+        @media (max-width: 980px) { .aladj-moments { grid-template-columns: minmax(0, 1fr) !important; } .aladj-moments-side { position: static !important; } }
+        @media (max-width: 560px) { .aladj-moment { grid-template-columns: 64px minmax(0, 1fr) !important; gap: 10px 14px !important; padding: 18px 14px 16px 20px !important; } .aladj-moment-ticket > div:nth-child(2) { font-size: 30px !important; } .aladj-moment-ticket > div { font-size: 11.5px; } }
+        @media (hover: hover) { .aladj-moment:hover { transform: translateY(-3px); box-shadow: 0 20px 40px rgba(18,41,63,.14) !important; } }
+        @media (max-width: 980px) { .aladj-mag-read { grid-template-columns: minmax(0, 1fr) !important; gap: 22px !important; } .aladj-mag-read > aside, .aladj-mag-read > .aladj-mag-main { grid-column: 1 !important; grid-row: auto !important; position: static !important; } .aladj-mag-who { display: none !important; } }
         @media (max-width: 760px) { .aladj-hero-deco { display: none; } .aladj-statcard { min-height: 72px !important; padding: 12px !important; gap: 10px !important; } .aladj-statcard > svg { display: none; } }
         @media (hover: hover) { .aladj-navrow:hover { background: #F7F2E8 !important; } .aladj-statcard:hover { transform: translateY(-3px); background: rgba(255,255,255,.14) !important; } }
+        html[data-site-theme="dark"], html[data-site-theme="dark"] body { background: #0E1C29 !important; }
+        html[data-site-theme="dark"] .aladj-site { background: #0E1C29 !important; }
+        html[data-site-theme="dark"] .aladj-site path[fill="#FBF7EF"], html[data-site-theme="dark"] .aladj-site path[fill="#fbf7ef"] { fill: #0E1C29; }
+        html[data-site-theme="dark"] .aladj-site { --aladj-card: #17293B; --aladj-ink: #E6EDF4; --aladj-sub: #AEBDCC; --aladj-line: rgba(255,255,255,.12); --aladj-soft: #22374C; --aladj-link: #5CCFC9; color: #E6EDF4; }
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(251, 247, 239)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(251, 247, 239)"] { background: #0E1C29 !important; }
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(255, 255, 255)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(255, 255, 255)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(255, 254, 251)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(255, 254, 251)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(255, 255, 255, 0.94)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(255, 255, 255, 0.94)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(255, 255, 255, 0.97)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(255, 255, 255, 0.97)"] { background: #17293B !important; }
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(243, 237, 224)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(243, 237, 224)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(238, 228, 210)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(238, 228, 210)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(236, 226, 208)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(236, 226, 208)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(243, 236, 223)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(243, 236, 223)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(239, 230, 214)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(239, 230, 214)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(226, 216, 196)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(226, 216, 196)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(247, 242, 232)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(247, 242, 232)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgb(240, 232, 218)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgb(240, 232, 218)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.07)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.07)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.06)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.06)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.04)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.04)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.05)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.05)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.03)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.03)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background: rgba(26, 58, 92, 0.08)"],
+        html[data-site-theme="dark"] .aladj-site [style*="background-color: rgba(26, 58, 92, 0.08)"] { background: #22374C !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(26, 58, 92)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(26, 58, 92)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(34, 48, 60)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(34, 48, 60)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(51, 41, 31)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(51, 41, 31)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(42, 34, 25)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(42, 34, 25)"] { color: #E6EDF4 !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(156, 141, 121)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(156, 141, 121)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(94, 83, 70)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(94, 83, 70)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(138, 124, 106)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(138, 124, 106)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(168, 154, 134)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(168, 154, 134)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(110, 98, 86)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(110, 98, 86)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(107, 93, 73)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(107, 93, 73)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(182, 167, 143)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(182, 167, 143)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(195, 180, 155)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(195, 180, 155)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(78, 70, 59)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(78, 70, 59)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(111, 99, 85)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(111, 99, 85)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(85, 73, 60)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(85, 73, 60)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(140, 128, 111)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(140, 128, 111)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(138, 122, 99)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(138, 122, 99)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(169, 154, 134)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(169, 154, 134)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(205, 191, 168)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(205, 191, 168)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(59, 70, 82)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(59, 70, 82)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(110, 94, 66)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(110, 94, 66)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(92, 83, 70)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(92, 83, 70)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(77, 68, 58)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(77, 68, 58)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(142, 130, 117)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(142, 130, 117)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(61, 52, 42)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(61, 52, 42)"] { color: #AEBDCC !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(30, 138, 138)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(30, 138, 138)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(23, 112, 111)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(23, 112, 111)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(18, 96, 95)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(18, 96, 95)"] { color: #5CCFC9 !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(181, 40, 58)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(181, 40, 58)"] { color: #F08A99 !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(107, 58, 122)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(107, 58, 122)"] { color: #C9A2D8 !important; }
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(138, 106, 31)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(138, 106, 31)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(122, 82, 0)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(122, 82, 0)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(154, 109, 10)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(154, 109, 10)"],
+        html[data-site-theme="dark"] .aladj-site [style^="color: rgb(168, 118, 15)"],
+        html[data-site-theme="dark"] .aladj-site [style*="; color: rgb(168, 118, 15)"] { color: #F0C76A !important; }
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(236, 226, 208)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(236, 226, 208)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(230, 220, 201)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(230, 220, 201)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(239, 230, 214)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(239, 230, 214)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(217, 205, 182)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(217, 205, 182)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(231, 220, 199)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(231, 220, 199)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(240, 228, 205)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(240, 228, 205)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(217, 203, 180)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(217, 203, 180)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(240, 232, 218)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(240, 232, 218)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(231, 223, 207)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(231, 223, 207)"],
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(225, 214, 192)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(225, 214, 192)"] { border-color: rgba(255,255,255,.12) !important; }
+        html[data-site-theme="dark"] .aladj-site [style*="solid rgb(26, 58, 92)"],
+        html[data-site-theme="dark"] .aladj-site [style*="dashed rgb(26, 58, 92)"] { border-color: rgba(230,237,244,.55) !important; }
+        html[data-site-theme="dark"] .aladj-site input, html[data-site-theme="dark"] .aladj-site textarea, html[data-site-theme="dark"] .aladj-site select { color-scheme: dark; }
+        html[data-site-theme="dark"] .aladj-site input::placeholder, html[data-site-theme="dark"] .aladj-site textarea::placeholder { color: #7f91a3; }
+        html[data-site-theme="dark"] .aladj-site img[alt="ALADJ — À l'assaut des jeux"] { filter: drop-shadow(0 0 6px rgba(255,255,255,.35)); }
         @keyframes popIn { from { opacity: 0; transform: scale(.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
