@@ -1352,9 +1352,9 @@ function TimerWindow({ t }) {
   );
 }
 
-function Avatar({ name, url, color, size = 44 }) {
+function Avatar({ name, url, color, size = 44, square = false }) {
   const st = {
-    width: size, height: size, borderRadius: '50%', flex: '0 0 auto',
+    width: size, height: size, borderRadius: square ? Math.round(size * 0.3) : '50%', flex: '0 0 auto',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontFamily: TITLE, fontWeight: 600, color: C.white, fontSize: size * 0.38,
     background: color, objectFit: 'cover', overflow: 'hidden',
@@ -2891,6 +2891,32 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   }, [session, now, openSegs]);
   const shown = (pid) => (totals[pid]?.total || 0) + liveExtra(pid);
 
+  // (lot AL) Mode clair / sombre de l'ecran de partie, memorise sur l'appareil.
+  const [chronoTheme, setChronoTheme] = useState(() => {
+    try { return window.localStorage.getItem('aladj.chrono.theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; }
+  });
+  const toggleChronoTheme = () => setChronoTheme((t) => {
+    const nx = t === 'dark' ? 'light' : 'dark';
+    try { window.localStorage.setItem('aladj.chrono.theme', nx); } catch (e) { /* stockage indisponible : tant pis */ }
+    return nx;
+  });
+  // (lot AL) « Tour par tour » : choix fait pour CETTE partie, sur cet
+  // appareil. null = pas de choix, l'ecran decide (voir turnsOn).
+  const [turnPrefTick, setTurnPrefTick] = useState(0);
+  const turnPref = useMemo(() => {
+    if (!session?.id) return null;
+    try {
+      const v = window.localStorage.getItem(`aladj.chrono.turns.${session.id}`);
+      return v === '1' ? true : (v === '0' ? false : null);
+    } catch (e) { return null; }
+  }, [session?.id, turnPrefTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setTurnPref = (on) => {
+    if (session?.id) {
+      try { window.localStorage.setItem(`aladj.chrono.turns.${session.id}`, on ? '1' : '0'); } catch (e) { /* idem */ }
+    }
+    setTurnPrefTick((x) => x + 1);
+  };
+
   const joinLink = useMemo(() => {
     if (!session?.join_code || typeof window === 'undefined') return '';
     return `${window.location.origin}${window.location.pathname}?chrono=${session.join_code}`;
@@ -2926,23 +2952,61 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     return () => { go = false; };
   }, [supabase, currentUser?.id]);
 
+  // (lot AL) Le mode sombre ne vaut que pour l'ecran de partie : preparation,
+  // salle d'attente et bilan restent clairs.
+  const shellDark = chronoTheme === 'dark' && phase === 'running';
   const shell = (children, wide) => (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000, color: C.navy,
-      // Vue tablette : on reste dans les tons chaleureux du site. Le fond bleu
-      // nuit essaye precedemment ecrasait les couleurs des joueurs et jurait
-      // avec le reste de l'application.
-      background: wide
-        ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
-        : C.cream,
+      position: 'fixed', inset: 0, zIndex: 1000, color: shellDark ? '#FFFFFF' : C.navy,
+      // Vue tablette : on reste dans les tons chaleureux du site par defaut.
+      // Le bleu nuit n'est plus impose : c'est le mode sombre, au choix.
+      background: shellDark
+        ? 'linear-gradient(160deg, #1D4468 0%, #12293F 58%, #0C1F30 100%)'
+        : (wide
+          ? 'radial-gradient(1100px 700px at 18% -18%, #FFFDF8 0%, #F8F1E4 52%, #EFE4D1 100%)'
+          : C.cream),
       fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
     }}>
       <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: wide ? 26 : 22, color: C.navy }}>
-            Chrono <span style={{ color: C.teal }}>ALADJ</span>
-          </div>
+          {phase === 'running' && game?.name ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: wide ? 14 : 10, minWidth: 0, flex: '1 1 auto', marginRight: 10 }}>
+              {game.image_url
+                ? <img src={game.image_url} alt="" style={{ width: wide ? 54 : 44, height: wide ? 54 : 44, borderRadius: 14, objectFit: 'cover', flex: '0 0 auto', boxShadow: '0 6px 14px rgba(18,41,63,.18)' }} />
+                : <span style={{ width: wide ? 54 : 44, height: wide ? 54 : 44, borderRadius: 14, flex: '0 0 auto', background: `linear-gradient(135deg, ${C.teal}, ${C.navy})` }} />}
+              <div style={{ minWidth: 0 }}>
+                <div title={game.name} style={{ fontFamily: TITLE, fontWeight: 700, fontSize: wide ? 28 : 21, lineHeight: 1.1,
+                  color: shellDark ? '#FFFFFF' : C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: wide ? 14.5 : 12.5, color: shellDark ? '#A9C0D6' : '#8a7a63' }}>
+                  <span>Chrono <b style={{ color: shellDark ? '#7FE0DA' : C.teal }}>ALADJ</b> · {players.length} joueur{players.length > 1 ? 's' : ''}</span>
+                  {session?.join_code && (
+                    <button type="button" onClick={() => setQrOpen(true)} title="Afficher le QR code pour rejoindre la partie"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', fontWeight: 800,
+                        color: shellDark ? '#F6C24A' : C.teal, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                      Rejoindre : {session.join_code} ▦
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: wide ? 26 : 22, color: C.navy }}>
+              Chrono <span style={{ color: C.teal }}>ALADJ</span>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {phase === 'running' && (
+              <button type="button" onClick={toggleChronoTheme}
+                aria-label={shellDark ? 'Passer en mode clair' : 'Passer en mode sombre'}
+                title={shellDark ? 'Passer en mode clair' : 'Passer en mode sombre'}
+                style={{ width: 40, height: 40, borderRadius: 12, padding: 0, cursor: 'pointer', display: 'grid', placeItems: 'center',
+                  border: `1.5px solid ${shellDark ? 'rgba(255,255,255,.3)' : '#d9cdb6'}`,
+                  background: shellDark ? 'rgba(255,255,255,.1)' : '#fff', color: shellDark ? '#F6C24A' : C.navy }}>
+                {shellDark
+                  ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5" /><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" /></svg>
+                  : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" /></svg>}
+              </button>
+            )}
             {!(wide && phase === 'running') && (game?.id || session?.game_id) && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
               <button onClick={() => setRulesOpen(true)} title="Points de regle de ce jeu"
                 style={{
@@ -2950,7 +3014,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   borderRadius: 999, padding: '6px 12px', fontFamily: TITLE, fontWeight: 600,
                   fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
-                📖 Regles{rulesCount ? ` (${rulesCount})` : ''}
+                📖 Règles{rulesCount ? ` (${rulesCount})` : ''}
               </button>
             )}
             {wideScreen && phase !== 'loading' && phase !== 'error' && phase !== 'ask-name' && (
@@ -2972,10 +3036,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                   color: wake.active ? '#8a6a1f' : `${C.navy}88`, borderRadius: 999, padding: '6px 12px',
                   fontFamily: TITLE, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
-                {wake.active ? '\u2600\ufe0f Ecran allume' : '\ud83c\udf19 Veille normale'}
+                {wake.active ? '\u2600\ufe0f Écran allumé' : '\ud83c\udf19 Veille normale'}
               </button>
             )}
-            <button onClick={quitNoSave} style={{ ...btnGhost, fontSize: wide ? 17 : 15 }}>Quitter</button>
+            <button onClick={quitNoSave} style={{ ...btnGhost, fontSize: wide ? 17 : 15, minHeight: 40, ...(shellDark ? { color: 'rgba(255,255,255,.82)' } : {}) }}>Quitter</button>
           </div>
         </div>
         {error && (
@@ -3469,587 +3533,634 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     const gamePhase = hasWrapped ? 'wrap' : (hasPlayed ? 'play' : 'prep');
     const totalElapsed = playTotal; // « Durée de la partie » = uniquement le jeu
 
-    // Un bouton de phase : en cours (clic = pause), en pause (clic = reprendre) ou à démarrer.
-    const phaseBtn = (phase, labels, total, started, color, disabled) => {
-      const running = activePhase === phase;
-      const paused = !running && started;
-      const label = running ? labels.running : (paused ? labels.paused : labels.idle);
-      const bg = disabled ? '#9aa5b1' : (running ? color : (paused ? C.navyDeep : C.navy));
+    /* =====================================================================
+       (lot AL) LE CHRONO DES TEMPS DE JEU
+       A l'asso, le chrono sert presque toujours a mesurer les trois temps
+       d'une partie : mise en place, partie, rangement. Le chrono individuel
+       (qui joue, combien de temps il reflechit) ne sert qu'une fois sur
+       cinquante : il passe derriere l'interrupteur « Tour par tour ».
+         - en tete, le temps de la phase en cours, en tres grand, compare a
+           la duree annoncee du jeu (ou a la moyenne observee au club) ;
+         - dessous, les trois temps cote a cote : un appui met en pause ou
+           reprend, comme avant ;
+         - un seul gros bouton fait passer a l'etape suivante ;
+         - les joueurs, avec leur photo, leur score et ses deux boutons.
+       Mode clair par defaut, mode sombre au choix (bouton lune / soleil),
+       memorise sur l'appareil.
+       ===================================================================== */
+    const dark = chronoTheme === 'dark';
+    const K = dark ? {
+      ink: '#FFFFFF', sub: '#A9C0D6', faint: 'rgba(255,255,255,.35)',
+      panel: 'rgba(255,255,255,.07)', line: 'rgba(255,255,255,.14)',
+      soft: 'rgba(255,255,255,.11)', softInk: '#FFFFFF',
+      shadow: '0 18px 40px rgba(0,0,0,.32)', dash: 'rgba(255,255,255,.26)',
+    } : {
+      ink: C.navy, sub: '#7d6e5a', faint: '#C9BBA2',
+      panel: '#FFFFFF', line: '#E7DCC7',
+      soft: '#F3EDE0', softInk: C.navy,
+      shadow: '0 14px 32px rgba(18,41,63,.10)', dash: '#D9CDB8',
+    };
+    const PH = {
+      setup: { label: 'Mise en place', c1: '#2BB3AE', c2: C.teal, edge: '#12605F', ink: '#FFFFFF', tint: dark ? '#7FE0DA' : '#17706F' },
+      play: { label: 'Partie', c1: '#FAD06A', c2: C.amber, edge: '#B47A06', ink: '#12293F', tint: dark ? '#F6C24A' : '#7A5200' },
+      teardown: { label: 'Rangement', c1: '#A66BB8', c2: C.purple, edge: '#45204F', ink: '#FFFFFF', tint: dark ? '#C59AD4' : C.purple },
+    };
+    const PH_KEYS = ['setup', 'play', 'teardown'];
+    const phTotal = { setup: setupTotal, play: totalElapsed, teardown: teardownTotal };
+    const phStarted = { setup: setupTotal > 0 || activePhase === 'setup', play: hasPlayed, teardown: hasWrapped };
+    const phLocked = { setup: hasPlayed, play: hasWrapped, teardown: !hasPlayed };
+    const phDone = { setup: hasPlayed, play: hasWrapped, teardown: false };
+    // La phase qu'on regarde : celle qui tourne, sinon la derniere entamee.
+    const focusPh = activePhase || (hasWrapped ? 'teardown' : (hasPlayed ? 'play' : (setupTotal > 0 ? 'setup' : null)));
+    const curSec = focusPh ? phTotal[focusPh] : 0;
+    const grandTotal = setupTotal + playTotal + teardownTotal;
+    const launchedAt = session?.started_at || session?.created_at || null;
+    const launchedTxt = (() => {
+      if (!launchedAt) return '';
+      const d = new Date(launchedAt);
+      if (Number.isNaN(d.getTime())) return '';
+      return `${d.getHours()} h ${String(d.getMinutes()).padStart(2, '0')}`;
+    })();
+    // Repere : la duree annoncee sur la fiche pour la partie, la moyenne
+    // observee au club pour les deux autres temps (et pour la partie quand
+    // la fiche ne dit rien).
+    const announced = game?.play_time && Number(game.play_time) > 0 ? Number(game.play_time) * 60 : null;
+    const refSec = !focusPh ? null
+      : (focusPh === 'play' ? (announced || avgTimes?.play || null) : (avgTimes?.[focusPh] || null));
+    const refLabel = !refSec ? ''
+      : (focusPh === 'play' && announced ? `Durée annoncée : ${game.play_time} min` : `Moyenne au club : ${fmt(refSec)}`);
+    const over = refSec ? curSec > refSec : false;
+    const ratio = refSec ? Math.min(1, curSec / refSec) : 0;
+    const leftTxt = !refSec ? ''
+      : (over ? `+${Math.max(1, Math.round((curSec - refSec) / 60))} min` : `encore ~${Math.max(1, Math.round((refSec - curSec) / 60))} min`);
+
+    // L'etape suivante, en un seul bouton.
+    const nextAct = (() => {
+      if (activePhase === 'setup') return { ph: 'play', label: 'Lancer la partie' };
+      if (activePhase === 'play') return { ph: 'teardown', label: 'Passer au rangement' };
+      if (activePhase === 'teardown') return isHost ? { end: true, label: 'Terminer la partie' } : null;
+      if (!focusPh) return { ph: 'setup', label: 'Lancer la mise en place', alt: { ph: 'play', label: 'Pas de mise en place ? Lancer directement la partie' } };
+      return { ph: focusPh, label: `Reprendre : ${PH[focusPh].label.toLowerCase()}` };
+    })();
+
+    // Tour par tour : allume d'office si des temps individuels existent deja
+    // pour cette partie (ou en mode « tous en meme temps »), sinon eteint.
+    const autoTurns = simul || players.some((p) => (totals[p.id]?.total || 0) > 0);
+    const turnsOn = simul || (turnPref === null ? autoTurns : turnPref);
+    const switchTurns = () => {
+      const on = !turnsOn;
+      // On coupe le tour en cours plutot que de laisser tourner un chrono
+      // que plus personne ne voit.
+      if (!on && isHost && activeId && !neutral) toggleNeutral();
+      setTurnPref(on);
+    };
+
+    // Joueur(s) en tete, pour la couronne. Ni en cooperatif ni par equipes.
+    const leaderIds = (() => {
+      if (!scored || isCoop || structure === 'teams') return [];
+      const vals = players.map((p) => p.score || 0);
+      if (!vals.some((v) => v !== 0)) return [];
+      const best = rule === 'low' ? Math.min(...vals) : Math.max(...vals);
+      const ids = players.filter((p) => (p.score || 0) === best).map((p) => p.id);
+      return ids.length === players.length ? [] : ids;
+    })();
+
+    const icoPause = (sz) => (
+      <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M9 5v14M15 5v14" /></svg>
+    );
+    const icoArrow = (sz) => (
+      <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+    );
+    const icoCrown = (sz) => (
+      <svg width={sz} height={sz} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 18h16l1-10-5 4-4-7-4 7-5-4z" /></svg>
+    );
+
+    // ---- le grand temps de la phase en cours ----
+    const hero = (big) => {
+      const m = focusPh ? PH[focusPh] : null;
+      const chip = !focusPh ? 'Prêt à démarrer' : (activePhase ? `${m.label} en cours` : `${m.label} en pause`);
+      const onColor = !!m;
+      const ink = onColor ? m.ink : K.ink;
       return (
-        <button onClick={disabled ? undefined : () => togglePhase(phase)} disabled={disabled} style={{
-          width: '100%', border: 'none', borderRadius: 16, padding: '16px 14px',
-          fontFamily: TITLE, fontWeight: 600, fontSize: 18, color: C.white, cursor: disabled ? 'default' : 'pointer',
-          background: bg, opacity: disabled ? 0.5 : 1, boxShadow: disabled ? 'none' : '0 4px 0 rgba(0,0,0,0.12)', textAlign: 'center',
+        <section aria-label="Temps de la phase en cours" style={{
+          position: 'relative', overflow: 'hidden', boxSizing: 'border-box',
+          display: 'flex', flexDirection: 'column', flex: big ? '1 1 auto' : undefined, minHeight: big ? 0 : undefined,
+          borderRadius: big ? 32 : 28, padding: big ? '20px 24px 20px' : '16px 18px 16px',
+          background: onColor ? `linear-gradient(150deg, ${m.c1} 0%, ${m.c2} 100%)` : K.panel,
+          color: ink,
+          boxShadow: onColor ? `0 18px 36px -14px ${m.c2}, inset 0 2px 0 rgba(255,255,255,.4)` : K.shadow,
+          border: onColor ? 'none' : `2px dashed ${K.dash}`,
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            {running && <span style={{ fontSize: 14 }}>⏸</span>}
-            {paused && <span style={{ fontSize: 14 }}>▶</span>}
-            {label}
-          </span>
-          {(total > 0 || running) && <div style={{ fontFamily: BODY, fontSize: 26, fontWeight: 800, marginTop: 4 }}>{fmt(total)}</div>}
-        </button>
+          {onColor && (
+            <svg width={big ? 190 : 130} height={big ? 190 : 130} viewBox="0 0 100 100" aria-hidden="true"
+              style={{ position: 'absolute', right: big ? -44 : -30, bottom: big ? -40 : -30, transform: 'rotate(16deg)', opacity: 0.22, pointerEvents: 'none' }}>
+              <rect x="6" y="6" width="88" height="88" rx="22" fill="#FFFFFF" />
+              {[[32, 28], [32, 50], [32, 72], [68, 28], [68, 50], [68, 72]].map(([x, y]) => <circle key={`${x}-${y}`} cx={x} cy={y} r="7.5" fill={m.c2} />)}
+            </svg>
+          )}
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: TITLE, fontWeight: 600,
+              fontSize: big ? 15 : 13, letterSpacing: '.06em', textTransform: 'uppercase',
+              background: '#12293F', color: '#FFFFFF', padding: big ? '6px 14px' : '5px 12px', borderRadius: 999 }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: activePhase ? (m ? m.c1 : C.teal) : '#9aa5b1' }} />
+              {chip}
+            </span>
+            <span style={{ marginLeft: 'auto', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 16 : 14 }}>
+              Partie n° {session?.current_game || 1}
+            </span>
+          </div>
+          <div style={{ position: 'relative', margin: big ? 'auto 0' : '8px 0 6px', fontFamily: TITLE, fontWeight: 700,
+            fontSize: big ? 'clamp(80px, 9.6vw, 150px)' : 'clamp(62px, 19vw, 92px)', lineHeight: 1,
+            letterSpacing: '-.035em', fontVariantNumeric: 'tabular-nums' }}>
+            {fmt(curSec)}
+          </div>
+          {refSec ? (
+            <div style={{ position: 'relative' }}>
+              <div style={{ height: big ? 14 : 12, borderRadius: 7, background: onColor ? 'rgba(18,41,63,.18)' : K.soft, overflow: 'hidden' }}>
+                <div style={{ width: `${Math.round(ratio * 100)}%`, height: '100%', borderRadius: 7,
+                  background: over ? C.red : (focusPh === 'play' ? '#12293F' : 'rgba(255,255,255,.92)'), transition: 'width .6s linear' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6, fontSize: big ? 15 : 13.5, fontWeight: 800 }}>
+                <span>{refLabel}</span><span>{leftTxt}</span>
+              </div>
+            </div>
+          ) : null}
+          <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px',
+            marginTop: 10, paddingTop: 10, borderTop: `2px dashed ${onColor ? 'rgba(18,41,63,.22)' : K.line}`, fontSize: big ? 15 : 13.5 }}>
+            <span>Temps total <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(grandTotal)}</b></span>
+            {launchedTxt && <span>Lancé à {launchedTxt}</span>}
+          </div>
+        </section>
       );
     };
 
-    // ---------- disposition tablette (paysage) ----------
-    // Pensee pour un iPad pose au milieu de la table : tout doit se lire a un
-    // metre. Les tailles sont exprimees en vw/vh bornees par clamp() pour
-    // grandir avec la dalle, et les cartes joueurs sont horizontales
-    // (identite a gauche, score au centre, chrono a droite) plutot que
-    // verticales -- c'est ce qui remplit vraiment la largeur.
-    if (tablet) {
-      const n = players.length || 1;
-      // Hauteur d'une ligne joueur : on occupe la place disponible plutot que
-      // de laisser du vide sous les cartes.
-      const rows = n <= 4 ? n : Math.ceil(n / 2);
-      const cols = n <= 4 ? 1 : 2;
-      // (lot AG) En deux colonnes, chaque carte n'a que la moitie de la
-      // largeur : identite et chrono se resserrent, les boutons - et +
-      // rapetissent, et c'est le score qui recupere la place.
-      const compact = cols > 1;
-      // Le minuteur, quand il est affiche, occupe une bande en haut :
-      // on la retire de la hauteur disponible pour les cartes joueurs.
-      const timerBand = timerOn ? ((timerEndsAt || timerRest != null || timerRinging) ? 108 : 152) : 0;
-      const rowH = `clamp(104px, calc((100vh - ${420 + timerBand}px) / ${rows}), 230px)`;
+    // ---- les trois temps, cote a cote ----
+    const phaseTiles = (big) => (
+      <div role="group" aria-label="Les trois temps de la partie"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: big ? 10 : 8 }}>
+        {PH_KEYS.map((ph) => {
+          const m = PH[ph];
+          const run = activePhase === ph;
+          const started = phStarted[ph];
+          const done = !run && phDone[ph];
+          const locked = phLocked[ph];
+          const state = run ? 'en cours' : (done ? 'terminée' : (started ? 'en pause' : 'à venir'));
+          const dot = run
+            ? <span style={{ width: big ? 22 : 18, height: big ? 22 : 18, borderRadius: '50%', background: m.c2, display: 'grid', placeItems: 'center', flexShrink: 0 }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#fff' }} /></span>
+            : (done
+              ? <span style={{ width: big ? 22 : 18, height: big ? 22 : 18, borderRadius: '50%', background: m.c2, color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg></span>
+              : (started
+                ? <span style={{ width: big ? 22 : 18, height: big ? 22 : 18, borderRadius: '50%', border: `2px solid ${m.tint}`, color: m.tint, boxSizing: 'border-box', display: 'grid', placeItems: 'center', flexShrink: 0 }}>{icoPause(11)}</span>
+                : <span style={{ width: big ? 22 : 18, height: big ? 22 : 18, borderRadius: '50%', border: `2px solid ${m.tint}`, boxSizing: 'border-box', flexShrink: 0 }} />));
+          return (
+            <button key={ph} type="button" onClick={locked ? undefined : () => togglePhase(ph)} disabled={locked}
+              aria-pressed={run}
+              title={locked ? `${m.label} : ${state}` : (run ? `Mettre ${m.label.toLowerCase()} en pause` : `Démarrer ou reprendre : ${m.label.toLowerCase()}`)}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, minWidth: 0,
+                minHeight: big ? 96 : 84, boxSizing: 'border-box', padding: big ? '12px 14px' : '10px 11px',
+                borderRadius: big ? 22 : 18, textAlign: 'left', font: 'inherit', color: K.ink,
+                cursor: locked ? 'default' : 'pointer',
+                background: run ? (dark ? `${m.c2}33` : `${m.c1}24`) : ((started || done) ? K.panel : 'transparent'),
+                border: run ? `3px solid ${m.c1}` : ((started || done) ? `2px solid ${K.line}` : `2px dashed ${K.dash}`),
+                boxShadow: run ? `0 10px 22px -10px ${m.c2}` : ((started || done) ? '0 6px 16px rgba(18,41,63,.06)' : 'none'),
+                WebkitTapHighlightColor: 'transparent', touchAction: 'manipulation',
+              }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '100%',
+                fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(12px,1.15vw,14px)' : 12.5, color: m.tint }}>
+                {dot}<span style={{ lineHeight: 1.1, overflowWrap: 'break-word', minWidth: 0 }}>{m.label}</span>
+              </span>
+              <span style={{ fontFamily: TITLE, fontWeight: 700, fontSize: big ? 30 : 24, lineHeight: 1.15,
+                fontVariantNumeric: 'tabular-nums', color: (started || done) ? K.ink : K.faint }}>
+                {(started || done) ? fmt(phTotal[ph]) : '—:—'}
+              </span>
+              <span style={{ fontSize: big ? 13 : 11.5, fontWeight: run ? 800 : 600, color: run ? m.tint : K.sub }}>{state}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
 
-      // Repere discret : moyenne observee sur ce jeu, et duree annoncee sur sa
-      // fiche pour la phase de partie.
-      const avgOf = { setup: avgTimes?.setup, play: avgTimes?.play, teardown: avgTimes?.teardown };
-      const bigPhase = (ph, label, total, started, color, disabled) => {
-        const running = activePhase === ph;
-        const paused = !running && started;
-        const moy = avgOf[ph];
-        const prevu = ph === 'play' && game?.play_time ? Number(game.play_time) * 60 : null;
-        return (
-          <button onClick={disabled ? undefined : () => togglePhase(ph)} disabled={disabled}
-            style={{ position: 'relative',
-              flex: 1, borderRadius: 20, padding: 'clamp(10px,1.3vw,18px) clamp(12px,1.6vw,22px)',
-              textAlign: 'left', cursor: disabled ? 'default' : 'pointer', minWidth: 0,
-              background: running ? `linear-gradient(140deg, ${color}, ${color}cc)` : '#fff',
-              color: running ? '#fff' : C.navy,
-              border: `2px solid ${running ? color : (paused ? `${color}66` : '#E7DCC7')}`,
-              boxShadow: running ? `0 14px 30px -14px ${color}` : '0 2px 8px rgba(90,70,40,.07)',
-              opacity: disabled ? .4 : 1, transition: 'background .2s, box-shadow .2s, border-color .2s',
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: TITLE, fontWeight: 600,
-              fontSize: 'clamp(14px,1.35vw,21px)', opacity: running ? 1 : .75, letterSpacing: .2 }}>
-              <span>{running ? '⏸' : (paused ? '▶' : '○')}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-            </div>
-            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(32px,3.9vw,62px)',
-              lineHeight: 1.05, marginTop: 2, fontVariantNumeric: 'tabular-nums',
-              color: running ? '#fff' : (started ? color : '#C9BBA2') }}>
-              {fmt(total)}
-            </div>
-            {moy != null && moy > 0 && (
-              <span title={`Moyenne sur ${avgTimes.n} partie${avgTimes.n > 1 ? 's' : ''} de ce jeu`}
-                style={{ position: 'absolute', top: 'clamp(9px,1.1vw,15px)', right: 'clamp(11px,1.3vw,18px)',
-                  fontSize: 'clamp(10px,.92vw,15px)', fontWeight: 700, letterSpacing: .2,
-                  color: running ? 'rgba(255,255,255,.85)' : '#a89a86' }}>
-                moy. {fmt(moy)}
-              </span>
+    // ---- pause + etape suivante ----
+    const actions = (big) => {
+      const a = nextAct;
+      const m = a ? (a.end ? { c1: '#E25B6E', c2: C.red, edge: '#7E1626', ink: '#FFFFFF' } : PH[a.ph]) : null;
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: big ? 12 : 10 }}>
+            {activePhase && (
+              <button type="button" onClick={() => togglePhase(activePhase)} aria-label="Mettre en pause" title="Mettre en pause"
+                style={{ width: big ? 80 : 64, height: big ? 80 : 64, flexShrink: 0, borderRadius: big ? 24 : 20, padding: 0,
+                  border: dark ? 'none' : `2px solid ${C.navy}`, background: dark ? 'rgba(255,255,255,.1)' : '#FFFFFF',
+                  boxShadow: dark ? 'inset 0 0 0 2px rgba(255,255,255,.35)' : 'none',
+                  color: K.ink, display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+                {icoPause(big ? 28 : 24)}
+              </button>
             )}
-            {prevu != null && (
-              <span title="Durée annoncée sur la fiche du jeu"
-                style={{ position: 'absolute', bottom: 'clamp(8px,1vw,14px)', right: 'clamp(11px,1.3vw,18px)',
-                  fontSize: 'clamp(10px,.92vw,15px)', fontWeight: 700, letterSpacing: .2,
-                  color: running ? 'rgba(255,255,255,.85)' : '#a89a86' }}>
-                prévu {fmt(prevu)}
-              </span>
+            {a && (
+              <button type="button" onClick={a.end ? end : () => togglePhase(a.ph)}
+                style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+                  minHeight: big ? 80 : 64, padding: '0 16px', borderRadius: big ? 24 : 20, border: 'none', cursor: 'pointer',
+                  background: `linear-gradient(180deg, ${m.c1}, ${m.c2})`,
+                  boxShadow: `0 6px 0 ${m.edge}, 0 16px 28px -10px ${m.c2}`,
+                  color: m.ink, fontFamily: TITLE, fontWeight: 700, fontSize: big ? 'clamp(19px,2vw,24px)' : 19, lineHeight: 1.15 }}>
+                <span>{a.label}</span>{icoArrow(big ? 26 : 22)}
+              </button>
             )}
+            {!a && (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: big ? 80 : 64,
+                borderRadius: big ? 24 : 20, background: K.soft, color: K.sub, fontWeight: 700, fontSize: 15, textAlign: 'center', padding: '0 14px' }}>
+                Rangement en cours : l'hôte terminera la partie.
+              </div>
+            )}
+          </div>
+          {a && a.alt && (
+            <button type="button" onClick={() => togglePhase(a.alt.ph)}
+              style={{ alignSelf: 'center', minHeight: 44, padding: '0 12px', border: 'none', background: 'transparent', cursor: 'pointer',
+                color: dark ? '#F6C24A' : '#7A5200', fontWeight: 800, fontSize: 14.5, textDecoration: 'underline', textUnderlineOffset: 3 }}>
+              {a.alt.label}
+            </button>
+          )}
+        </div>
+      );
+    };
+
+    // ---- interrupteur « Tour par tour » ----
+    const turnSwitch = (
+      <button type="button" role="switch" aria-checked={turnsOn} onClick={simul ? undefined : switchTurns} disabled={simul}
+        title={simul ? 'Mode « tous en même temps » en cours' : 'Chronométrer aussi le temps de chaque joueur, tour par tour'}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '0 4px 0 12px', borderRadius: 14, border: 'none',
+          background: K.soft, color: K.softInk, fontFamily: BODY, fontWeight: 700, fontSize: 13.5, cursor: simul ? 'default' : 'pointer', flexShrink: 0 }}>
+        Tour par tour
+        <span style={{ width: 44, height: 26, borderRadius: 13, position: 'relative', display: 'block', flexShrink: 0,
+          background: turnsOn ? C.teal : (dark ? 'rgba(255,255,255,.22)' : '#DCD3C2'), transition: 'background .15s' }}>
+          <span style={{ position: 'absolute', top: 3, left: turnsOn ? 21 : 3, width: 20, height: 20, borderRadius: '50%',
+            background: '#FFFFFF', boxShadow: '0 1px 3px rgba(0,0,0,.3)', transition: 'left .15s' }} />
+        </span>
+      </button>
+    );
+
+    const scoresHead = (big) => (
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 12px', minHeight: 44 }}>
+        <h2 style={{ margin: 0, fontFamily: TITLE, fontWeight: 700, fontSize: big ? 24 : 20, color: K.ink }}>
+          {scored ? 'Scores' : 'La tablée'}
+        </h2>
+        <button type="button" onClick={() => setModeOpen(true)} title="Changer le type de partie"
+          style={{ minHeight: 36, padding: 0, border: 'none', background: 'none', cursor: 'pointer', font: 'inherit',
+            fontSize: big ? 14.5 : 13.5, color: K.sub, textDecoration: 'underline', textUnderlineOffset: 2, textAlign: 'left' }}>
+          {structureOf(structure).icon} {playModeLabel(structure, rule)}
+        </button>
+        <span style={{ marginLeft: 'auto' }}>{turnSwitch}</span>
+      </div>
+    );
+
+    // ---- un joueur ----
+    const stepStyle = (size, activeCard, ink) => ({
+      width: size, height: size, flexShrink: 0, alignSelf: 'center', borderRadius: Math.round(size * 0.32), padding: 0, cursor: 'pointer',
+      border: 'none', display: 'grid', placeItems: 'center',
+      background: activeCard ? 'rgba(255,255,255,.22)' : (dark ? 'rgba(255,255,255,.14)' : '#FFFFFF'),
+      boxShadow: activeCard || dark ? 'none' : '0 4px 10px rgba(18,41,63,.10)',
+      color: activeCard ? ink : K.ink, fontFamily: TITLE, fontWeight: 600, fontSize: Math.round(size * 0.54), lineHeight: 1,
+      touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+    });
+    const orderStyle = (off, activeCard, ink, narrow) => ({
+      width: narrow ? 30 : 36, height: 30, borderRadius: 9, padding: 0, display: 'grid', placeItems: 'center',
+      cursor: off ? 'default' : 'pointer', opacity: off ? 0.3 : 1, fontSize: 12, lineHeight: 1,
+      border: `2px solid ${activeCard ? 'rgba(255,255,255,.45)' : K.line}`,
+      background: activeCard ? 'rgba(255,255,255,.16)' : 'transparent', color: activeCard ? ink : K.sub,
+    });
+    const tileTint = (hex) => (dark
+      ? `linear-gradient(160deg, ${hex}47, ${hex}14)`
+      : `linear-gradient(160deg, ${hex}1f, ${hex}0d)`);
+
+    const playerTile = (p, i, big, cols) => {
+      const hex = hexFor(p);
+      const active = turnsOn && (simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play'));
+      const clickable = turnsOn && gamePhase === 'play';
+      const lead = leaderIds.includes(p.id);
+      const ink = active ? readableOn(hex) : K.ink;
+      const photo = big ? (cols >= 4 ? 40 : (cols >= 3 ? 50 : 60)) : 44;
+      const step = big ? (cols >= 3 ? 48 : 56) : 44;
+      const name = (
+        <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
+          <span title={p.name} style={{ fontFamily: TITLE, fontWeight: 700, fontSize: big ? (cols >= 4 ? 16 : (cols >= 3 ? 18 : 23)) : 17.5, lineHeight: 1.12, color: ink,
+            display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', overflowWrap: 'break-word', maxWidth: '100%' }}>
+            {p.name}
+          </span>
+          {lead && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 13 : 12,
+              background: 'linear-gradient(180deg, #F6C24A, #E8A317)', color: '#12293F', padding: '2px 10px', borderRadius: 999 }}>
+              {icoCrown(12)}{big && cols >= 4 ? '' : 'En tête'}
+            </span>
+          )}
+          {structure === 'teams' && p.team != null && (
+            <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.04em', color: active ? ink : hex }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
+          )}
+        </span>
+      );
+      const minus = () => setPlayerScore(p.id, (p.score || 0) - 1);
+      const plus = () => setPlayerScore(p.id, (p.score || 0) + 1);
+      const scoreTint = lead && !active && dark ? '#F6C24A' : ink;
+      // Tablette, tuiles etroites (5 joueurs et plus) : le score prend toute la
+      // largeur et les deux boutons passent dessous, en deux grandes touches.
+      const stacked = big && cols >= 3;
+      const scoreCtl = !scored ? null : (stacked ? (
+        <div onClick={(e) => e.stopPropagation()} style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button type="button" onClick={() => setScoreFor(p.id)} title="Ouvrir la calculatrice"
+            style={{ flex: '1 1 auto', minHeight: 44, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+              display: 'flex', flexDirection: 'column', justifyContent: 'center', overflow: 'hidden' }}>
+            <FitScore value={p.score || 0} color={scoreTint} minPx={30} maxPx={110} />
           </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={minus} aria-label={`Retirer un point à ${p.name}`} title="−1 point"
+              style={{ ...stepStyle(step, active, ink), flex: 1, width: 'auto', height: 50 }}>−</button>
+            <button type="button" onClick={plus} aria-label={`Ajouter un point à ${p.name}`} title="+1 point"
+              style={{ ...stepStyle(step, active, ink), flex: 1, width: 'auto', height: 50 }}>+</button>
+          </div>
+        </div>
+      ) : (
+        <div onClick={(e) => e.stopPropagation()}
+          style={{ display: 'flex', alignItems: 'center', gap: big ? 8 : 6, justifyContent: 'space-between', minWidth: 0,
+            ...(big ? { flex: '1 1 auto', minHeight: step, width: '100%', alignItems: 'stretch' } : { flexShrink: 0 }) }}>
+          <button type="button" onClick={minus}
+            aria-label={`Retirer un point à ${p.name}`} title="−1 point" style={stepStyle(step, active, ink)}>−</button>
+          {big ? (
+            <button type="button" onClick={() => setScoreFor(p.id)} title="Ouvrir la calculatrice"
+              style={{ flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+                display: 'flex', flexDirection: 'column', justifyContent: 'center', overflow: 'hidden' }}>
+              <FitScore value={p.score || 0} color={scoreTint} minPx={30} maxPx={150} />
+            </button>
+          ) : (
+            <button type="button" onClick={() => setScoreFor(p.id)} title="Ouvrir la calculatrice"
+              style={{ minWidth: 52, height: step, padding: '0 4px', border: 'none', background: 'transparent', cursor: 'pointer',
+                fontFamily: TITLE, fontWeight: 700, fontSize: 30, lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}>
+              {p.score || 0}
+            </button>
+          )}
+          <button type="button" onClick={plus}
+            aria-label={`Ajouter un point à ${p.name}`} title="+1 point" style={stepStyle(step, active, ink)}>+</button>
+        </div>
+      ));
+      const orderCtl = turnsOn && players.length > 1 ? (
+        <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          <button type="button" onClick={() => { if (i > 0) movePlayer(p.id, true); }} disabled={i === 0}
+            aria-label={`Faire jouer ${p.name} plus tôt`} style={orderStyle(i === 0, active, ink, big && cols >= 3)}>▲</button>
+          <button type="button" onClick={() => { if (i < players.length - 1) movePlayer(p.id, false); }} disabled={i === players.length - 1}
+            aria-label={`Faire jouer ${p.name} plus tard`} style={orderStyle(i === players.length - 1, active, ink, big && cols >= 3)}>▼</button>
+        </div>
+      ) : null;
+      // La pastille de couleur se pose sur le coin de la photo : elle reste a
+      // portee de doigt sans voler de place au nom ni au score. Retirer un
+      // joueur se fait depuis « La tablée ».
+      const photoEl = (
+        <span style={{ position: 'relative', flexShrink: 0, display: 'block' }}>
+          <Avatar name={p.name} url={p.avatar_url} color={hex} size={photo} square />
+          <button type="button" onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }}
+            title="Changer la couleur" aria-label={`Changer la couleur de ${p.name}`}
+            style={{ position: 'absolute', right: -5, bottom: -5, width: big ? 22 : 20, height: big ? 22 : 20, borderRadius: 7, padding: 0, cursor: 'pointer',
+              background: hex, border: `2px solid ${dark ? '#12293F' : '#FFFFFF'}`, boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+        </span>
+      );
+      const cardStyle = {
+        position: 'relative', boxSizing: 'border-box', minWidth: 0, overflow: 'hidden',
+        borderRadius: big ? 24 : 20, cursor: clickable ? 'pointer' : 'default',
+        background: active ? `linear-gradient(140deg, ${hex}, ${hex}d0)` : tileTint(hex),
+        boxShadow: active ? `0 16px 34px -14px ${hex}` : (lead ? `inset 0 0 0 3px ${C.amber}${dark ? ', 0 0 24px rgba(246,194,74,.22)' : ''}` : 'none'),
+        transition: 'background .18s, box-shadow .18s',
+      };
+      const onTap = clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined;
+      if (big) {
+        return (
+          <div key={p.id} onClick={onTap} style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 8, padding: '14px 16px', minHeight: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: cols >= 4 ? 8 : (cols >= 3 ? 10 : 12), minWidth: 0 }}>
+              {photoEl}
+              {name}
+            </div>
+            {turnsOn && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', minWidth: 0 }}>
+                <span style={{ minWidth: 0, fontFamily: TITLE, fontWeight: 700, fontSize: cols >= 3 ? 20 : 'clamp(18px,1.9vw,28px)', color: ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {fmt(shown(p.id))}
+                  {(cols < 3 || active) && (
+                    <span style={{ marginLeft: 8, fontFamily: BODY, fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', opacity: .75 }}>
+                      {active ? (cols >= 3 ? 'joue' : 'à lui de jouer') : 'réflexion'}
+                    </span>
+                  )}
+                </span>
+                {orderCtl}
+              </div>
+            )}
+            {scoreCtl}
+          </div>
         );
-      };
+      }
+      return (
+        <div key={p.id} onClick={onTap} style={{ ...cardStyle, padding: '10px 10px 10px 10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {photoEl}
+          {name}
+          {scoreCtl}
+          </div>
+          {/* Tour par tour : le temps de reflexion et l'ordre de jeu, sur une
+              seconde ligne -- le score garde toute sa place. */}
+          {turnsOn && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, paddingTop: 8,
+              borderTop: `1.5px dashed ${active ? 'rgba(255,255,255,.4)' : K.line}` }}>
+              <span style={{ flex: 1, minWidth: 0, fontFamily: TITLE, fontWeight: 700, fontSize: 20, color: ink, fontVariantNumeric: 'tabular-nums' }}>
+                {fmt(shown(p.id))}
+                <span style={{ marginLeft: 8, fontFamily: BODY, fontSize: 11.5, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', opacity: .75 }}>
+                  {active ? 'à lui de jouer' : 'réflexion'}
+                </span>
+              </span>
+              {orderCtl}
+            </div>
+          )}
+        </div>
+      );
+    };
 
-      // Les accessoires sont de gros carres : sur une tablette, une pastille
-      // fine se rate une fois sur deux.
-      // `highlight` : tuile mise en avant sans etre "active" -- une action qu'on
-      // doit reperer du premier coup d'oeil au milieu des autres.
-      // (lot AB) Le nom du joueur doit se lire EN ENTIER : sur une tablette la
-      // place ne manque pas, le couper n'avait aucune raison d'etre. On reduit
-      // donc la taille au fur et a mesure qu'il s'allonge, et il peut passer
-      // sur deux lignes.
-      const nameSize = (nm) => {
-        const L = String(nm || '').length;
-        if (L <= 10) return 'clamp(19px,2.05vw,34px)';
-        if (L <= 16) return 'clamp(17px,1.7vw,28px)';
-        if (L <= 24) return 'clamp(15px,1.4vw,23px)';
-        return 'clamp(13px,1.15vw,19px)';
-      };
-      const nameSizeCompact = (nm) => {
-        const L = String(nm || '').length;
-        if (L <= 10) return 'clamp(15px,1.45vw,26px)';
-        if (L <= 16) return 'clamp(14px,1.25vw,22px)';
-        if (L <= 24) return 'clamp(12px,1.05vw,18px)';
-        return 'clamp(11px,.92vw,16px)';
-      };
-
-      const tile = (icon, label, on, onClick, tint, highlight) => (
-        <button onClick={onClick} style={{
+    // ---- commandes secondaires (en tuiles sur la tablette) ----
+    const tile = (icon, label, on, onClick, tint, highlight) => {
+      const tt = tint || C.teal;
+      return (
+        <button type="button" onClick={onClick} style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5,
-          minHeight: 'clamp(74px,7.6vh,104px)', padding: '8px 10px', borderRadius: 18, cursor: 'pointer',
-          border: `2px solid ${on ? (tint || C.teal) : (highlight ? `${tint || C.teal}99` : '#E7DCC7')}`,
-          background: on ? `${tint || C.teal}18` : (highlight ? `${tint || C.teal}0f` : '#fff'),
-          color: on ? (tint || C.teal) : (highlight ? (tint || C.teal) : C.navy),
-          boxShadow: '0 2px 8px rgba(90,70,40,.07)', textAlign: 'center',
+          minHeight: 'clamp(70px,7vh,96px)', padding: '8px 10px', borderRadius: 18, cursor: 'pointer',
+          border: `2px solid ${on ? tt : (highlight ? `${tt}99` : K.line)}`,
+          background: on ? `${tt}22` : (highlight ? `${tt}14` : K.panel),
+          color: on || highlight ? (dark ? '#FFFFFF' : tt) : K.ink,
+          boxShadow: dark ? 'none' : '0 2px 8px rgba(90,70,40,.07)', textAlign: 'center',
         }}>
-          <span style={{ fontSize: 'clamp(20px,1.9vw,28px)', lineHeight: 1 }}>{icon}</span>
-          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(12px,1.05vw,16px)', lineHeight: 1.2 }}>{label}</span>
+          <span style={{ fontSize: 'clamp(20px,1.9vw,26px)', lineHeight: 1 }}>{icon}</span>
+          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(12px,1.05vw,15px)', lineHeight: 1.2 }}>{label}</span>
         </button>
       );
+    };
+    const commandTiles = (
+      <>
+        {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
+        {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
+        {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
+        {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
+        {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
+        {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
+        {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
+        {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
+        {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
+        {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
+        {turnsOn && isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre le tour' : 'Pause du tour', !!neutral, toggleNeutral, C.amber)}
+        {turnsOn && isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
+        {turnsOn && isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
+        {turnsOn && isHost && gamePhase === 'play' && simul && tile('↩', 'Mode normal', false, simulExit, C.purple)}
+        {isHost && tile('🏁', 'Terminer la partie', false, end, C.red)}
+      </>
+    );
 
-      return shell(
-        <div>
-          {scoreFor && (() => {
-            const sp = players.find((p) => p.id === scoreFor);
-            return sp ? (
-              <ScorePad key={sp.id} name={sp.name + (structure === 'teams' && sp.team != null ? ` · équipe ${TEAM_LETTERS[sp.team]}` : (isCoop ? ' · score commun' : ''))} initialScore={sp.score || 0}
-                onClose={() => setScoreFor(null)}
-                onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
-            ) : null;
-          })()}
-
-          {/* Trois grands blocs de phase */}
-          <div style={{ display: 'flex', gap: 'clamp(8px,1vw,14px)', marginBottom: 'clamp(8px,1vw,14px)' }}>
-            {bigPhase('setup', 'Mise en place', setupTotal, setupTotal > 0, C.teal, hasPlayed)}
-            {bigPhase('play', 'Partie', playTotal, (session?.play_seconds || 0) > 0, C.amber, hasWrapped)}
-            {bigPhase('teardown', 'Rangement', teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
+    // ---- fenetres communes aux deux dispositions ----
+    const scorePadEl = scoreFor && (() => {
+      const sp = players.find((p) => p.id === scoreFor);
+      return sp ? (
+        <ScorePad key={sp.id} name={sp.name + (structure === 'teams' && sp.team != null ? ` · équipe ${TEAM_LETTERS[sp.team]}` : (isCoop ? ' · score commun' : ''))} initialScore={sp.score || 0}
+          onClose={() => setScoreFor(null)}
+          onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
+      ) : null;
+    })();
+    const newGameModal = newGamePrompt && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminée</div>
+          <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
+            {rule === 'none'
+              ? 'Partie sans vainqueur : elle est comptée telle quelle. On repart ensuite sur une nouvelle partie du même jeu.'
+              : isCoop
+              ? 'Partie coopérative : la table a-t-elle gagné ? On repart ensuite sur une nouvelle partie du même jeu.'
+              : (scored && anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores, corrigez-le si besoin. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? Touchez le ou les gagnants. On repart ensuite sur une nouvelle partie du même jeu.')}
           </div>
-
-          {timerOn && <TimerBar t={timerApi} big />}
-
-          {/* Bandeau du jeu */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, background: '#fff',
-            border: '1px solid #E7DCC7', borderRadius: 18, padding: '10px clamp(12px,1.4vw,20px)',
-            marginBottom: 'clamp(8px,1vw,14px)', boxShadow: '0 2px 8px rgba(90,70,40,.06)' }}>
-            {game?.image_url
-              ? <img src={game.image_url} alt="" style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, objectFit: 'cover', flex: '0 0 auto' }} />
-              : <span style={{ width: 'clamp(46px,4vw,68px)', height: 'clamp(46px,4vw,68px)', borderRadius: 13, background: `linear-gradient(135deg,${C.teal},${C.navy})`, flex: '0 0 auto' }} />}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div title={game?.name || ''} style={{ fontFamily: TITLE, fontWeight: 600,
-                fontSize: 'clamp(20px,2.1vw,32px)', color: C.navy, lineHeight: 1.15,
-                display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
-                overflow: 'hidden', overflowWrap: 'anywhere' }}>
-                {game?.name || 'Partie en cours'}
-              </div>
-              <div style={{ fontSize: 'clamp(12px,1.05vw,16px)', color: '#9c8d79', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <span>Partie {session?.current_game || 1}</span>
-                {simul && <span style={{ color: C.purple, fontWeight: 700 }}>· Simultané</span>}
-                {neutral && <span style={{ color: C.amber, fontWeight: 700 }}>· En pause</span>}
-                <button type="button" onClick={() => setModeOpen(true)} title="Changer le type de partie"
-                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.purple, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
-                  · {structureOf(structure).icon} {playModeLabel(structure, rule)}
-                </button>
-                {session?.join_code && (
-                  <button type="button" onClick={() => setQrOpen(true)} title="Afficher le QR code pour rejoindre la partie"
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: C.teal, fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 2 }}>
-                    · Code {session.join_code} ▦
-                  </button>
-                )}
-              </div>
+          {isCoop && rule !== 'none' && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
+          {!isCoop && scored && anyScore && (
+            <div style={{ marginBottom: 12 }}>
+              <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); }} saved={game?.score_direction} compact />
             </div>
-            <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
-              <div style={{ fontSize: 'clamp(10px,.8vw,13px)', letterSpacing: 1, color: '#b6a78f', fontWeight: 700, textTransform: 'uppercase' }}>Durée de jeu</div>
-              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(26px,2.6vw,42px)', color: C.navy, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmt(totalElapsed)}</div>
-            </div>
-          </div>
-
-          {/* Cartes joueurs : identite / score / chrono */}
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 'clamp(8px,1vw,14px)', marginBottom: 'clamp(8px,1vw,14px)' }}>
-            {players.map((p, i) => {
-              const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
-              const clickable = gamePhase === 'play';
-              const hex = hexFor(p);
-              const ink = active ? readableOn(hex) : C.navy;
-              /* (lot AB ter) Deux familles de boutons, deux allures, pour qu'on
-                 ne les confonde jamais du coin de l'oeil :
-                   - compter un point : de gros carres teintes rouge ou vert,
-                     colles au score, au centre de la carte ;
-                   - changer l'ordre des joueurs : de petites touches neutres,
-                     cernees, posees tout a droite contre le chrono.
-                 Sur une carte active (fond colore), les deux passent en blanc
-                 translucide pour rester lisibles. */
-              const stepBtn = (tint) => ({
-                width: compact ? 'clamp(40px,3.2vw,56px)' : 'clamp(50px,4.4vw,74px)',
-                height: compact ? 'clamp(40px,3.2vw,56px)' : 'clamp(50px,4.4vw,74px)', flex: '0 0 auto',
-                borderRadius: compact ? 12 : 16, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
-                fontFamily: TITLE, fontWeight: 600, fontSize: compact ? 'clamp(22px,1.8vw,32px)' : 'clamp(26px,2.3vw,40px)', lineHeight: 1,
-                border: `2px solid ${active ? 'rgba(255,255,255,.55)' : `${tint}66`}`,
-                background: active ? 'rgba(255,255,255,.20)' : `${tint}14`,
-                color: active ? ink : tint,
-                touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
-              });
-              const ordBtn = (off) => ({
-                width: compact ? 'clamp(32px,2.6vw,46px)' : 'clamp(40px,3.2vw,54px)',
-                height: compact ? 'clamp(24px,1.9vw,32px)' : 'clamp(27px,2.1vw,36px)', flex: '0 0 auto',
-                borderRadius: 10, padding: 0, display: 'grid', placeItems: 'center',
-                cursor: off ? 'default' : 'pointer', opacity: off ? 0.3 : 1,
-                border: `2px solid ${active ? 'rgba(255,255,255,.45)' : '#E7DCC7'}`,
-                background: active ? 'rgba(255,255,255,.16)' : '#fff',
-                color: active ? ink : `${C.navy}99`,
-                fontSize: 'clamp(11px,1vw,15px)', lineHeight: 1,
-                touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
-              });
+          )}
+          <div style={{ display: (isCoop || rule === 'none') ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
+            {players.map((p) => {
+              const won = newGameWinners.includes(p.id);
               return (
-                <div key={p.id}
-                  onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
-                  style={{
-                    position: 'relative', display: 'flex', alignItems: 'center',
-                    gap: compact ? 'clamp(6px,.7vw,12px)' : 'clamp(10px,1.2vw,20px)',
-                    minHeight: rowH, borderRadius: 20,
-                    padding: compact ? '8px clamp(10px,1vw,16px)' : '10px clamp(12px,1.5vw,22px)',
-                    cursor: clickable ? 'pointer' : 'default', overflow: 'hidden',
-                    background: active ? `linear-gradient(115deg, ${hex}, ${hex}d0)` : '#fff',
-                    border: `2px solid ${active ? hex : '#E7DCC7'}`,
-                    boxShadow: active ? `0 16px 36px -16px ${hex}` : '0 2px 8px rgba(90,70,40,.07)',
-                    transition: 'background .18s, box-shadow .18s, border-color .18s',
-                  }}>
-                  {/* Bande de couleur : l'identite visuelle reste lisible meme carte inactive */}
-                  {!active && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, background: hex }} />}
-
-                  {/* Identite */}
-                  <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    gap: compact ? 4 : 6, width: compact ? 'clamp(88px,10.5vw,200px)' : 'clamp(134px,15vw,272px)', marginLeft: active ? 0 : 6 }}>
-                    <Avatar name={p.name} url={p.avatar_url} color={hex} size={compact ? 50 : 78} />
-                    <span title={p.name} style={{ fontFamily: TITLE, fontWeight: 600, fontSize: compact ? nameSizeCompact(p.name) : nameSize(p.name),
-                      lineHeight: 1.14, color: ink, textAlign: 'center', maxWidth: '100%',
-                      display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
-                      overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</span>
-                    {structure === 'teams' && p.team != null && (
-                      <span style={{ fontSize: 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: .4,
-                        color: active ? ink : hex, opacity: .9 }}>ÉQUIPE {TEAM_LETTERS[p.team]}</span>
-                    )}
-                  </div>
-
-                  {/* Score, au centre et en tres grand, encadre de ses deux
-                      boutons : un appui = un point, sans ouvrir la calculatrice.
-                      Le nombre lui-meme ouvre le pave pour le reste.
-                      (lot AH) Partie sans score : la place reste vide. */}
-                  {!scored ? <div style={{ flex: 1, minWidth: 0 }} /> : (
-                  <div onClick={(e) => e.stopPropagation()}
-                    style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', gap: compact ? 'clamp(8px,1.2vw,22px)' : 'clamp(8px,1vw,18px)',
-                      alignSelf: compact ? 'stretch' : undefined }}>
-                    <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
-                      aria-label={`Retirer un point a ${p.name}`} title="−1 point" style={stepBtn(C.red)}>−</button>
-                    {compact ? (
-                      /* (lot AG) Le score occupe toute la place entre ses deux
-                         boutons et prend la plus grande taille qui y tient. */
-                      <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
-                        style={{ flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', border: 'none', background: 'transparent', cursor: 'pointer',
-                          padding: '2px 0', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', overflow: 'hidden' }}>
-                        <FitScore value={p.score || 0} color={ink} minPx={26} maxPx={120} />
-                        <span style={{ fontSize: 'clamp(10px,.85vw,14px)', letterSpacing: 1.2, fontWeight: 700, textAlign: 'center',
-                          opacity: .55, textTransform: 'uppercase', marginTop: 1, flex: '0 0 auto' }}>points</span>
-                      </button>
-                    ) : (
-                      <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
-                        style={{ flex: '0 1 auto', minWidth: 0, border: 'none', background: 'transparent', cursor: 'pointer',
-                          padding: 0, color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                        <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(44px, 6.2vw, 112px)',
-                          lineHeight: .95, fontVariantNumeric: 'tabular-nums' }}>{p.score || 0}</span>
-                        <span style={{ fontSize: 'clamp(12px,1.05vw,17px)', letterSpacing: 1.4, fontWeight: 700,
-                          opacity: .55, textTransform: 'uppercase', marginTop: 2 }}>points</span>
-                      </button>
-                    )}
-                    <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
-                      aria-label={`Ajouter un point a ${p.name}`} title="+1 point" style={stepBtn(C.teal)}>+</button>
-                  </div>
-                  )}
-
-                  {/* Ordre des joueurs et chrono, a droite.
-                      Les fleches sont posees CONTRE le temps, et non sous le
-                      score : on ne les touche donc pas en comptant les points,
-                      et la carte garde exactement la meme hauteur. */}
-                  <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-                    gap: compact ? 'clamp(5px,.55vw,10px)' : 'clamp(7px,.8vw,13px)',
-                    ...(compact ? { minWidth: 'clamp(112px,11vw,210px)' } : { width: 'clamp(162px,15vw,290px)' }) }}>
-                    {players.length > 1 && (
-                      <div onClick={(e) => e.stopPropagation()}
-                        style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 auto' }}>
-                        <button onClick={(e) => { e.stopPropagation(); if (i > 0) movePlayer(p.id, true); }}
-                          disabled={i === 0} title={`Faire jouer ${p.name} plus tot`} aria-label="Monter dans l'ordre des joueurs"
-                          style={ordBtn(i === 0)}>▲</button>
-                        <button onClick={(e) => { e.stopPropagation(); if (i < players.length - 1) movePlayer(p.id, false); }}
-                          disabled={i === players.length - 1} title={`Faire jouer ${p.name} plus tard`} aria-label="Descendre dans l'ordre des joueurs"
-                          style={ordBtn(i === players.length - 1)}>▼</button>
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-                      justifyContent: 'center', gap: 3, minWidth: 0 }}>
-                      <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: compact ? 'clamp(22px,2.2vw,42px)' : 'clamp(30px,3.15vw,58px)',
-                        lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmt(shown(p.id))}</span>
-                      {active
-                        ? <span style={{ fontSize: compact ? 'clamp(9.5px,.82vw,14px)' : 'clamp(11px,1.05vw,17px)', fontWeight: 800, letterSpacing: compact ? .5 : .8, color: ink, opacity: .85, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>à lui de jouer</span>
-                        : <span style={{ fontSize: compact ? 'clamp(9.5px,.82vw,14px)' : 'clamp(11px,1.05vw,17px)', color: '#b6a78f', letterSpacing: compact ? .4 : .6, textTransform: 'uppercase', fontWeight: 700, whiteSpace: 'nowrap' }}>temps de jeu</span>}
-                    </div>
-                  </div>
-
-                  {/* Pastille de couleur */}
-                  <button onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
-                    style={{ position: 'absolute', top: 10, right: 12, width: 22, height: 22, borderRadius: 7,
-                      cursor: 'pointer', background: hex, border: `2px solid ${active ? ink : '#fff'}`,
-                      boxShadow: '0 0 0 1px rgba(0,0,0,.12)' }} />
-                  {isHost && players.length > 1 && (
-                    <button onClick={(e) => { e.stopPropagation(); removePlayer(p); }} title={`Retirer ${p.name} de la partie`}
-                      style={{ position: 'absolute', top: 10, right: 42, width: 22, height: 22, borderRadius: 7,
-                        cursor: 'pointer', background: active ? 'rgba(255,255,255,.25)' : '#fff',
-                        border: `2px solid ${active ? ink : `${C.red}66`}`, color: active ? ink : C.red,
-                        display: 'grid', placeItems: 'center', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
-                  )}
-                </div>
+                <button key={p.id} onClick={() => { setWinnersTouched(true); toggleNewGameWinner(p.id); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
+                    border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
+                  <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={30} />
+                  <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
+                  {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
+                  <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
+                </button>
               );
             })}
           </div>
-
-          {/* Accessoires et commandes, en gros carres */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,168px), 1fr))', gap: 'clamp(8px,.9vw,12px)' }}>
-            {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
-            {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
-            {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
-            {isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre' : 'Pause', !!neutral, toggleNeutral, C.amber)}
-            {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
-            {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
-            {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
-            {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
-            {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
-            {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
-            {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
-            {isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
-            {isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
-            {isHost && gamePhase === 'play' && simul && tile('↩', 'Mode normal', false, simulExit, C.purple)}
-            {isHost && tile('🏁', 'Terminer la partie', false, end, C.red)}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null); }}>Annuler</button>
+            <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
           </div>
+        </div>
+      </div>
+    );
 
-          {newGamePrompt && (
-            <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div style={{ background: C.cream, color: C.navy, borderRadius: 20, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
-                <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Partie terminée</div>
-                <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                  {rule === 'none'
-                    ? 'Partie sans vainqueur : elle est comptée telle quelle. On repart ensuite sur une nouvelle partie du même jeu.'
-                    : isCoop
-                    ? 'Partie coopérative : la table a-t-elle gagné ? On repart ensuite sur une nouvelle partie du même jeu.'
-                    : (scored && anyScore ? 'Qui a gagné cette partie ? Le vainqueur est déduit des scores. On repart ensuite sur une nouvelle partie du même jeu.' : 'Qui a gagné cette partie ? Touchez le ou les gagnants. On repart ensuite sur une nouvelle partie du même jeu.')}
-                </div>
-                {isCoop && rule !== 'none' && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
-                <div style={{ display: (isCoop || rule === 'none') ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
-                  {players.map((p) => {
-                    const won = newGameWinners.includes(p.id);
-                    return (
-                      <button key={p.id} onClick={() => { setWinnersTouched(true); toggleNewGameWinner(p.id); }}
-                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
-                          border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
-                        <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={30} />
-                        <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
-                        {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
-                        <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null); }}>Annuler</button>
-                  <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
-                </div>
-              </div>
+    // ---------- disposition tablette (paysage) ----------
+    // Pensee pour un iPad pose au milieu de la table : a gauche les temps,
+    // a droite les joueurs. Tout se lit a un metre.
+    if (tablet) {
+      const n = players.length || 1;
+      const cols = n <= 1 ? 1 : (n <= 4 ? 2 : (n <= 6 ? 3 : 4));
+      const rows = Math.ceil(n / cols);
+      return shell(
+        <div>
+          {scorePadEl}
+          {timerOn && <div style={{ marginBottom: 12 }}><TimerBar t={timerApi} big /></div>}
+          <div style={{ display: 'flex', gap: 18, alignItems: 'stretch', minHeight: `clamp(520px, calc(100vh - ${timerOn ? 280 : 130}px), 880px)` }}>
+            <div style={{ width: 'clamp(330px, 40%, 500px)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {hero(true)}
+              {phaseTiles(true)}
+              {actions(true)}
             </div>
-          )}
+            <section aria-label={scored ? 'Scores' : 'La tablée'} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12,
+              background: K.panel, borderRadius: 32, padding: '16px 18px 18px',
+              boxShadow: dark ? 'inset 0 0 0 1px rgba(255,255,255,.12)' : K.shadow }}>
+              {scoresHead(true)}
+              <div style={{ flex: 1, minHeight: 0, display: 'grid', gap: 12,
+                gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${rows}, minmax(${scored ? (turnsOn ? 190 : 150) : (turnsOn ? 130 : 96)}px, 1fr))` }}>
+                {players.map((p, i) => playerTile(p, i, true, cols))}
+              </div>
+            </section>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,160px), 1fr))', gap: 'clamp(8px,.9vw,12px)', marginTop: 16 }}>
+            {commandTiles}
+          </div>
+          {newGameModal}
         </div>,
         true
       );
     }
 
+    // ---------- disposition telephone ----------
+    const sec = (extra) => ({ ...btnSecondary, flex: 1, ...(dark ? { background: 'rgba(255,255,255,.1)', color: '#FFFFFF' } : {}), ...extra });
     return shell(
       <div>
-        {scoreFor && (() => {
-          const sp = players.find((p) => p.id === scoreFor);
-          return sp ? (
-            <ScorePad key={sp.id} name={sp.name} initialScore={sp.score || 0}
-              onClose={() => setScoreFor(null)}
-              onApply={(v) => { setPlayerScore(sp.id, v); setScoreFor(null); }} />
-          ) : null;
-        })()}
-        {newGamePrompt && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(26,58,92,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-            <div style={{ background: C.cream, borderRadius: 20, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
-              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.navy, marginBottom: 4 }}>Partie terminee</div>
-              <div style={{ fontSize: 13, color: `${C.navy}99`, marginBottom: 12 }}>
-                {rule === 'none'
-                  ? "Partie sans vainqueur : elle est comptee telle quelle, puis une nouvelle partie du meme jeu commence."
-                  : isCoop
-                  ? "Partie cooperative : la table a-t-elle gagne cette partie ?"
-                  : (scored && anyScore
-                    ? "Qui a gagne cette partie ? Le vainqueur est deduit des scores, corrige-le si besoin."
-                    : "Qui a gagne cette partie ? Touche le ou les gagnants.")}
-              </div>
-              {isCoop && rule !== 'none' && <CoopRoundOutcome won={newGameCoopWon} onPick={setNewGameCoopWon} />}
-              {!isCoop && scored && anyScore && (
-                <div style={{ marginBottom: 12 }}>
-                  <ScoreDirPicker value={scoreDir} onChange={(d) => { changeScoreDir(d); }} saved={game?.score_direction} compact />
-                </div>
-              )}
-              <div style={{ display: (isCoop || rule === 'none') ? 'none' : 'grid', gap: 8, marginBottom: 14 }}>
-                {players.map((p, i) => {
-                  const won = newGameWinners.includes(p.id);
-                  return (
-                    <button key={p.id} onClick={() => { setWinnersTouched(true); toggleNewGameWinner(p.id); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
-                        border: won ? `2px solid ${C.amber}` : '1px solid #e6dcc9', background: won ? '#FDF4E0' : '#fff', textAlign: 'left' }}>
-                      <Avatar name={p.name} url={p.avatar} color={p.color || ACCENTS[i % ACCENTS.length]} size={30} />
-                      <span style={{ fontWeight: 700, flex: 1, color: C.navy }}>{p.name}</span>
-                      {(p.score || 0) !== 0 && <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: '#8a6a1f', background: '#FDF4E0', border: `1px solid ${C.amber}66`, borderRadius: 999, padding: '2px 9px' }}>{p.score} pts</span>}
-                      <span style={{ fontSize: 19, opacity: won ? 1 : 0.3 }}>🏆</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button style={{ ...btnGhost, flex: 1 }} onClick={() => { setNewGamePrompt(false); setNewGameWinners([]); setNewGameCoopWon(null); }}>Annuler</button>
-                <button style={{ ...btnPrimary, flex: 1, opacity: newGameBusy ? 0.6 : 1 }} onClick={confirmNewGame} disabled={newGameBusy}>{newGameBusy ? 'Enregistrement…' : 'Nouvelle partie →'}</button>
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Chrono de la partie : ne compte que le jeu */}
-        <div style={{ textAlign: 'center', background: C.navy, color: C.white, borderRadius: 16, padding: '12px 16px', marginBottom: 14 }}>
-          <div style={{ fontSize: 11, letterSpacing: 1, opacity: .75, fontWeight: 700, textTransform: 'uppercase' }}>Durée de la partie</div>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 34, lineHeight: 1.1 }}>{fmt(totalElapsed)}</div>
-          {gamePhase === 'prep' && <div style={{ fontSize: 12, opacity: .8, marginTop: 2 }}>La partie n'a pas encore démarré</div>}
-        </div>
-
-        {/* Boutons de phase (temps cumulé, pause / reprise) */}
-        <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
-          {phaseBtn('setup', { idle: 'Mise en place & explications', running: 'Mise en place en cours', paused: 'Reprendre la mise en place' }, setupTotal, setupTotal > 0, C.teal, hasPlayed)}
-          {phaseBtn('play', { idle: 'Lancer la partie', running: 'Partie en cours', paused: 'Reprendre la partie' }, playTotal, (session?.play_seconds || 0) > 0, C.amber, hasWrapped)}
-          {phaseBtn('teardown', { idle: 'Rangement', running: 'Rangement en cours', paused: 'Reprendre le rangement' }, teardownTotal, teardownTotal > 0, C.purple, !hasPlayed)}
+        {scorePadEl}
+        {newGameModal}
+        <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+          {hero(false)}
+          {phaseTiles(false)}
+          {actions(false)}
         </div>
 
         {timerOn && <TimerBar t={timerApi} />}
 
-        {/* (lot AH) Type de partie : visible et reglable par toute la tablee. */}
-        <div style={{ marginBottom: 12 }}>
-          <PlayModeChip structure={structure} rule={rule} onOpen={() => setModeOpen(true)} />
-        </div>
-
-        {/* En-tête de manche (pendant le jeu) */}
-        {gamePhase === 'play' && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontWeight: 700 }}>Partie {session?.current_game || 1}</span>
-            {simul && <span style={{ background: C.purple, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Simultané</span>}
-            {neutral && <span style={{ background: C.amber, color: C.white, padding: '3px 10px', borderRadius: 20, fontWeight: 700, fontSize: 13 }}>Pause</span>}
-            {isHost && <button style={btnGhost} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte'}</button>}
-          </div>
-        )}
-
-        {/* Gros bouton « C'est mon tour » (jeu uniquement, si j'ai un siège sur ce device) */}
-        {activePhase === 'play' && myPlayer && !showHost && (simul ? (
+        {/* « C'est mon tour » : seulement en tour par tour, pendant le jeu. */}
+        {turnsOn && activePhase === 'play' && myPlayer && !showHost && (simul ? (
           <button
             onClick={() => simulToggle(myPlayer.id)}
             style={{
-              width: '100%', border: 'none', borderRadius: 20, padding: '22px 16px', marginBottom: 16,
-              fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.white, cursor: 'pointer',
-              background: openSegs[myPlayer.id] ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
+              width: '100%', border: 'none', borderRadius: 20, padding: '18px 16px', marginBottom: 14,
+              fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.white, cursor: 'pointer',
+              background: openSegs[myPlayer.id] ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.14)',
             }}>
-            {openSegs[myPlayer.id] ? "Mon chrono tourne (appuie pour pause)" : "Mon chrono en pause (appuie pour repartir)"}
-            <div style={{ fontFamily: BODY, fontSize: 32, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
+            {openSegs[myPlayer.id] ? 'Mon chrono tourne (appuyez pour la pause)' : 'Mon chrono en pause (appuyez pour repartir)'}
+            <div style={{ fontFamily: BODY, fontSize: 28, marginTop: 4, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
           </button>
         ) : (
           <button
             onClick={() => (activeId === myPlayer.id && !neutral ? toggleNeutral() : claim(myPlayer.id))}
             style={{
-              width: '100%', border: 'none', borderRadius: 20, padding: '22px 16px', marginBottom: 16,
-              fontFamily: TITLE, fontWeight: 600, fontSize: 22, color: C.white, cursor: 'pointer',
-              background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.12)',
+              width: '100%', border: 'none', borderRadius: 20, padding: '18px 16px', marginBottom: 14,
+              fontFamily: TITLE, fontWeight: 600, fontSize: 20, color: C.white, cursor: 'pointer',
+              background: (activeId === myPlayer.id && !neutral) ? C.teal : C.navy, boxShadow: '0 6px 0 rgba(0,0,0,0.14)',
             }}>
-            {(activeId === myPlayer.id && !neutral) ? "À toi de jouer ! (appuie pour pause)" : "C'est mon tour"}
-            <div style={{ fontFamily: BODY, fontSize: 32, marginTop: 6, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
+            {(activeId === myPlayer.id && !neutral) ? 'À vous de jouer ! (appuyez pour la pause)' : "C'est mon tour"}
+            <div style={{ fontFamily: BODY, fontSize: 28, marginTop: 4, fontWeight: 800 }}>{fmt(shown(myPlayer.id))}</div>
           </button>
         ))}
 
-        {/* Tableau de bord des joueurs (cliquable uniquement pendant le jeu) */}
-        <div style={{ display: 'grid', gridTemplateColumns: showHost ? '1fr 1fr' : '1fr', gap: 10 }}>
-          {players.map((p, i) => {
-            const active = simul ? !!openSegs[p.id] : (activeId === p.id && !neutral && activePhase === 'play');
-            const clickable = activePhase === 'play';
-            return (
-              <div key={p.id}
-                onClick={clickable ? () => (simul ? simulToggle(p.id) : (active ? toggleNeutral() : claim(p.id))) : undefined}
-                style={{
-                  background: C.white, borderRadius: 16, padding: '12px 14px',
-                  border: `2px solid ${active ? hexFor(p) : `${hexFor(p)}40`}`,
-                  boxShadow: active ? `0 0 0 3px ${hexFor(p)}22` : '0 1px 4px rgba(0,0,0,0.06)',
-                  cursor: clickable ? 'pointer' : 'default', transition: 'border-color .15s',
-                }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Avatar name={p.name} url={p.avatar_url} color={hexFor(p)} size={38} />
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    {/* (lot AB) Le nom tient sur deux lignes plutot que d'etre coupe. */}
-                    <div title={p.name} style={{ fontWeight: 700, lineHeight: 1.2,
-                      display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
-                      overflow: 'hidden', overflowWrap: 'anywhere' }}>{p.name}</div>
-                    <div style={{ fontSize: 11, color: `${C.navy}88`, display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <span onClick={(e) => { e.stopPropagation(); setColorFor(p.id); }} title="Changer la couleur"
-                        style={{ width: 11, height: 11, borderRadius: 3, background: hexFor(p), border: '1px solid rgba(0,0,0,.15)', cursor: 'pointer', flexShrink: 0 }} />
-                      {structure === 'teams' && p.team != null && <span style={{ fontWeight: 800 }}>Equipe {TEAM_LETTERS[p.team]}</span>}
-                      {!p.auth_user_id && <span>sans tel</span>}
-                    </div>
-                  </div>
-                  {isHost && players.length > 1 && (
-                    <button onClick={(e) => { e.stopPropagation(); removePlayer(p); }} title={`Retirer ${p.name}`}
-                      style={{ border: 'none', background: 'transparent', color: C.red, cursor: 'pointer',
-                        fontSize: 17, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>✕</button>
-                  )}
-                </div>
-
-                {/* (lot AB) ZONE DE SCORE : un moins, le score, un plus.
-                    Un appui sur − ou + compte un point, sans ouvrir la
-                    calculatrice -- c'est le geste le plus frequent de toute une
-                    partie. Le score lui-meme ouvre le pave pour les cas moins
-                    simples. Les fleches d'ordre des joueurs sont descendues plus
-                    bas : elles ne sont plus collees au score, on ne les touche
-                    donc plus par megarde. */}
-                {scored && (
-                <div onClick={(e) => e.stopPropagation()}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-                  <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) - 1); }}
-                    aria-label={`Retirer un point a ${p.name}`} title="−1 point"
-                    style={{ ...scoreStepBtn, borderColor: `${C.red}66`, color: C.red, background: '#fdecee' }}>−</button>
-                  <button onClick={(e) => { e.stopPropagation(); setScoreFor(p.id); }} title="Ouvrir la calculatrice"
-                    style={{ flex: 1, minWidth: 0, border: `1.5px solid ${C.amber}`, background: '#FDF4E0', color: '#8a6a1f',
-                      borderRadius: 12, padding: '9px 10px', fontFamily: TITLE, fontWeight: 600, fontSize: 19, cursor: 'pointer' }}>
-                    {p.score || 0} <span style={{ fontSize: 13 }}>pt{Math.abs(p.score || 0) > 1 ? 's' : ''}</span>
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); setPlayerScore(p.id, (p.score || 0) + 1); }}
-                    aria-label={`Ajouter un point a ${p.name}`} title="+1 point"
-                    style={{ ...scoreStepBtn, borderColor: `${C.teal}66`, color: C.teal, background: '#e8f4f4' }}>+</button>
-                </div>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
-                  <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 26, color: active ? hexFor(p) : C.navy }}>
-                    {fmt(shown(p.id))}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={(e) => e.stopPropagation()}>
-                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: .5, textTransform: 'uppercase', color: `${C.navy}66` }}>ordre</span>
-                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, true); }} disabled={i === 0}
-                      style={{ ...orderBtn, width: 34, height: 28, fontSize: 12, opacity: i === 0 ? 0.3 : 1 }} aria-label="Monter dans l'ordre">▲</button>
-                    <button onClick={(e) => { e.stopPropagation(); movePlayer(p.id, false); }} disabled={i === players.length - 1}
-                      style={{ ...orderBtn, width: 34, height: 28, fontSize: 12, opacity: i === players.length - 1 ? 0.3 : 1 }} aria-label="Descendre dans l'ordre">▼</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        {/* Les joueurs */}
+        <section aria-label={scored ? 'Scores' : 'La tablée'} style={{ background: K.panel, borderRadius: 26, padding: '12px 12px 12px',
+          boxShadow: dark ? 'inset 0 0 0 1px rgba(255,255,255,.12)' : K.shadow, display: 'grid', gap: 8 }}>
+          <div style={{ padding: '0 4px' }}>{scoresHead(false)}</div>
+          {turnsOn && gamePhase === 'play' && isHost && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 4px' }}>
+              <button style={{ ...btnGhost, color: K.sub }} onClick={() => setHostView((v) => !v)}>{showHost ? 'Vue joueur' : 'Vue hôte (2 colonnes)'}</button>
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: showHost && turnsOn ? '1fr 1fr' : '1fr', gap: 8 }}>
+            {players.map((p, i) => playerTile(p, i, false, 1))}
+          </div>
+        </section>
 
         {/* Minuteur de table : replié par défaut, on ne l'affiche qu'à la demande. */}
         {!timerOn && (
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
             <button type="button" onClick={() => setTimerOn(true)}
               title="Compte à rebours avec alarme, pour les jeux qui se jouent au sablier"
-              style={{ border: `1.5px solid ${C.navy}33`, background: '#fff', color: `${C.navy}aa`,
-                borderRadius: 999, padding: '9px 18px', fontFamily: TITLE, fontWeight: 600,
+              style={{ border: `1.5px solid ${dark ? 'rgba(255,255,255,.3)' : `${C.navy}33`}`, background: dark ? 'transparent' : '#fff', color: dark ? '#FFFFFF' : `${C.navy}aa`,
+                borderRadius: 999, padding: '10px 18px', minHeight: 44, fontFamily: TITLE, fontWeight: 600,
                 fontSize: 14.5, cursor: 'pointer' }}>
               ⏳ Minuteur
             </button>
@@ -4058,28 +4169,28 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
-            <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setTeamsOpen(true)}>La tablee</button>
-            {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setSwapPicker(true)}>Changer de jeu</button>}
+            <button style={sec()} onClick={() => setTeamsOpen(true)}>La tablée</button>
+            <button style={sec()} onClick={() => setSwapPicker(true)}>Changer de jeu</button>
             {gamePhase === 'play' && !simul && (
-              <button style={{ ...btnSecondary, flex: 1, background: 'rgba(232,163,23,.14)', color: '#8a6a1f', border: `1.5px solid ${C.amber}` }}
+              <button style={sec({ background: 'rgba(232,163,23,.16)', color: dark ? '#F6C24A' : '#8a6a1f', border: `1.5px solid ${C.amber}` })}
                 onClick={openNewGame} title="Rejouer au même jeu : la partie en cours est enregistrée, les chronos repartent à zéro">
                 🔁 Nouvelle partie
               </button>
             )}
-            {isHost && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setClockEdit(true)}>Corriger les temps</button>}
-            {canMakeEvent && <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setEventPrompt(true)}>📅 Créer un moment jeux</button>}
+            <button style={sec()} onClick={() => setClockEdit(true)}>Corriger les temps</button>
+            {canMakeEvent && <button style={sec()} onClick={() => setEventPrompt(true)}>📅 Créer un moment jeux</button>}
             {eventCreated && !canMakeEvent && (
               <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 gap: 6, borderRadius: 12, padding: '12px 16px', background: 'rgba(30,138,138,.10)',
-                border: `1.5px solid ${C.teal}55`, color: C.teal, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5 }}>
+                border: `1.5px solid ${C.teal}55`, color: dark ? '#7FE0DA' : C.teal, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5 }}>
                 📅 Moment jeux créé
               </span>
             )}
-            {gamePhase === 'play' && !simul && activePhase === 'play' && <button style={{ ...btnSecondary, flex: 1 }} onClick={toggleNeutral}>{neutral ? 'Reprendre' : 'Pause'}</button>}
-            {gamePhase === 'play' && !simul && <button style={{ ...btnSecondary, flex: 1, background: C.purple, color: C.white }} onClick={simulEnter}>Tous en même temps</button>}
-            {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1, background: C.teal, color: C.white }} onClick={simulResumeAll}>Relancer tout le monde</button>}
-            {gamePhase === 'play' && simul && <button style={{ ...btnSecondary, flex: 1 }} onClick={simulExit}>Mode normal</button>}
-            <button style={{ ...btnSecondary, flex: 1 }} onClick={quitNoSave}>Quitter sans enregistrer</button>
+            {turnsOn && gamePhase === 'play' && !simul && activePhase === 'play' && <button style={sec()} onClick={toggleNeutral}>{neutral ? 'Reprendre le tour' : 'Pause du tour'}</button>}
+            {turnsOn && gamePhase === 'play' && !simul && <button style={sec({ background: C.purple, color: C.white })} onClick={simulEnter}>Tous en même temps</button>}
+            {turnsOn && gamePhase === 'play' && simul && <button style={sec({ background: C.teal, color: C.white })} onClick={simulResumeAll}>Relancer tout le monde</button>}
+            {turnsOn && gamePhase === 'play' && simul && <button style={sec()} onClick={simulExit}>Mode normal</button>}
+            <button style={sec()} onClick={quitNoSave}>Quitter sans enregistrer</button>
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
         )}
@@ -5175,10 +5286,3 @@ const btnGhost = { background: 'transparent', border: 'none', color: '#1A3A5C99'
 // (lot AB) Boutons − / + poses de part et d'autre du score, vue telephone.
 // Larges et bien separes : on doit pouvoir compter un point d'un pouce, sans
 // regarder, et sans risquer de toucher une fleche d'ordre.
-const scoreStepBtn = {
-  width: 52, height: 42, flex: '0 0 auto', borderRadius: 12, borderStyle: 'solid', borderWidth: 1.5,
-  fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 24, lineHeight: 1,
-  cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
-  touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
-};
-const orderBtn = { width: 28, height: 22, border: '1px solid #1A3A5C22', background: '#fff', borderRadius: 7, color: '#1A3A5C', fontSize: 10, lineHeight: 1, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0 };
