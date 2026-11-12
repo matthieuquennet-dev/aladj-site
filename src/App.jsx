@@ -5198,21 +5198,27 @@ function Stars({ value = 0, onRate, onClear, size = 18, readOnly = false }) {
 /* ---- Bouton ---- */
 function Btn({ children, onClick, variant = "primary", size = "md", disabled, style, type = "button", full }) {
   const sizes = { sm: { padding: "7px 14px", fontSize: 13 }, md: { padding: "11px 20px", fontSize: 14.5 }, lg: { padding: "14px 26px", fontSize: 16 } };
+  // (lot AL) Les boutons pleins prennent du relief : un degrade et une
+  // tranche plus sombre dessous, comme une tuile de jeu posee sur la table.
   const variants = {
-    primary: { background: C.navy, color: "#fff", border: `2px solid ${C.navy}` },
-    teal: { background: C.teal, color: "#fff", border: `2px solid ${C.teal}` },
-    amber: { background: C.amber, color: C.navyDeep, border: `2px solid ${C.amber}` },
-    red: { background: C.red, color: "#fff", border: `2px solid ${C.red}` },
+    primary: { background: "linear-gradient(180deg, #24507A, #1A3A5C)", color: "#fff", border: "2px solid transparent", boxShadow: "0 4px 0 #0C1F30" },
+    teal: { background: "linear-gradient(180deg, #2BB3AE, #1E8A8A)", color: "#fff", border: "2px solid transparent", boxShadow: "0 4px 0 #12605F" },
+    amber: { background: "linear-gradient(180deg, #F6C24A, #E8A317)", color: C.navyDeep, border: "2px solid transparent", boxShadow: "0 4px 0 #B47A06" },
+    red: { background: "linear-gradient(180deg, #D9475C, #B5283A)", color: "#fff", border: "2px solid transparent", boxShadow: "0 4px 0 #7E1626" },
     ghost: { background: "transparent", color: C.navy, border: `2px solid ${C.navy}` },
     soft: { background: "rgba(26,58,92,.07)", color: C.navy, border: "2px solid transparent" },
-    purple: { background: C.purple, color: "#fff", border: `2px solid ${C.purple}` },
+    purple: { background: "linear-gradient(180deg, #A66BB8, #6B3A7A)", color: "#fff", border: "2px solid transparent", boxShadow: "0 4px 0 #45204F" },
     danger: { background: "transparent", color: C.red, border: `2px solid ${C.red}` },
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled}
       style={{
-        ...sizes[size], ...variants[variant], width: full ? "100%" : "auto",
-        borderRadius: 12, fontWeight: 700, fontFamily: "'Fredoka', sans-serif", cursor: disabled ? "not-allowed" : "pointer",
+        ...sizes[size], ...variants[variant],
+        // Fond impose par la page : la tranche coloree n'irait plus avec.
+        ...(style && (style.background || style.boxShadow) ? { boxShadow: "none" } : {}),
+        ...(disabled ? { boxShadow: "none" } : {}),
+        width: full ? "100%" : "auto",
+        borderRadius: 13, fontWeight: 700, fontFamily: "'Fredoka', sans-serif", cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.5 : 1, transition: "transform .12s, box-shadow .2s, filter .2s",
         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, ...style,
       }}
@@ -5517,84 +5523,92 @@ function isDecideur(u) {
   return !!u && (u.role === "decideur" || u.admin === true);
 }
 
-/* Les deux fleches qui font defiler la rangee d'onglets. Posees PAR-DESSUS les
-   extremites de la rangee, sur le fond creme de l'en-tete, avec une ombre
-   portee de la meme couleur : l'onglet qu'elles recouvrent s'estompe au lieu
-   d'etre coupe net, ce qui dit bien qu'il y a quelque chose au-dela. */
-const navArrowStyle = {
-  position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 3,
-  width: 28, height: 34, borderRadius: 10, padding: 0,
-  border: "1px solid #e6dcc9", background: "rgba(251,247,239,.97)", color: C.navy,
-  display: "grid", placeItems: "center", cursor: "pointer",
-};
+/* (lot AL) L'EN-TETE, REGROUPE
+   Onze onglets ne tenaient dans aucune largeur : ils defilaient, avec deux
+   fleches. Ils sont maintenant regroupes en cinq entrees, toujours visibles :
+     Accueil · Moments jeux · Jeux ▾ · Le Mag · Chrono
+   « Jeux » ouvre un panneau : Ludotheque, A venir, Jeux en ligne.
+   Le bouton a son nom ouvre l'espace personnel : Mon espace, Mes locations,
+   Espace decisionnaire (s'il y a lieu), Guide, profil et deconnexion.
+   Sur telephone, le menu deroulant reprend les memes groupes. */
+const NAV_JEUX = [
+  { key: "ludotheque", desc: "Tous les jeux des membres : chercher, noter, commenter, emprunter. Le top 20 de l'asso.", tint: "#1E8A8A" },
+  { key: "a-venir", desc: "Les sorties à surveiller : la hype, les intentions d'achat, les jeux sortis depuis peu.", tint: "#E8A317" },
+  { key: "web-jeux", desc: "Les jeux édités par l'association : règles, discussion, rendez-vous entre membres.", tint: "#6B3A7A" },
+];
+const NAV_ME = [
+  { key: "ma-ludo", desc: "Ma ludothèque, mes parties, mes notifications, ma messagerie", tint: "#1E8A8A" },
+  { key: "locations", desc: "Demandes reçues, prêts en cours, retours", tint: "#E8A317" },
+  { key: "decideur", label: "Espace décisionnaire", desc: "Votes en ligne, idées et informations", tint: "#6B3A7A", decider: true },
+  { key: "guide", desc: "Le mode d'emploi du site, rubrique par rubrique", tint: "#1A3A5C", open: true },
+];
+const NAV_STRIPE = "linear-gradient(90deg, #1A3A5C 0%, #1A3A5C 20%, #1E8A8A 20%, #1E8A8A 40%, #E8A317 40%, #E8A317 60%, #B5283A 60%, #B5283A 80%, #6B3A7A 80%, #6B3A7A 100%)";
+const navOf = (k) => NAV.find((n) => n.key === k) || { key: k, label: k, icon: HelpCircle };
+
+/* Pastille rouge de compteur, commune a tout l'en-tete. */
+function NavBadge({ n, style }) {
+  if (!n) return null;
+  return (
+    <span style={{ minWidth: 20, height: 20, boxSizing: "border-box", padding: "0 6px", borderRadius: 999,
+      background: "linear-gradient(180deg, #D9475C, #B5283A)", color: "#fff", fontFamily: "'Nunito',sans-serif",
+      fontSize: 11.5, fontWeight: 800, lineHeight: "20px", textAlign: "center", ...style }}>{n}</span>
+  );
+}
+
+/* Une ligne de panneau (menu Jeux ou menu personnel). */
+function NavMenuRow({ item, active, badge, count, onClick }) {
+  const n = navOf(item.key);
+  const Icon = n.icon;
+  return (
+    <button type="button" role="menuitem" onClick={onClick} className="aladj-navrow"
+      style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", minHeight: 64, padding: "10px 12px",
+        borderRadius: 18, border: "none", cursor: "pointer", textAlign: "left",
+        background: active ? `${item.tint}14` : "transparent", boxShadow: active ? `inset 0 0 0 2px ${item.tint}55` : "none" }}>
+      <span style={{ width: 46, height: 46, flexShrink: 0, borderRadius: 14, display: "grid", placeItems: "center", color: "#fff",
+        background: `linear-gradient(150deg, ${item.tint}cc, ${item.tint})`, boxShadow: `0 6px 14px ${item.tint}44` }}>
+        <Icon size={22} />
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 17, color: C.navy }}>
+          {item.label || n.label}
+          <NavBadge n={badge} />
+        </span>
+        <span style={{ display: "block", fontSize: 13.5, lineHeight: 1.4, color: "#6f6355" }}>{item.desc}</span>
+      </span>
+      {count != null && (
+        <span style={{ flexShrink: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: item.tint,
+          background: `${item.tint}14`, borderRadius: 999, padding: "4px 10px", whiteSpace: "nowrap" }}>{count}</span>
+      )}
+    </button>
+  );
+}
 
 function Navbar({ page, setPage, onAuth }) {
-  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, myOwnershipPending, reload, personalReady } = useApp();
+  const { currentUser, logout, notifications, momentsUnseen, eventPlaySuggestions, myPendingPlays, loanAlerts, messagesUnread, myOwnershipPending, reload, personalReady,
+          games, upcoming, webGames } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => { setRefreshing(true); try { await reload(); } finally { setRefreshing(false); } };
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false);            // menu telephone
+  const [menu, setMenu] = useState(null);             // "jeux" | "moi" | null (ordinateur)
   const [editProfile, setEditProfile] = useState(false);
-  const items = NAV.filter((n) => (!n.auth || currentUser) && (!n.decider || isDecideur(currentUser)));
-  /* (lot AB bis, complete par le lot AB quater) L'en-tete tient sur UNE seule
-     ligne, quelle que soit la largeur : auparavant la rangee se repliait et,
-     sur un iPad, « Connexion » et « Adherer » basculaient sur une deuxieme
-     ligne, formant un gros bloc.
+  const barRef = useRef(null);
 
-     Mais une ligne unique ne suffit pas : un membre decisionnaire a onze
-     onglets, qui ne tiennent dans aucune largeur raisonnable. Ils defilent
-     donc horizontalement — et surtout, ce defilement se VOIT et se COMMANDE :
-     deux fleches apparaissent aux extremites des qu'il reste quelque chose a
-     atteindre. Un simple degrade ne suffisait pas : rien n'indiquait qu'on
-     pouvait faire glisser la rangee, et le masque CSS employe pour le dessiner
-     empechait le defilement au doigt sur certaines versions de Safari. */
-  const navRef = useRef(null);
-  const [navScroll, setNavScroll] = useState({ gauche: false, droite: false });
-
-  const mesureNav = useCallback(() => {
-    const el = navRef.current;
-    if (!el) return;
-    const reste = el.scrollWidth - el.clientWidth;
-    setNavScroll({ gauche: el.scrollLeft > 4, droite: reste > 4 && el.scrollLeft < reste - 4 });
-  }, []);
-
+  // Un panneau ouvert se ferme au clic a cote, avec Echap, et a chaque changement de page.
   useEffect(() => {
-    const el = navRef.current;
-    if (!el) return undefined;
-    mesureNav();
-    // Les polices Fredoka/Nunito arrivent apres le premier rendu et changent
-    // les largeurs : on remesure une fois qu'elles sont posees.
-    const t = setTimeout(mesureNav, 400);
-    el.addEventListener("scroll", mesureNav, { passive: true });
-    window.addEventListener("resize", mesureNav);
+    if (!menu) return undefined;
+    const onDown = (e) => { if (barRef.current && !barRef.current.contains(e.target)) setMenu(null); };
+    const onKey = (e) => { if (e.key === "Escape") setMenu(null); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    document.addEventListener("keydown", onKey);
     return () => {
-      clearTimeout(t);
-      el.removeEventListener("scroll", mesureNav);
-      window.removeEventListener("resize", mesureNav);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
     };
-  }, [mesureNav, items.length, currentUser?.id]);
+  }, [menu]);
+  useEffect(() => { setMenu(null); setOpen(false); }, [page]);
 
-  // Une fleche fait glisser la rangee d'un peu moins d'une largeur d'ecran :
-  // on garde ainsi un onglet ou deux en commun d'un ecran a l'autre, et l'on
-  // ne perd pas le fil.
-  const glisserNav = (sens) => {
-    const el = navRef.current;
-    if (!el) return;
-    const pas = Math.max(160, Math.round(el.clientWidth * 0.7));
-    if (el.scrollBy) el.scrollBy({ left: sens * pas, behavior: "smooth" });
-    else el.scrollLeft += sens * pas;
-  };
-
-  // L'onglet ouvert est toujours ramene sous les yeux : on ne se demande
-  // jamais ou l'on se trouve dans une rangee qui deborde.
-  useEffect(() => {
-    const el = navRef.current;
-    if (!el || !el.querySelector) return;
-    const btn = el.querySelector('[data-nav-actif="1"]');
-    if (!btn) return;
-    const cible = Math.max(0, btn.offsetLeft - (el.clientWidth - btn.offsetWidth) / 2);
-    if (el.scrollTo) el.scrollTo({ left: cible, behavior: "smooth" });
-    else el.scrollLeft = cible;
-  }, [page]);
   const unreadNotifs = personalReady ? (notifications || []).filter((n) => !n.read).length : 0;
   // La part « possession declaree a mon nom » reste comptee tant que le membre
   // n'a pas repondu, meme s'il a deja lu la notification correspondante.
@@ -5602,121 +5616,189 @@ function Navbar({ page, setPage, onAuth }) {
   // Pastille de « Mes locations » : demandes à traiter, locations à venir
   // et jeux empruntés en retard. Jamais les retards côté propriétaire.
   const loanBadge = personalReady ? ((loanAlerts || {}).count || 0) : 0;
+  const meBadge = ludoBadge + loanBadge;
+
+  const jeuxKeys = NAV_JEUX.map((x) => x.key);
+  const jeuxActive = jeuxKeys.includes(page);
+  const meItems = NAV_ME.filter((x) => (x.open || currentUser) && (!x.decider || isDecideur(currentUser)));
+  const meActive = meItems.some((x) => x.key === page);
+  const badgeOf = (k) => (k === "ma-ludo" ? ludoBadge : (k === "locations" ? loanBadge : (k === "soirees" ? momentsUnseen : 0)));
+  const nGames = (games || []).filter((g) => !g.unowned).length;
+  const nUpcoming = (upcoming || []).length;
+  const nWeb = (webGames || []).filter((w) => w.status === "live" || w.status === "dev").length;
+  const countOf = (k) => (k === "ludotheque" ? (nGames ? `${nGames.toLocaleString("fr-FR")} jeu${nGames > 1 ? "x" : ""}` : null)
+    : k === "a-venir" ? (nUpcoming ? `${nUpcoming} fiche${nUpcoming > 1 ? "s" : ""}` : null)
+    : k === "web-jeux" ? (nWeb ? `${nWeb} jeu${nWeb > 1 ? "x" : ""}` : null) : null);
+  const go = (k) => { setPage(k); setMenu(null); setOpen(false); };
+
+  // Bouton d'onglet de la rangee principale.
+  const tab = (k, extra) => {
+    const n = navOf(k);
+    const Icon = n.icon;
+    const active = extra && extra.active != null ? extra.active : page === k;
+    const badge = extra && extra.badge != null ? extra.badge : badgeOf(k);
+    return (
+      <button key={k} type="button" onClick={extra && extra.onClick ? extra.onClick : () => go(k)}
+        aria-current={active && !(extra && extra.menu) ? "page" : undefined}
+        aria-haspopup={extra && extra.menu ? "menu" : undefined} aria-expanded={extra && extra.menu ? menu === extra.menu : undefined}
+        style={{ position: "relative", flexShrink: 0, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 7,
+          minHeight: 44, boxSizing: "border-box", padding: active ? "9px 17px" : "9px 13px", borderRadius: 14, border: "none", cursor: "pointer",
+          fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 15.5,
+          background: active ? "linear-gradient(160deg, #24507A, #12293F)" : (extra && extra.menu && menu === extra.menu ? "#F3EDE0" : "transparent"),
+          boxShadow: active ? "0 6px 14px rgba(18,41,63,.28)" : "none",
+          color: active ? "#fff" : C.navy, transition: "background .15s" }}>
+        <Icon size={17} /> {extra && extra.label ? extra.label : n.label}
+        {extra && extra.menu && <ChevronDown size={14} style={{ transform: menu === extra.menu ? "rotate(180deg)" : "none", transition: "transform .15s" }} />}
+        {badge > 0 && <NavBadge n={badge} style={{ position: "absolute", top: -4, right: -4, border: "2px solid #fff" }} />}
+      </button>
+    );
+  };
+
+  const panel = (children, align) => (
+    <div role="menu" style={{ position: "absolute", top: "calc(100% + 8px)", [align]: 0, zIndex: 20, width: 440, maxWidth: "calc(100vw - 32px)",
+      background: "#fff", borderRadius: 24, padding: 10, boxShadow: "0 24px 60px rgba(18,41,63,.22), 0 0 0 1px rgba(18,41,63,.06)",
+      animation: "popIn .16s ease" }}>
+      {children}
+    </div>
+  );
+
+  const avatarBox = (size) => (
+    <span style={{ width: size, height: size, borderRadius: Math.round(size * 0.3), overflow: "hidden", background: "linear-gradient(150deg, #2BA5A2, #14605F)",
+      color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: Math.round(size * 0.45), flexShrink: 0 }}>
+      {currentUser && currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : (currentUser ? currentUser.name[0].toUpperCase() : "?")}
+    </span>
+  );
 
   return (
     <>
-    <header style={{
-      position: "sticky", top: 0, zIndex: 500, background: "rgba(251,247,239,.86)", backdropFilter: "blur(12px)",
-      borderBottom: "1px solid #ece2d0",
-    }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "nowrap" }}>
-        <button onClick={() => setPage("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0, flexShrink: 0 }} title="Accueil">
-          <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 48, width: "auto", display: "block" }} />
+    <header style={{ position: "sticky", top: 0, zIndex: 500, background: "rgba(255,255,255,.94)", backdropFilter: "blur(12px)",
+      boxShadow: "0 1px 0 #ece2d0, 0 8px 24px rgba(18,41,63,.05)" }}>
+      <div aria-hidden="true" style={{ height: 5, background: NAV_STRIPE }} />
+      <div ref={barRef} style={{ maxWidth: 1180, margin: "0 auto", padding: "8px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "nowrap" }}>
+        <button onClick={() => go("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0, flexShrink: 0 }} title="Accueil">
+          <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 52, width: "auto", display: "block" }} />
         </button>
 
-        <div className="aladj-desktop-nav"
-          style={{ position: "relative", flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", marginLeft: 8 }}>
-        {/* Fleche de gauche : visible seulement s'il y a quelque chose derriere. */}
-        {navScroll.gauche && (
-          <button type="button" onClick={() => glisserNav(-1)} title="Voir les onglets precedents" aria-label="Voir les onglets précédents"
-            style={{ ...navArrowStyle, left: 0, boxShadow: "10px 0 14px 6px rgba(251,247,239,.92)" }}>
-            <ChevronRight size={17} style={{ transform: "rotate(180deg)" }} />
-          </button>
-        )}
-        <nav ref={navRef} className="aladj-nav-scroll"
-          style={{
-            display: "flex", gap: 3, flexWrap: "nowrap",
-            flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden",
-            scrollbarWidth: "none", msOverflowStyle: "none",
-            WebkitOverflowScrolling: "touch", touchAction: "pan-x",
-          }}>
-          {items.map((n) => {
-            const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
-            return (
-              <button key={n.key} onClick={() => setPage(n.key)} data-nav-actif={active ? "1" : undefined} style={{
-                position: "relative", flexShrink: 0, whiteSpace: "nowrap",
-                display: "flex", alignItems: "center", gap: 6, padding: "8px 11px", borderRadius: 11, border: "none",
-                cursor: "pointer", fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: 14,
-                background: active ? C.navy : "transparent", color: active ? "#fff" : C.navy, transition: "background .15s",
-              }}>
-                <Icon size={16} /> {n.label}
-                {badgeCount > 0 && <span style={{ position: "absolute", top: 3, right: 5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "grid", placeItems: "center" }}>{badgeCount}</span>}
-              </button>
-            );
-          })}
+        <nav aria-label="Navigation principale" className="aladj-desktop-nav"
+          style={{ display: "flex", alignItems: "center", gap: 4, flex: "1 1 auto", minWidth: 0, marginLeft: 6 }}>
+          {tab("accueil")}
+          {tab("soirees")}
+          <div style={{ position: "relative" }}>
+            {tab("ludotheque", { label: "Jeux", menu: "jeux", active: jeuxActive, badge: 0,
+              onClick: () => setMenu((m) => (m === "jeux" ? null : "jeux")) })}
+            {menu === "jeux" && panel(
+              <>
+                {NAV_JEUX.map((it) => (
+                  <NavMenuRow key={it.key} item={it} active={page === it.key} count={countOf(it.key)} onClick={() => go(it.key)} />
+                ))}
+              </>, "left")}
+          </div>
+          {tab("mag")}
+          {tab("chrono")}
         </nav>
-        {/* Fleche de droite : visible tant qu'il reste des onglets a atteindre. */}
-        {navScroll.droite && (
-          <button type="button" onClick={() => glisserNav(1)} title="Voir les onglets suivants" aria-label="Voir les onglets suivants"
-            style={{ ...navArrowStyle, right: 0, boxShadow: "-10px 0 14px 6px rgba(251,247,239,.92)" }}>
-            <ChevronRight size={17} />
-          </button>
-        )}
-        </div>
 
-        <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="aladj-desktop-nav">
+        <div className="aladj-desktop-nav" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {currentUser ? (
-            <>
-              <button onClick={() => setEditProfile(true)} title="Modifier mon profil" style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 10px", borderRadius: 11, background: "rgba(30,138,138,.1)", border: "none", cursor: "pointer", maxWidth: 190 }}>
-                <span style={{ width: 26, height: 26, borderRadius: 8, overflow: "hidden", background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-                  {currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : currentUser.name[0].toUpperCase()}
-                </span>
-                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentUser.name}</span>
+            <div style={{ position: "relative" }}>
+              <button type="button" onClick={() => setMenu((m) => (m === "moi" ? null : "moi"))}
+                aria-haspopup="menu" aria-expanded={menu === "moi"} title="Mon espace, mes locations, le guide…"
+                style={{ position: "relative", display: "flex", alignItems: "center", gap: 9, minHeight: 46, boxSizing: "border-box", padding: "4px 12px 4px 4px",
+                  borderRadius: 16, border: "none", cursor: "pointer", maxWidth: 230,
+                  background: meActive || menu === "moi" ? "linear-gradient(160deg, #24507A, #12293F)" : "#F3EDE0",
+                  color: meActive || menu === "moi" ? "#fff" : C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
+                {avatarBox(38)}
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentUser.name}</span>
                 {currentUser.role === "decideur" && <Crown size={15} color={C.amber} style={{ flexShrink: 0 }} />}
+                <ChevronDown size={14} style={{ flexShrink: 0, transform: menu === "moi" ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                {meBadge > 0 && <NavBadge n={meBadge} style={{ position: "absolute", top: -6, right: -6, border: "2px solid #fff" }} />}
               </button>
-              <Btn variant="ghost" size="sm" onClick={logout} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><LogOut size={15} /> Sortir</Btn>
-            </>
+              {menu === "moi" && panel(
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 10px 12px" }}>
+                    {avatarBox(48)}
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 19, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.name}</span>
+                      <span style={{ fontSize: 13.5, color: "#6f6355" }}>{isDecideur(currentUser) ? (currentUser.admin ? "Administrateur" : "Membre décisionnaire") : "Membre"}</span>
+                    </span>
+                  </div>
+                  {meItems.map((it) => (
+                    <NavMenuRow key={it.key} item={it} active={page === it.key} badge={badgeOf(it.key)} onClick={() => go(it.key)} />
+                  ))}
+                  <div style={{ display: "flex", gap: 8, padding: "10px 4px 4px", borderTop: "1.5px solid #F0E8DA", marginTop: 6 }}>
+                    <Btn variant="soft" size="sm" onClick={() => { setEditProfile(true); setMenu(null); }} style={{ flex: 1 }}><Users size={15} /> Mon profil</Btn>
+                    <Btn variant="ghost" size="sm" onClick={() => { setMenu(null); logout(); }} style={{ flex: 1 }}><LogOut size={15} /> Se déconnecter</Btn>
+                  </div>
+                </>, "right")}
+            </div>
           ) : (
             <>
-              <Btn variant="ghost" size="sm" onClick={() => onAuth("login")} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><LogIn size={15} /> Connexion</Btn>
-              <Btn variant="amber" size="sm" onClick={() => onAuth("register")} style={{ whiteSpace: "nowrap", padding: "7px 12px" }}><UserPlus size={15} /> Adhérer</Btn>
+              <button type="button" onClick={() => go("guide")} title="Le mode d'emploi du site"
+                style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 10px", border: "none", background: "transparent", cursor: "pointer",
+                  color: page === "guide" ? C.teal : C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
+                <HelpCircle size={16} /> Guide
+              </button>
+              <Btn variant="ghost" size="sm" onClick={() => onAuth("login")} style={{ whiteSpace: "nowrap", padding: "8px 14px" }}><LogIn size={15} /> Connexion</Btn>
+              <Btn variant="amber" size="sm" onClick={() => onAuth("register")} style={{ whiteSpace: "nowrap", padding: "8px 14px" }}><UserPlus size={15} /> Adhérer</Btn>
             </>
           )}
         </div>
 
         <button className="aladj-burger" onClick={doRefresh} disabled={refreshing} aria-label="Rafraichir" title="Rafraichir" style={{
-          marginLeft: "auto", display: "none", background: "#fff", color: C.navy, border: `1.5px solid ${C.navy}22`, borderRadius: 10, width: 40, height: 40, cursor: refreshing ? "default" : "pointer", placeItems: "center",
+          marginLeft: "auto", display: "none", background: "#fff", color: C.navy, border: `1.5px solid ${C.navy}22`, borderRadius: 12, width: 44, height: 44, cursor: refreshing ? "default" : "pointer", placeItems: "center",
         }}>
           <RefreshCw size={19} className={refreshing ? "aladj-spin" : undefined} />
         </button>
-        <button className="aladj-burger" onClick={() => setOpen(!open)} style={{
-          marginLeft: 8, display: "none", position: "relative", background: C.navy, color: "#fff", border: "none", borderRadius: 10, width: 40, height: 40, cursor: "pointer", placeItems: "center",
+        <button className="aladj-burger" onClick={() => setOpen(!open)} aria-label={open ? "Fermer le menu" : "Ouvrir le menu"} aria-expanded={open} style={{
+          marginLeft: 8, display: "none", position: "relative", background: "linear-gradient(160deg, #24507A, #12293F)", color: "#fff", border: "none", borderRadius: 12, width: 44, height: 44, cursor: "pointer", placeItems: "center",
+          boxShadow: "0 6px 14px rgba(18,41,63,.25)",
         }}>
           {open ? <X size={20} /> : <Menu size={20} />}
-          {!open && (ludoBadge + momentsUnseen + loanBadge) > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid #FBF7EF" }}>{ludoBadge + momentsUnseen + loanBadge}</span>}
+          {!open && (meBadge + momentsUnseen) > 0 && <NavBadge n={meBadge + momentsUnseen} style={{ position: "absolute", top: -6, right: -6, border: "2px solid #fff" }} />}
         </button>
       </div>
 
-      {open && (
-        <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, borderTop: "1px solid #ece2d0" }}>
-          {items.map((n) => {
-            const Icon = n.icon; const active = page === n.key;
-            const badgeCount = n.key === "ma-ludo" ? ludoBadge : (n.key === "soirees" ? momentsUnseen : (n.key === "locations" ? loanBadge : 0));
-            return (
-              <button key={n.key} onClick={() => { setPage(n.key); setOpen(false); }} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer",
-                fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 16, background: active ? C.navy : "rgba(26,58,92,.06)", color: active ? "#fff" : C.navy,
-              }}><Icon size={19} /> {n.label}
-                {badgeCount > 0 && <span style={{ marginLeft: "auto", minWidth: 20, height: 20, padding: "0 6px", borderRadius: 999, background: C.red, color: "#fff", fontSize: 12, fontWeight: 700, display: "grid", placeItems: "center" }}>{badgeCount}</span>}
-              </button>
-            );
-          })}
-          <div style={{ height: 1, background: "#ece2d0", margin: "6px 0" }} />
-          {currentUser ? (
-            <>
-              <div style={{ padding: "8px 4px", fontFamily: "'Fredoka',sans-serif", color: C.navy, fontWeight: 600 }}>Connecté : {currentUser.name}</div>
-              <Btn variant="ghost" onClick={() => { setEditProfile(true); setOpen(false); }} full><Users size={16} /> Mon profil</Btn>
-              <Btn variant="ghost" onClick={() => { logout(); setOpen(false); }} full><LogOut size={16} /> Se déconnecter</Btn>
-            </>
-          ) : (
-            <>
-              <Btn variant="ghost" onClick={() => { onAuth("login"); setOpen(false); }} full><LogIn size={16} /> Connexion</Btn>
-              <Btn variant="amber" onClick={() => { onAuth("register"); setOpen(false); }} full><UserPlus size={16} /> Adhérer</Btn>
-            </>
-          )}
-        </div>
-      )}
+      {open && (() => {
+        const mRow = (k, label) => {
+          const n = navOf(k);
+          const Icon = n.icon;
+          const active = page === k;
+          const badge = badgeOf(k);
+          return (
+            <button key={k} type="button" onClick={() => go(k)} aria-current={active ? "page" : undefined} style={{
+              display: "flex", alignItems: "center", gap: 10, minHeight: 50, padding: "10px 14px", borderRadius: 14, border: "none", cursor: "pointer",
+              fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 16, textAlign: "left",
+              background: active ? "linear-gradient(160deg, #24507A, #12293F)" : "rgba(26,58,92,.06)", color: active ? "#fff" : C.navy,
+            }}><Icon size={19} /> {label || n.label}
+              {badge > 0 && <NavBadge n={badge} style={{ marginLeft: "auto" }} />}
+            </button>
+          );
+        };
+        const head = (t) => <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, letterSpacing: ".08em", textTransform: "uppercase", color: "#8a7a63", padding: "8px 4px 0" }}>{t}</div>;
+        return (
+          <div className="aladj-mobile-menu" style={{ padding: "8px 16px 18px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, borderTop: "1px solid #ece2d0", maxHeight: "calc(100vh - 80px)", overflowY: "auto" }}>
+            {mRow("accueil")}
+            {mRow("soirees")}
+            {mRow("mag")}
+            {mRow("chrono")}
+            {head("Jeux")}
+            {NAV_JEUX.map((it) => mRow(it.key))}
+            {head(currentUser ? currentUser.name : "Aide")}
+            {meItems.map((it) => mRow(it.key, it.label))}
+            <div style={{ height: 1, background: "#ece2d0", margin: "6px 0" }} />
+            {currentUser ? (
+              <>
+                <Btn variant="ghost" onClick={() => { setEditProfile(true); setOpen(false); }} full><Users size={16} /> Mon profil</Btn>
+                <Btn variant="ghost" onClick={() => { logout(); setOpen(false); }} full><LogOut size={16} /> Se déconnecter</Btn>
+              </>
+            ) : (
+              <>
+                <Btn variant="ghost" onClick={() => { onAuth("login"); setOpen(false); }} full><LogIn size={16} /> Connexion</Btn>
+                <Btn variant="amber" onClick={() => { onAuth("register"); setOpen(false); }} full><UserPlus size={16} /> Adhérer</Btn>
+              </>
+            )}
+          </div>
+        );
+      })()}
     </header>
     {editProfile && <ProfileEditModal onClose={() => setEditProfile(false)} />}
     </>
@@ -6547,7 +6629,7 @@ function GuidePage() {
         {
           q: "Nos conversations Signal",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b>. Les conversations sont listées en bas de la page d'accueil, avec un bouton « Rejoindre » et un QR code à scanner avec son téléphone.</p>
+            <p style={{ margin: "0 0 8px" }}>Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b>. Le plus simple : tout en haut de la page d'accueil, le bouton <b>« Rejoindre nos groupes Signal »</b> déplie la liste des groupes, chacun avec son bouton <b>Rejoindre</b> — sur un téléphone, l'application Signal s'ouvre directement sur le groupe. Plus bas sur la même page, chaque groupe a aussi son <b>QR code</b>, à scanner avec un autre téléphone.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li><b>Organisation jeux</b> — pour caler les moments jeux, s'inscrire et prendre les places de dernière minute. C'est celle qu'il faut rejoindre en premier.</li>
               <li><b>Blabla</b> — les discussions informelles, entre deux parties.</li>
@@ -6560,9 +6642,13 @@ function GuidePage() {
         {
           q: "Retrouver tous les onglets du menu",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Le menu du haut tient sur <b>une seule ligne</b>, pour ne pas manger l'écran. Quand les onglets sont trop nombreux pour la largeur disponible — c'est le cas d'un membre décisionnaire, qui en a onze —, la rangée <b>défile horizontalement</b>.</p>
-            <p style={{ margin: "0 0 8px" }}>Deux petites <b>flèches</b> apparaissent alors aux extrémités : un clic fait glisser la rangée. Sur une tablette ou un téléphone, on peut aussi la <b>faire glisser au doigt</b>. L'onglet où vous vous trouvez est toujours ramené automatiquement sous vos yeux.</p>
-            <p style={{ margin: 0 }}>Sur un écran étroit, le menu se replie derrière le bouton <b>☰</b> : tous les onglets y figurent alors les uns sous les autres, sans rien à faire défiler.</p>
+            <p style={{ margin: "0 0 8px" }}>Le menu du haut tient en <b>cinq entrées</b>, toujours visibles : <b>Accueil</b>, <b>Moments jeux</b>, <b>Jeux</b>, <b>Le Mag</b> et <b>Chrono</b>.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>Jeux ▾</b> ouvre un panneau qui regroupe la <b>Ludothèque</b>, <b>À venir</b> (les sorties à surveiller) et les <b>Jeux en ligne</b> de l'association, chacun avec une ligne d'explication et son nombre de fiches.</li>
+              <li><b>Le bouton à votre nom</b>, tout à droite, ouvre votre espace personnel : <b>Mon espace</b>, <b>Mes locations</b>, l'<b>Espace décisionnaire</b> (pour les membres décisionnaires), le <b>Guide</b>, puis <b>Mon profil</b> et <b>Se déconnecter</b>. Les pastilles rouges de notifications et de locations s'y retrouvent ; leur total s'affiche sur le bouton lui-même.</li>
+              <li>Sans être connecté, le <b>Guide</b> reste à portée de clic, à côté de « Connexion » et « Adhérer ».</li>
+            </ul>
+            <p style={{ margin: 0 }}>Sur un téléphone, le menu se replie derrière le bouton <b>☰</b> : on y retrouve les mêmes rubriques, rangées par groupes (les jeux, puis votre espace).</p>
           </>,
         },
         {
@@ -7223,11 +7309,33 @@ function GuidePage() {
       icon: "⏱️", title: "Le chronomètre",
       items: [
         {
+          q: "L'écran de partie : les trois temps d'abord",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>À l'asso, le chrono sert presque toujours à mesurer les <b>trois temps d'une partie</b> : la mise en place, la partie elle-même et le rangement. L'écran de partie est donc construit autour d'eux.</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>En haut, <b>le temps de la phase en cours</b>, en très grand, sur la couleur de la phase (turquoise, ambre, violet). Pour la partie, une barre le compare à la <b>durée annoncée</b> sur la fiche du jeu (« encore ~3 min », ou « +5 min » quand on la dépasse) ; pour la mise en place et le rangement, à la <b>moyenne observée au club</b> sur ce jeu. Dessous : le temps total et l'heure de lancement.</li>
+              <li>Ensuite, <b>les trois temps côte à côte</b> : terminé, en cours, en pause ou à venir. Un appui sur l'un d'eux le met en pause ou le reprend, comme avant.</li>
+              <li>Puis <b>un seul gros bouton</b> pour l'étape suivante : « Lancer la mise en place », « Lancer la partie », « Passer au rangement », et enfin « Terminer la partie » pour l'hôte. Le carré à sa gauche met la phase en <b>pause</b>. Pas de mise en place ? Un lien permet de lancer directement la partie.</li>
+              <li>Enfin, <b>les joueurs</b>, avec leur <b>photo</b>, leur couleur (la petite pastille au coin de la photo, à toucher pour en changer), leur score et ses boutons <b>−</b> et <b>+</b>. Le joueur en tête porte une couronne « En tête ».</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}><b>Le nom du jeu</b> s'affiche en titre, avec le code pour rejoindre la partie (touchez-le pour afficher le QR code).</p>
+            <p style={{ margin: 0 }}><b>Mode clair ou sombre :</b> le bouton lune / soleil, en haut à droite, fait passer l'écran de partie sur fond bleu nuit, et inversement. Le choix est mémorisé sur l'appareil.</p>
+          </>,
+        },
+        {
+          q: "« Tour par tour » : le temps de chaque joueur",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Mesurer le temps de réflexion de chacun reste possible, mais ce n'est plus affiché d'office : il suffit d'allumer l'interrupteur <b>« Tour par tour »</b>, à côté du titre des scores.</p>
+            <p style={{ margin: "0 0 8px" }}>Une fois allumé, on retrouve tout : le gros bouton <b>« C'est mon tour »</b> sur son téléphone, la carte du joueur qui s'allume quand c'est à lui, son temps de réflexion, les flèches <b>▲▼</b> qui changent l'ordre de jeu, la pause du tour et le mode <b>« Tous en même temps »</b>.</p>
+            <p style={{ margin: 0 }}>Le choix vaut pour la partie en cours, sur l'appareil où on l'a fait. Si des temps individuels ont déjà été comptés dans cette partie, l'interrupteur est allumé d'office. L'éteindre en plein tour met ce tour en pause.</p>
+          </>,
+        },
+        {
           q: "Compter les points : − et + sur la carte du joueur",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur téléphone, la carte de chaque joueur porte une <b>zone de score à elle seule</b> : un bouton <b>−</b>, le score, un bouton <b>+</b>. Chaque appui compte un point, <b>sans ouvrir la calculatrice</b> — c'est le geste le plus fréquent d'une partie, il devait être le plus simple.</p>
             <p style={{ margin: "0 0 8px" }}>Le score lui-même reste cliquable : il ouvre la calculatrice pour tout ce qui ne se compte pas un par un.</p>
-            <p style={{ margin: "0 0 8px" }}>Les <b>flèches ▲▼ qui changent l'ordre des joueurs</b> ont quitté cette zone : elles sont descendues sur la ligne du dessous, à côté du chrono. On ne les touche donc plus par mégarde en comptant les points.</p>
+            <p style={{ margin: "0 0 8px" }}>Les <b>flèches ▲▼ qui changent l'ordre des joueurs</b> n'apparaissent qu'en mode « Tour par tour », sur une ligne à part, sous le score. On ne les touche donc pas par mégarde en comptant les points.</p>
             <p style={{ margin: 0 }}><b>En vue tablette, c'est pareil</b> : deux grands boutons <b>−</b> et <b>+</b> encadrent le score au centre de la carte, et les flèches d'ordre sont posées tout à droite, contre le chrono. Les deux familles de boutons n'ont volontairement pas la même allure — carrés teintés rouge et vert pour compter, petites touches neutres et cernées pour réordonner — afin qu'on ne les confonde jamais du coin de l'œil.</p>
           </>,
         },
@@ -7246,9 +7354,9 @@ function GuidePage() {
         {
           q: "Vue tablette à 5 joueurs et plus : le score reste lisible",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>À partir de <b>5 joueurs</b>, la vue tablette range les cartes sur <b>deux colonnes</b> : chaque carte n'a plus que la moitié de la largeur. Jusqu'ici, le score se retrouvait coincé entre ses boutons − et +, au point de ne plus montrer qu'un chiffre, et encore mal.</p>
-            <p style={{ margin: "0 0 8px" }}>Désormais, sur deux colonnes, l'avatar, le nom et le temps de jeu se resserrent, les boutons <b>−</b> et <b>+</b> rapetissent et s'écartent, et c'est le <b>score qui récupère la place</b>. Sa taille se règle toute seule sur l'espace réellement disponible : <b>trois chiffres</b> tiennent toujours, en gros, quelle que soit la tablette.</p>
-            <p style={{ margin: 0 }}>Tous les scores de la table ont la <b>même taille</b>, qu'ils affichent 7 ou 128 : le nombre ne grossit ni ne rapetisse en passant de 99 à 100. Seul un score à quatre chiffres (ou un « −100 ») se resserre pour tenir. À 4 joueurs ou moins, rien ne change.</p>
+            <p style={{ margin: "0 0 8px" }}>En vue tablette, les joueurs sont rangés en <b>tuiles</b> à droite de l'écran : deux colonnes jusqu'à 4 joueurs, trois colonnes à 5 ou 6, quatre au-delà.</p>
+            <p style={{ margin: "0 0 8px" }}>Dès que les tuiles deviennent étroites (5 joueurs et plus), le <b>score prend toute la largeur</b> de sa tuile et les boutons <b>−</b> et <b>+</b> passent dessous, en deux grandes touches. Le nombre reste ainsi lisible de loin, même à huit autour de la table.</p>
+            <p style={{ margin: 0 }}>La taille du score se règle toute seule sur la place réellement disponible ; un score à quatre chiffres (ou un « −100 ») se resserre pour tenir.</p>
           </>,
         },
         {
@@ -7354,10 +7462,9 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur un <b>grand écran en paysage</b> — typiquement un iPad posé au milieu de la table — le chrono bascule tout seul sur une <b>disposition dédiée</b>, pensée pour être lue à un mètre de distance.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
-              <li>En haut, les <b>trois grands blocs</b> de phase : mise en place, partie, rangement, avec leur chrono en très gros.</li>
-              <li>En dessous, le <b>jeu en cours</b> avec sa miniature, le numéro de manche et la durée de jeu.</li>
-              <li>Puis les <b>cartes joueurs</b>, une par ligne : à gauche la photo et le nom (avec l'équipe s'il y en a une), au centre le <b>score en très grand</b> — touchez-le pour le modifier — et à droite le <b>temps de jeu</b>. Le joueur dont c'est le tour voit sa carte s'allumer entièrement dans sa couleur ; les autres gardent une bande colorée sur le bord. Les tailles s'adaptent à la dalle : plus l'écran est grand, plus les chiffres le sont.</li>
-              <li>En bas, les <b>gros boutons</b> : mode équipe, écran allumé, points de règle, et les commandes de l'hôte (pause, manche suivante, tous en même temps, terminer).</li>
+              <li>À <b>gauche</b>, les temps : la phase en cours en très gros chiffres, les trois temps côte à côte, la pause et le bouton de l'étape suivante.</li>
+              <li>À <b>droite</b>, les scores : une tuile par joueur, avec sa photo, son nom et son <b>score en très grand</b> — touchez-le pour ouvrir la calculatrice. En mode « Tour par tour », la tuile du joueur dont c'est le tour s'allume entièrement à sa couleur.</li>
+              <li>En bas, les <b>gros boutons</b> : écran allumé, points de règle, minuteur, type de partie, la tablée, et les commandes de l'hôte (corriger les temps, changer de jeu, nouvelle partie, terminer).</li>
             </ul>
             <p style={{ margin: 0 }}>Un bouton <b>📱 Vue téléphone</b> / <b>🖥️ Vue tablette</b> en haut à droite permet de forcer l'une ou l'autre disposition si le choix automatique ne vous convient pas.</p>
           </>,
@@ -7414,7 +7521,7 @@ function GuidePage() {
               <MockBtn color={C.navy}>Jeu</MockBtn>
               <MockBtn color={C.purple}>Rangement</MockBtn>
             </Illu>
-            <p style={{ margin: "6px 0 0" }}>Pendant le jeu, le gros bouton <b>« C'est mon tour »</b> permet à chacun de prendre la main pour compter son temps de réflexion — ou laissez tourner en mode simultané.</p>
+            <p style={{ margin: "6px 0 0" }}>Un seul gros bouton fait passer à l'étape suivante, et un appui sur l'un des trois temps le met en pause ou le reprend. Pour compter aussi le temps de réflexion de chacun, allumez <b>« Tour par tour »</b> : le bouton <b>« C'est mon tour »</b> apparaît alors sur chaque téléphone.</p>
           </>,
         },
         {
@@ -7758,7 +7865,8 @@ function GuidePage() {
         {
           q: "La sauvegarde des données (administrateurs)",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts, mécaniques, moments jeux et invités, commentaires, veille, <b>listes d'envie</b>, <b>parties et scores</b>, sessions du chronomètre et notifications.</p>
+            <p style={{ margin: "0 0 8px" }}>Depuis <b>Mon espace</b>, les administrateurs disposent d'un bouton <b>« Télécharger une sauvegarde (JSON) »</b>. Il enregistre dans un fichier daté <b>l'intégralité des tables du site</b> : membres et foyers, jeux, extensions, notes, propriétaires, prêts et demandes de location, mécaniques, moments jeux et invités, commentaires, veille, <b>listes d'envie</b>, <b>parties et scores</b>, sessions du chronomètre, <b>jeux en ligne</b> (fiches, crédits, rendez-vous, discussions), <b>Le Mag</b> (articles, co-auteurs, encarts, ouvertures, commentaires et notes) et notifications. Une table créée plus tard est reprise d'office, sans attendre une mise à jour du site.</p>
+            <p style={{ margin: "0 0 8px" }}>Une seule exception, voulue : la <b>messagerie privée</b> entre membres n'est jamais copiée dans le fichier, ni par le site ni par la base. Personne, administrateur compris, ne doit pouvoir lire une discussion dont il ne fait pas partie.</p>
             <p style={{ margin: "0 0 8px" }}>Seules les <b>images</b> n'y figurent pas : elles sont stockées sur un hébergement séparé et ne risquent rien lors d'une manipulation en base.</p>
             <p style={{ margin: "0 0 8px" }}>À la fin de l'export, un <b>récapitulatif</b> affiche le nombre de lignes récupérées table par table, <b>comparé automatiquement au contenu réel de la base</b>. Un bandeau vert confirme que la sauvegarde est complète ; un bandeau rouge signale les tables incomplètes et le nombre de lignes manquantes. Une table légitimement vide s'affiche simplement à zéro, sans alerte.</p>
             <p style={{ margin: 0 }}>À faire <b>régulièrement</b> et systématiquement <b>avant toute opération sensible</b> sur la base. Le fichier se conserve tel quel ; sa réinjection éventuelle passerait par l'éditeur SQL.</p>
@@ -11113,7 +11221,9 @@ function MagPage({ onAuth, setToast }) {
         <Dice color={C.amber} n={3} style={{ position: "absolute", width: 96, top: -14, right: 34, opacity: .2, transform: "rotate(13deg)" }} />
         <Dice color={C.teal} n={6} style={{ position: "absolute", width: 66, bottom: -10, right: 138, opacity: .16, transform: "rotate(-9deg)" }} />
         <Badge color={C.amber} soft={false}><Newspaper size={13} /> Écrit par les membres</Badge>
-        <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(32px,5vw,52px)", margin: "16px 0 10px", lineHeight: 1.05, letterSpacing: "-0.02em" }}>Le Mag</h1>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(40px,7vw,72px)", margin: "14px 0 10px", lineHeight: 1, letterSpacing: "-0.02em" }}>
+          <span style={{ background: "linear-gradient(90deg, #7FE0DA, #F6C24A 40%, #EF6B7E 70%, #C59AD4)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>Le Mag</span>
+        </h1>
         <p style={{ color: "rgba(255,255,255,.85)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.65, margin: 0, maxWidth: 660 }}>
           Critiques de jeux, dossiers, récits de parties, conseils : <b>ce que les membres de l'ALADJ ont à dire du jeu de société</b>.
           Chaque article peut s'enrichir des <b>encarts</b> des autres membres — un autre avis, une anecdote, une variante — sans que le texte de son auteur soit jamais touché.
@@ -11379,18 +11489,18 @@ function ChronoPage({ onAuth, setPage }) {
       emoji: "⏱️", color: C.amber, title: "Les trois temps d'une partie",
       teaser: "Mise en place, jeu, rangement : trois compteurs séparés, pour des statistiques honnêtes.",
       steps: [
-        <>Au moment de sortir la boîte, appuyez sur <b>Mise en place & explications</b>.</>,
-        <>Quand la partie commence pour de bon : <b>Lancer la partie</b>. Le premier compteur s'arrête, le second démarre.</>,
-        <>À la fin, <b>Rangement</b> compte le temps de tout remettre dans la boîte.</>,
-        <>La « durée de la partie » affichée en haut ne compte que le jeu — c'est elle qui alimente vos statistiques.</>,
+        <>Au moment de sortir la boîte, appuyez sur le gros bouton <b>Lancer la mise en place</b>.</>,
+        <>Quand la partie commence pour de bon, le même bouton devient <b>Lancer la partie</b> : le premier compteur s'arrête, le second démarre.</>,
+        <>Puis <b>Passer au rangement</b>, qui compte le temps de tout remettre dans la boîte, et enfin <b>Terminer la partie</b>.</>,
+        <>Le temps de la phase en cours s'affiche en très grand, comparé à la durée annoncée du jeu. Seul le temps de partie alimente la « durée de la partie » de vos statistiques.</>,
       ],
       illu: <Illu caption="Les trois boutons de phase, dans l'ordre d'une soirée."><MockBtn color={C.teal}>Mise en place</MockBtn><MockBtn color={C.amber}>Lancer la partie</MockBtn><MockBtn color={C.purple}>Rangement</MockBtn></Illu>,
     },
     {
       emoji: "👆", color: C.navy, title: "À qui le tour ?",
-      teaser: "Chacun mesure son propre temps de réflexion, d'un seul geste.",
+      teaser: "En option : chacun mesure son propre temps de réflexion, d'un seul geste.",
       steps: [
-        <>Sur son téléphone, chaque joueur a un grand bouton <b>« C'est mon tour »</b>.</>,
+        <>Allumez l'interrupteur <b>« Tour par tour »</b>, à côté du titre des scores : sur son téléphone, chaque joueur a alors un grand bouton <b>« C'est mon tour »</b>.</>,
         <>Un appui : son chrono personnel démarre et celui du joueur précédent s'arrête.</>,
         <>Pour les jeux où tout le monde joue en même temps, le mode <b>Simultané</b> fait tourner tous les compteurs à la fois.</>,
         <>Une interruption ? Le mode <b>Pause</b> gèle tous les compteurs individuels sans arrêter la partie.</>,
@@ -11657,6 +11767,36 @@ function HomePage({ setPage, onAuth }) {
     ? { n: webLive, l: webLive > 1 ? "jeux en ligne" : "jeu en ligne" }
     : { n: webDev, l: webDev > 1 ? "jeux en ligne bientôt" : "jeu en ligne bientôt" };
 
+  // (lot AL) Les groupes Signal a un clic, depuis le haut de la page : on
+  // envoie souvent les nouveaux membres ici pour s'y inscrire.
+  const [signalOpen, setSignalOpen] = useState(false);
+  const signalRef = useRef(null);
+  useEffect(() => {
+    if (!signalOpen) return undefined;
+    const onDown = (ev) => { if (signalRef.current && !signalRef.current.contains(ev.target)) setSignalOpen(false); };
+    const onKey = (ev) => { if (ev.key === "Escape") setSignalOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [signalOpen]);
+  const goSignalSection = () => {
+    setSignalOpen(false);
+    const el = typeof document !== "undefined" ? document.getElementById("aladj-signal") : null;
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  // (lot AL) Pour un membre : son prochain moment jeux, s'il est inscrit quelque part.
+  const myNext = useMemo(() => {
+    if (!currentUser) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    return [...events].filter((e) => e.date >= today && (e.players || []).some((p) => p.id === currentUser.id))
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0] || null;
+  }, [events, currentUser]);
+
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
     { icon: Calendar, c: C.red, t: "Des moments jeux toute l'année", d: "Proposez ou rejoignez des moments jeux à Gouville-sur-Mer et dans le Coutançais." },
@@ -11668,14 +11808,87 @@ function HomePage({ setPage, onAuth }) {
     <div>
       {/* HERO */}
       <section style={{ position: "relative", overflow: "hidden", background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 60%, #0c1f30 100%)` }}>
-        {/* formes décoratives */}
+        {/* formes décoratives (masquées sur téléphone : elles passaient sous les boutons) */}
+        <div className="aladj-hero-deco" aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
         <Dice color={C.teal} n={5} style={{ position: "absolute", width: 120, top: 60, left: "6%", opacity: .9, transform: "rotate(-12deg)", filter: "drop-shadow(0 12px 24px rgba(0,0,0,.3))" }} />
         <Dice color={C.red} n={3} style={{ position: "absolute", width: 90, top: 220, left: "2%", opacity: .85, transform: "rotate(14deg)", filter: "drop-shadow(0 12px 24px rgba(0,0,0,.3))" }} />
         <Dice color={C.amber} n={6} style={{ position: "absolute", width: 110, bottom: 50, right: "7%", opacity: .9, transform: "rotate(10deg)", filter: "drop-shadow(0 12px 24px rgba(0,0,0,.3))" }} />
         <div style={{ position: "absolute", width: 64, height: 64, top: 80, right: "16%" }}><MeepleIcon size={64} color={C.purple} /></div>
         <div style={{ position: "absolute", width: 44, height: 44, bottom: 120, left: "18%", transform: "rotate(-20deg)" }}><MeepleIcon size={44} color={C.amber} /></div>
+        </div>
 
-        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "84px 24px 96px", position: "relative", textAlign: "center" }}>
+        {/* (lot AL) Ludum et Signal, a un clic des le haut de la page. */}
+        <div style={{ position: "relative", zIndex: 5, maxWidth: 1180, margin: "0 auto", padding: "18px 24px 0", display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+          <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
+            title="Une partie de vos achats revient à l'association, sans surcoût"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 18px", borderRadius: 14,
+              background: "linear-gradient(180deg, #F6C24A, #E8A317)", boxShadow: "0 4px 0 #B47A06", color: "#12293F",
+              fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, textDecoration: "none" }}>
+            <ShoppingBag size={17} /> Acheter chez Ludum <span style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 12.5, opacity: .8 }}>· soutient l'asso</span>
+          </a>
+          <div ref={signalRef} style={{ position: "relative" }}>
+            <button type="button" onClick={() => setSignalOpen((v) => !v)} aria-expanded={signalOpen} aria-haspopup="true"
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 16px", borderRadius: 14, cursor: "pointer",
+                border: "none", background: "rgba(255,255,255,.12)", boxShadow: "inset 0 0 0 2px rgba(255,255,255,.3)", color: "#fff",
+                fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
+              <MessageCircle size={17} /> Rejoindre nos groupes Signal <ChevronDown size={15} style={{ transform: signalOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+            </button>
+            {signalOpen && (
+              <div role="dialog" aria-label="Groupes Signal de l'association" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+                width: 380, maxWidth: "calc(100vw - 32px)", background: "#fff", borderRadius: 22, padding: 10, textAlign: "left",
+                boxShadow: "0 24px 60px rgba(0,0,0,.35)", animation: "popIn .16s ease" }}>
+                <div style={{ padding: "6px 8px 8px", fontSize: 13.5, color: "#6f6355", lineHeight: 1.45 }}>
+                  La vie de l'asso se passe sur Signal. Touchez <b>Rejoindre</b> : l'application s'ouvre sur le groupe.
+                </div>
+                {SIGNAL_GROUPS.map((grp) => (
+                  <div key={grp.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px", borderRadius: 14 }}>
+                    <span style={{ width: 40, height: 40, borderRadius: 12, background: grp.color, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                      <grp.icon size={20} color="#fff" />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15.5, color: C.navy }}>{grp.name}</span>
+                      <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.35 }}>{grp.desc}</span>
+                    </span>
+                    <a href={grp.url} target="_blank" rel="noopener noreferrer"
+                      style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", minHeight: 40, padding: "0 12px", borderRadius: 12,
+                        background: grp.color, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, textDecoration: "none" }}>Rejoindre</a>
+                  </div>
+                ))}
+                <button type="button" onClick={goSignalSection}
+                  style={{ width: "100%", minHeight: 44, marginTop: 4, border: "none", borderTop: "1.5px solid #F0E8DA", background: "transparent", cursor: "pointer",
+                    color: C.teal, fontWeight: 800, fontSize: 14 }}>
+                  Voir les QR codes, à scanner avec un autre téléphone
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 84px", position: "relative", textAlign: "center" }}>
+          {currentUser && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginBottom: 18 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 9, minHeight: 40, padding: "0 16px 0 5px", borderRadius: 999,
+                background: "rgba(255,255,255,.1)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
+                <span style={{ width: 30, height: 30, borderRadius: 10, overflow: "hidden", background: C.teal, display: "grid", placeItems: "center", fontSize: 14 }}>
+                  {currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : currentUser.name[0].toUpperCase()}
+                </span>
+                Bonjour {currentUser.name} !
+              </span>
+              {myNext ? (
+                <button type="button" onClick={() => setPage("soirees")}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 16px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: "rgba(30,138,138,.28)", boxShadow: "inset 0 0 0 1.5px rgba(127,224,218,.55)", color: "#fff", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 14.5 }}>
+                  <Calendar size={16} /> Votre prochain moment : {FR_DAYS[new Date(myNext.date + "T00:00:00").getDay()].toLowerCase()} {formatDateShort(myNext.date)}{myNext.time ? ` · ${myNext.time}` : ""}{myNext.title ? ` · ${myNext.title}` : ""}
+                </button>
+              ) : (
+                <button type="button" onClick={() => setPage("soirees")}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 16px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: "rgba(255,255,255,.1)", color: "#fff", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 14.5 }}>
+                  <Calendar size={16} /> Pas encore inscrit à un prochain moment : voir l'agenda
+                </button>
+              )}
+            </div>
+          )}
           <Badge color={C.amber} soft={false}><MapPin size={13} /> Gouville-sur-Mer · Coutançais · Manche</Badge>
           <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: "clamp(38px, 7vw, 76px)", lineHeight: 1.02, margin: "22px 0 8px", letterSpacing: "-0.03em" }}>
             À l'assaut<br />
@@ -11692,24 +11905,37 @@ function HomePage({ setPage, onAuth }) {
             </Btn>
           </div>
 
-          <div style={{ display: "flex", gap: "clamp(20px,5vw,64px)", justifyContent: "center", marginTop: 56, flexWrap: "wrap" }}>
+          {/* (lot AL) Les chiffres cles, en tuiles : chacune mene a sa page. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, maxWidth: 920, margin: "48px auto 0" }}>
             {[
-              { n: games.filter((g) => !g.unowned).length, l: "jeux partagés", onClick: () => setPage("ludotheque") },
-              { n: users.length, l: "membres", onClick: () => setShowMembers(true) },
-              { n: upcomingCount, l: "moments à venir", onClick: () => setPage("soirees") },
+              { n: games.filter((g) => !g.unowned).length, l: "jeux partagés", icon: Library, c1: "#2BB3AE", c2: C.teal, onClick: () => setPage("ludotheque") },
+              { n: users.length, l: "membres", icon: Users, c1: "#F6C24A", c2: C.amber, onClick: () => setShowMembers(true) },
+              { n: upcomingCount, l: "moments à venir", icon: Calendar, c1: "#E25B6E", c2: C.red, onClick: () => setPage("soirees") },
               // Le compteur des jeux en ligne ne s'affiche que s'il a quelque
               // chose a dire : mieux vaut pas de chiffre du tout qu'un « 0 ».
-              ...(webStat.n > 0 ? [{ n: webStat.n, l: webStat.l, onClick: () => setPage("web-jeux") }] : []),
-              { n: "2010", l: "depuis", onClick: null },
-            ].map((s, i) => (
-              <div key={i} onClick={s.onClick || undefined} style={{ textAlign: "center", cursor: s.onClick ? "pointer" : "default", transition: "transform .15s", ...(s.onClick ? {} : {}) }}
-                onMouseEnter={(e) => { if (s.onClick) e.currentTarget.style.transform = "translateY(-3px)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}>
-                <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 38, color: "#fff", lineHeight: 1, textDecoration: s.onClick ? "underline" : "none", textDecorationColor: "rgba(255,255,255,.3)", textUnderlineOffset: 6 }}>{s.n}</div>
-                <div style={{ color: "rgba(255,255,255,.6)", fontSize: 14, marginTop: 4 }}>{s.l}</div>
-              </div>
-            ))}
+              ...(webStat.n > 0 ? [{ n: webStat.n, l: webStat.l, icon: Gamepad2, c1: "#A66BB8", c2: C.purple, onClick: () => setPage("web-jeux") }] : []),
+            ].map((st, i) => {
+              const Icon = st.icon;
+              return (
+                <button key={st.l} type="button" onClick={st.onClick} className="aladj-statcard"
+                  style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, minHeight: 84, padding: "14px 16px", borderRadius: 22,
+                    border: "none", cursor: "pointer", textAlign: "left", background: "rgba(255,255,255,.08)",
+                    boxShadow: "inset 0 0 0 1.5px rgba(255,255,255,.14)", color: "#fff", transition: "transform .15s, background .15s" }}>
+                  <span style={{ width: 52, height: 52, flexShrink: 0, borderRadius: 16, display: "grid", placeItems: "center",
+                    background: `linear-gradient(150deg, ${st.c1}, ${st.c2})`, boxShadow: "0 8px 18px rgba(0,0,0,.28)",
+                    transform: `rotate(${i % 2 ? 6 : -6}deg)` }}>
+                    <Icon size={25} color="#fff" />
+                  </span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 34, lineHeight: 1 }}>{Number(st.n).toLocaleString("fr-FR")}</span>
+                    <span style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 3 }}>{st.l}</span>
+                  </span>
+                  <ArrowRight size={17} style={{ marginLeft: "auto", flexShrink: 0, opacity: .55 }} />
+                </button>
+              );
+            })}
           </div>
+          <div style={{ marginTop: 18, color: "rgba(255,255,255,.55)", fontSize: 14 }}>Une association qui fait jouer le Coutançais depuis 2010</div>
         </div>
         <svg viewBox="0 0 1440 60" style={{ display: "block", width: "100%", height: 50 }} preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 24 T1440 20 L1440 60 Z" fill={C.cream} /></svg>
       </section>
@@ -11927,7 +12153,7 @@ function HomePage({ setPage, onAuth }) {
       </section>
 
       {/* ---- Conversations Signal ---- */}
-      <section style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 80px" }}>
+      <section id="aladj-signal" style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 24px 80px", scrollMarginTop: 90 }}>
         <SectionTitle kicker="Rester en contact" title="Nos conversations Signal" center />
         <p style={{ textAlign: "center", color: "#8a7c6a", fontSize: 15, margin: "10px auto 36px", maxWidth: 620, lineHeight: 1.6 }}>
           La vie de l'association se passe sur Signal. Rejoignez les groupes qui vous intéressent en cliquant sur le bouton, ou en scannant le QR code avec votre téléphone.
@@ -13710,15 +13936,34 @@ function EventsPage({ onAuth, setToast }) {
   }, [monthCursor, visibleEvents]);
 
   return (
-    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 80px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 30 }}>
-        <div>
-          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Agenda</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Les moments jeux</h1>
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 80px" }}>
+      {/* (lot AL) Bandeau des moments jeux */}
+      <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDeep} 55%, #0c1f30 100%)`,
+        borderRadius: 26, padding: "clamp(24px,4vw,42px)", color: "#fff", marginBottom: 30, boxShadow: "0 14px 34px rgba(18,41,63,.18)" }}>
+        <Dice color={C.teal} n={5} style={{ position: "absolute", width: 104, top: -12, right: 30, opacity: .22, transform: "rotate(12deg)" }} />
+        <Dice color={C.amber} n={2} style={{ position: "absolute", width: 64, bottom: -8, right: 150, opacity: .18, transform: "rotate(-10deg)" }} />
+        <Badge color={C.amber} soft={false}><Calendar size={13} /> Agenda</Badge>
+        <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(30px,5vw,50px)", margin: "14px 0 8px", lineHeight: 1.05, letterSpacing: "-0.02em" }}>
+          Les moments jeux{" "}
+          <span style={{ background: "linear-gradient(90deg, #7FE0DA, #F6C24A 45%, #EF6B7E 75%, #C59AD4)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>: on joue quand ?</span>
+        </h1>
+        <p style={{ color: "rgba(255,255,255,.82)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.6, margin: 0, maxWidth: 640 }}>
+          Soirées, après-midi en famille, parties en ligne : touchez un jour du calendrier pour voir le moment, vous inscrire et proposer vos jeux.
+        </p>
+        <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          {currentUser
+            ? <Btn variant="amber" size="lg" onClick={() => setShowCreate(true)}><Plus size={18} /> Proposer un moment jeux</Btn>
+            : <Btn variant="amber" onClick={() => onAuth("login")}><LogIn size={16} /> Connectez-vous pour proposer</Btn>}
+          <Btn size="lg" onClick={() => setCalSub(true)} style={{ background: "rgba(255,255,255,.1)", border: "2px solid rgba(255,255,255,.3)", color: "#fff" }}>
+            <Calendar size={18} /> Dans mon agenda
+          </Btn>
+          {SIGNAL_GROUPS[0] && (
+            <a href={SIGNAL_GROUPS[0].url} target="_blank" rel="noopener noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, minHeight: 44, padding: "0 6px", color: "#7FE0DA", fontWeight: 800, fontSize: 14.5 }}>
+              <MessageCircle size={16} /> Groupe Signal « {SIGNAL_GROUPS[0].name} »
+            </a>
+          )}
         </div>
-        {currentUser
-          ? <Btn variant="amber" size="lg" onClick={() => setShowCreate(true)}><Plus size={18} /> Proposer un moment jeux</Btn>
-          : <Btn variant="ghost" onClick={() => onAuth("login")}><LogIn size={16} /> Connectez-vous pour proposer</Btn>}
       </div>
 
       {/* CALENDRIER */}
@@ -20615,9 +20860,33 @@ const BACKUP_TABLES = [
   ["wishlist_items", [["id"], ["created_at"]]],
   ["push_subscriptions", [["id"], ["created_at"]]],
   ["reco_dismissed", [["id"], ["created_at"]]],
+  ["comment_reactions", [["created_at", "id"], ["id"]]],
+  // Demandes de location
+  ["loan_requests", [["created_at", "id"], ["id"]]],
+  ["loan_request_owners", [["request_id"], ["id"]]],
+  // Jeux en ligne (lots AA, AB, AE)
+  ["web_games", [["id"]]],
+  ["web_game_credits", [["web_game_id", "sort_order"], ["id"]]],
+  ["web_game_sessions", [["starts_at", "id"], ["id"]]],
+  ["web_game_signups", [["session_id", "user_id"], ["id"]]],
+  ["web_game_messages", [["created_at", "id"], ["id"]]],
+  // Le Mag (lots AI, AJ, AK)
+  ["mag_articles", [["created_at", "id"], ["id"]]],
+  ["mag_coauthors", [["article_id", "user_id"]]],
+  ["mag_addons", [["created_at", "id"], ["id"]]],
+  ["mag_article_opens", [["article_id"]]],
+  ["mag_comments", [["created_at", "id"], ["id"]]],
+  ["mag_ratings", [["article_id", "user_id"]]],
   // NE PAS AJOUTER ICI : conversations, conversation_members, messages.
   // Voir l'explication en tête de liste — l'absence est volontaire.
 ];
+
+/* (lot AL) Tables privées : JAMAIS dans le fichier, quoi que renvoie
+   l'inventaire. admin_table_counts() liste toutes les tables de la base, et
+   la découverte automatique des tables « en plus » les aurait donc reprises
+   sans que personne ne le décide. Ce filtre ferme la porte côté site ; la
+   migration du lot AL la ferme aussi côté base. */
+const BACKUP_PRIVATE = new Set(["conversations", "conversation_members", "messages"]);
 
 /* Requête de secours, à coller dans l'éditeur SQL de Supabase, utilisée
    uniquement si la fonction admin_table_counts() n'est pas encore déployée.
@@ -20682,7 +20951,9 @@ function AdminBackupSection() {
     /* 2) Plan de sauvegarde : les tables connues (avec leur tri éprouvé, utile
        seulement pour le repli), puis toute table supplémentaire vue en base. */
     const known = BACKUP_TABLES.map((x) => x[0]);
-    const extra = counts ? Object.keys(counts).filter((t) => !known.includes(t)).sort() : [];
+    const extra = counts
+      ? Object.keys(counts).filter((t) => !known.includes(t) && !BACKUP_PRIVATE.has(t)).sort()
+      : [];
     const plan = [...BACKUP_TABLES, ...extra.map((t) => [t, [["id"], ["created_at"]]])];
 
     const out = {}; const errors = []; const summary = [];
@@ -20726,7 +20997,8 @@ function AdminBackupSection() {
       rowCount: total,
       expectedRowCount: counts ? expectedTotal : null,
       complete: Boolean(counts) && errors.length === 0 && partial.length === 0,
-      note: "Images non incluses : elles sont stockees sur Cloudflare R2, hors base.",
+      note: "Images non incluses : elles sont stockees sur Cloudflare R2, hors base. "
+        + "Messagerie privee (conversations, conversation_members, messages) volontairement exclue.",
       summary, errors, tables: out,
     };
     const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
@@ -20764,8 +21036,10 @@ function AdminBackupSection() {
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 17, margin: 0, color: C.navy }}>Sauvegarde des données (admin)</h3>
       </div>
       <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 12px" }}>
-        Télécharge une copie de <b>toutes les tables du site</b> (membres, jeux, notes, prêts, foyers, moments,
-        veille, listes d'envie, parties et scores, chronomètre, notifications…) dans un fichier daté. Le contenu est ensuite
+        Télécharge une copie de <b>toutes les tables du site</b> (membres, jeux, notes, prêts et demandes de location,
+        foyers, moments, veille, listes d'envie, parties et scores, chronomètre, jeux en ligne, <b>Le Mag</b> avec
+        ses encarts, commentaires et notes, notifications…) dans un fichier daté. Seule la <b>messagerie privée</b>
+        en est exclue, volontairement : aucun administrateur ne doit pouvoir la lire. Le contenu est ensuite
         <b> vérifié table par table</b> contre le nombre de lignes réel en base. Les <b>images</b> ne sont pas
         concernées : elles sont stockées à part et ne risquent rien lors d'une manipulation en base.
         À faire régulièrement, et systématiquement avant toute opération sensible.
@@ -23802,6 +24076,8 @@ export default function App() {
         textarea:focus { border-color: ${C.teal} !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-thumb { background: #d9cbb4; border-radius: 99px; }
+        @media (max-width: 760px) { .aladj-hero-deco { display: none; } .aladj-statcard { min-height: 72px !important; padding: 12px !important; gap: 10px !important; } .aladj-statcard > svg { display: none; } }
+        @media (hover: hover) { .aladj-navrow:hover { background: #F7F2E8 !important; } .aladj-statcard:hover { transform: translateY(-3px); background: rgba(255,255,255,.14) !important; } }
         @keyframes popIn { from { opacity: 0; transform: scale(.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
