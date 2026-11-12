@@ -8,7 +8,8 @@ import {
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera,
   Smartphone, Share2, Rocket, Wrench, CalendarCheck, Puzzle,
   Newspaper, Megaphone, Lightbulb, Type, Heading2, ImagePlus, Quote, List, Scale,
-  MessageSquarePlus, Send, ArrowLeft, ArrowUp, ArrowDown, Save, Bell
+  MessageSquarePlus, Send, ArrowLeft, ArrowUp, ArrowDown, Save, Bell,
+  LayoutGrid, Shuffle, SlidersHorizontal, Flame, CalendarDays
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad, Confetti, playVictory } from "./PlayTimer";
@@ -6842,10 +6843,13 @@ function GuidePage() {
           </>,
         },
         {
-          q: "Parcourir la veille « À venir » : vue liste et filtres personnels",
+          q: "Parcourir la veille « À venir » : calendrier, pastilles et vue liste",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>La page <b>À venir</b> s'affiche en <b>grille</b> (les visuels) ou en <b>liste</b> (dense, pour comparer d'un coup d'œil). Le bouton <b>Liste</b> / <b>Grille</b>, à droite des filtres, bascule de l'une à l'autre. La liste montre, pour chaque jeu : la <b>sortie</b>, le nombre de membres <b>intéressés</b>, la <b>hype moyenne</b>, et <b>votre propre vote</b> — votre intention d'achat apparaissant sous le titre.</p>
-            <p style={{ margin: "0 0 8px" }}>Un filtre supplémentaire, réservé aux membres connectés, ne garde que <b>vos</b> fiches : <b>🎯 Mes intentions d'achat</b> (celles où vous vous êtes déclaré acheteur potentiel), <b>🌡️ Ma hype</b> (celles où vous avez voté), ou <b>les deux à la fois</b>. Pratique pour retrouver sa propre liste d'envies au milieu de la veille commune.</p>
+            <p style={{ margin: "0 0 8px" }}>La page <b>À venir</b> s'ouvre sur un bandeau avec des tuiles cliquables : les <b>sorties d'ici 30 jours</b>, les <b>sorties récentes</b> (la tuile déplie la vitrine), et, pour un membre connecté, <b>mes intentions d'achat</b> et les <b>fiches à évaluer</b> — celles où vous n'avez encore ni voté ni dit si vous comptiez l'acheter. De quoi faire le tour de la veille en quelques clics.</p>
+            <p style={{ margin: "0 0 8px" }}>Classée par <b>date de sortie</b> (le tri par défaut), la grille se range en <b>rubriques</b> : <b>Cette semaine</b>, <b>D'ici un mois</b>, <b>Plus tard</b>, <b>Déjà disponibles</b>, <b>Sortis en VO</b> et <b>Date de sortie inconnue</b>. Chaque carte porte un petit <b>calendrier</b> avec le jour de sortie (rouge quand c'est dans la semaine), le compte à rebours quand la sortie approche, le <b>thermomètre de la hype</b> en cinq segments (la flamme se remplit quand vous avez voté), votre intention d'achat, qui l'a déjà, qui est intéressé, et le prix neuf.</p>
+            <p style={{ margin: "0 0 8px" }}>Les filtres sont des <b>pastilles à un clic</b> : <b>Quand ?</b> (d'ici 30 jours, plus tard, déjà sortis, en VO, date inconnue), <b>Quoi ?</b> (les jeux, les extensions) et, pour un membre connecté, <b>Moi</b> : <b>🎯 Mes intentions</b>, <b>🌡️ Ma hype</b>, <b>les deux</b> ou <b>✋ À évaluer</b>. Le tri se choisit en onglets. Les filtres actifs sont rappelés au-dessus des fiches, chacun avec sa croix.</p>
+            <p style={{ margin: "0 0 8px" }}>Les deux petits boutons à droite de la recherche basculent entre la <b>grille</b> et la <b>liste</b> (dense, pour comparer d'un coup d'œil) : la sortie, le score, le nombre de membres <b>intéressés</b>, la <b>hype moyenne</b> et <b>votre propre vote</b> — votre intention d'achat apparaissant sous le titre.</p>
+            <p style={{ margin: "0 0 8px" }}>Dans la colonne de droite, deux classements en onglets, avec podium : le <b>Top 20 hype</b> et les <b>Achats prévus</b> — les fiches qui réunissent le plus d'acheteurs potentiels.</p>
             <p style={{ margin: "0 0 8px" }}>La <b>disponibilité</b> (date de sortie française, « déjà sorti », « sorti en VO ») se renseigne désormais <b>dès la création</b> de la fiche, y compris après un import BoardGameGeek — il n'est plus nécessaire de repasser par « Modifier la fiche ». Un bloc <b>« Mon avis »</b> y est également proposé : vous pouvez poser <b>votre hype</b> et <b>votre intention d'achat</b> dans la foulée, au moment où vous avez le jeu en tête. Tout reste modifiable ensuite depuis la fiche.</p>
             <p style={{ margin: 0 }}>Enfin, le tri <b>« Score d'intérêt »</b> résume en un seul chiffre ce que l'association pense d'un jeu. Il additionne <b>{INTEREST_OWNER_POINTS} points par membre qui le possède déjà</b>, les <b>intentions d'achat</b> ({INTENT_OPTIONS.filter((o) => INTEREST_POINTS[o.key] !== 0).map((o) => `${o.label} ${INTEREST_POINTS[o.key] > 0 ? "+" : ""}${INTEREST_POINTS[o.key]}`).join(", ")}, « Peu probable » 0) et la <b>somme de tous les votes de hype</b>. Un « Jamais » compte donc en négatif : il fait redescendre la fiche, il ne se contente pas de ne rien apporter. Le score s'affiche en <b>vue liste</b>, colonne « Score ».</p>
           </>,
@@ -6942,7 +6946,11 @@ function GuidePage() {
         {
           q: "Trouver un jeu",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Page <b>Ludothèque</b> : recherche par nom (les accents ne comptent pas), filtres par nombre de joueurs, durée ou mécanique, tri par note, et deux affichages (cartes ou liste). La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>
+            <p style={{ margin: "0 0 8px" }}>La page <b>Ludothèque</b> s'ouvre sur un bandeau, comme Le Mag : le nombre de jeux, les boutons <b>Ajouter un jeu</b>, <b>Composer ma tablée</b> et <b>Un jeu au hasard</b>, et quatre tuiles cliquables — les <b>jeux à emprunter</b>, les <b>parties enregistrées</b> (classe par « les plus joués »), les <b>jeux qui font envie</b> et les jeux que <b>vous n'avez pas encore notés</b>. Chaque tuile applique le filtre correspondant et descend à la liste.</p>
+            <p style={{ margin: "0 0 8px" }}>Dessous, une seule barre de recherche (un nom de jeu ou de propriétaire ; les accents ne comptent pas), puis des <b>pastilles à un clic</b> : le <b>nombre de joueurs</b> (1 à 7 +), la <b>durée</b> (≤ 30 min à + de 2 h), et quatre bascules — <b>🤝 Coopératifs</b>, <b>❤ J'ai envie de découvrir</b>, <b>⭐ Pas encore noté par moi</b> et <b>📦 Seulement les jeux de l'asso</b>. Un second clic sur une pastille l'éteint. Les filtres plus rares (mécanique, année, envies, collection, mes notes) sont rangés derrière <b>« Plus de filtres »</b> ; un petit chiffre indique combien y sont actifs.</p>
+            <p style={{ margin: "0 0 8px" }}>Le tri se choisit en onglets : <b>Mieux notés</b>, <b>Mes notes</b>, <b>Les plus joués</b>, <b>Envies</b>, <b>Arrivés récemment</b>, <b>A → Z</b>. Juste au-dessus des jeux, le <b>nombre de résultats</b> et les <b>filtres actifs</b> sont rappelés : une croix sur chacun pour le retirer, ou « Tout effacer ».</p>
+            <p style={{ margin: "0 0 8px" }}>Deux affichages, au choix des deux petits boutons à droite de la recherche : les <b>cartes</b>, ou la <b>liste</b> — avec la vignette, le nombre de joueurs, la durée, le propriétaire, les parties, les envies, la moyenne et votre note. La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Un jeu au hasard</b> tire une fiche parmi les jeux qui correspondent à vos filtres (les jeux de l'asso d'abord) : choisissez « 4 joueurs » et « ≤ 1 h », puis laissez le dé décider.</p>
             <p style={{ margin: 0 }}>Dès que vous tapez quelque chose, une <b>croix apparaît tout au bout à droite du champ</b> : un seul clic efface la recherche et la ludothèque entière revient, sans avoir à effacer les lettres une à une. La même croix se trouve sur les recherches de l'onglet <b>À venir</b> et de <b>Ma ludothèque</b>.</p>
           </>,
         },
@@ -6950,7 +6958,7 @@ function GuidePage() {
           q: "Les jeux les plus joués",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Chaque vignette porte, en bas à droite, le <b>nombre total de parties</b> enregistrées pour ce jeu — toutes parties confondues, par l'ensemble des membres : celles des moments jeux, celles du chronomètre, et celles saisies à la main. Un jeu jamais joué n'affiche aucune pastille.</p>
-            <p style={{ margin: "0 0 8px" }}>Le tri <b>« Les plus joués 🎲 »</b> est proposé dans la <b>Ludothèque</b> comme dans <b>Mon espace</b>, à côté des tris par note et par envies. Il classe du plus joué au moins joué, et départage à égalité par ordre alphabétique.</p>
+            <p style={{ margin: "0 0 8px" }}>Le tri <b>« Les plus joués »</b> est proposé dans la <b>Ludothèque</b> comme dans <b>Mon espace</b>, à côté des tris par note et par envies (dans la Ludothèque, la tuile « parties enregistrées » du bandeau y mène aussi). Il classe du plus joué au moins joué, et départage à égalité par ordre alphabétique.</p>
             <Illu caption="La pastille des parties, et le tri correspondant.">
               <MockBtn color={C.navy}>🎲 12</MockBtn>
               <MockBtn color={C.navy} soft>Les plus joués 🎲</MockBtn>
@@ -6961,11 +6969,11 @@ function GuidePage() {
         {
           q: "Les deux classements de la ludothèque : « de l'asso » et « du moment »",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>La colonne de droite de la <b>Ludothèque</b> porte désormais <b>deux</b> classements, l'un sous l'autre.</p>
+            <p style={{ margin: "0 0 8px" }}>La colonne de droite de la <b>Ludothèque</b> réunit <b>deux</b> classements dans un même cadre, avec un onglet pour passer de l'un à l'autre. Les trois premiers montent sur un <b>podium</b> (vignette, note, marche or, argent, bronze) ; la suite s'affiche en liste. Un clic ouvre la fiche du jeu.</p>
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.amber }}>🏆 Top 20 de l'asso</b> — le palmarès de fond. Tous les jeux partagés y concourent, à condition d'avoir réuni <b>au moins 4 votes</b> : ce seuil évite qu'un ou deux avis isolés propulsent un jeu en tête. Classement par note moyenne, départagé par le nombre de votants.</p>
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.purple }}>✨ Top 20 du moment</b> — l'actualité de l'association. Deux conditions <b>cumulées</b> : le jeu est <b>paru cette année ou l'an dernier</b>, et il est <b>entré dans la ludothèque du site depuis moins de {MOMENT_MONTHS} mois</b>. Une vieille boîte ressortie d'un placard n'y figure donc pas, et une nouveauté ajoutée il y a un an non plus.</p>
             <p style={{ margin: "0 0 8px" }}>Ce second classement sert d'abord les jeux à <b>4 votes et plus</b>, comme le Top 20 de l'asso. S'il n'est pas plein, il se complète par les <b>mieux notés d'entre les autres nouveautés</b> — celles-ci portent alors la mention <b>« peu de votes »</b>, pour que la lecture reste honnête. Un jeu récent que personne n'a encore noté n'y apparaît pas.</p>
-            <p style={{ margin: "0 0 8px" }}><b>Sur tablette et téléphone</b>, les deux classements ne restent pas dans une colonne étroite : ils <b>passent au-dessus de la ludothèque</b>, sur toute la largeur. C'est notamment le cas de toute tablette tenue <b>en portrait</b>, où une colonne latérale de 340 px étranglerait la grille de jeux — et où le texte du classement débordait auparavant sous son cadre.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Sur tablette et téléphone</b>, les classements ne restent pas dans une colonne étroite : ils se placent <b>juste après la recherche</b>, sur toute la largeur, et n'affichent d'abord que le <b>podium</b> — le bouton « Voir la suite du classement » déplie le reste. C'est aussi le cas de toute tablette tenue <b>en portrait</b>.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : une fiche dont l'<b>année de sortie n'est pas renseignée</b> ne peut pas être datée — elle reste hors du Top du moment, mais concourt normalement au Top 20 de l'asso. Complétez l'année sur la fiche pour l'y faire entrer.</p>
           </>,
         },
@@ -6999,7 +7007,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>On les reconnaît du premier coup d'œil : leur <b>vignette est grisée</b> et porte le bandeau « Fiche de référence ». Elles fonctionnent comme les autres — notes, avis, envies de découvrir, points de règle, chronomètre, parties enregistrées — à une exception près : elles ne sont <b>pas comptées dans les jeux de l'association</b>. Le titre de la ludothèque affiche donc les jeux réellement possédés, et mentionne à part le nombre de fiches de référence.</p>
             <p style={{ margin: "0 0 8px" }}><b>En créer une :</b> ajoutez un jeu comme d'habitude, puis à la question « Qui possède ce jeu ? » choisissez <b>« Personne — fiche de référence »</b>.</p>
             <p style={{ margin: "0 0 8px" }}><b>Elles vont et viennent toutes seules.</b> Si le dernier propriétaire d'un jeu clique sur « Je ne l'ai plus », la fiche n'est plus supprimée : elle bascule en fiche de référence. Les notes, avis, commentaires et parties déjà enregistrées sont <b>conservés</b> — des années d'historique ne disparaissent plus parce qu'un membre a revendu sa boîte. À l'inverse, dès qu'un membre clique sur <b>« Je l'ai ! »</b>, la fiche retrouve ses couleurs et rejoint la ludothèque de l'association.</p>
-            <p style={{ margin: 0 }}>Le filtre <b>« Toute la ludothèque »</b> en haut de la page permet de n'afficher que les <b>jeux de l'association</b>, ou au contraire que les <b>fiches de référence</b>. Comme ces fiches n'appartiennent à personne, elles sont entretenues collectivement : <b>tout membre</b> peut en corriger les informations. Elles ne sont pas proposées dans les recommandations personnalisées — inutile de conseiller un jeu que personne n'a sous la main.</p>
+            <p style={{ margin: 0 }}>La pastille <b>« 📦 Seulement les jeux de l'asso »</b> masque les fiches de référence ; le menu <b>« Collection »</b>, derrière « Plus de filtres », permet à l'inverse de n'afficher <b>qu'elles</b>. Comme ces fiches n'appartiennent à personne, elles sont entretenues collectivement : <b>tout membre</b> peut en corriger les informations. Elles ne sont pas proposées dans les recommandations personnalisées — inutile de conseiller un jeu que personne n'a sous la main.</p>
           </>,
         },
         {
@@ -7420,7 +7428,7 @@ function GuidePage() {
           q: "« À venir » : les sorties récentes, pour faire ses emplettes",
           a: <>
             <p style={{ margin: "0 0 8px" }}>En tête de la page <b>À venir</b>, un encart <b>🛍️ Sorties récentes</b> rassemble les jeux et extensions <b>sortis en France il y a deux mois ou moins</b>, le plus récent en tête. Il se replie et se déplie d'un clic sur son titre ; votre navigateur se souvient de votre choix.</p>
-            <p style={{ margin: "0 0 8px" }}>Chaque ligne donne la <b>date de sortie</b> (« il y a 3 semaines »), le <b>prix neuf</b> quand il est renseigné, votre <b>intention d'achat</b> — ou, à défaut, le nombre de membres intéressés —, le nombre de membres qui <b>l'ont déjà</b>, et un bouton <b>Ludum</b> pour l'acheter directement. Un clic ailleurs sur la ligne ouvre la fiche.</p>
+            <p style={{ margin: "0 0 8px" }}>Les sorties s'y présentent en <b>vignettes</b> qui défilent de gauche à droite. Chacune donne la <b>date de sortie</b> (« il y a 3 semaines »), le <b>prix neuf</b> quand il est renseigné, votre <b>intention d'achat</b> — ou, à défaut, le nombre de membres intéressés —, le nombre de membres qui <b>l'ont déjà</b>, et un bouton <b>Ludum</b> pour l'acheter directement. Un clic ailleurs sur la vignette ouvre la fiche. La tuile « sorties récentes » du bandeau ouvre aussi l'encart.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>L'encart est indépendant des filtres et du tri de la page. Seule une <b>date de sortie</b> permet de dater la parution : une fiche simplement cochée « déjà sorti », sans date, n'y figure pas — complétez la date sur la fiche pour l'y faire entrer. Les fiches qui ont quitté la veille (jeu noté deux fois dans la ludothèque, extension possédée depuis plus de quinze jours) n'y figurent plus, comme dans le reste de la page. L'encart ne s'affiche pas quand rien n'est sorti ces deux derniers mois.</p>
           </>,
         },
@@ -7430,7 +7438,7 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Une <b>extension</b> peut désormais avoir sa propre fiche de veille, au même titre qu'un jeu. Au moment de l'ajout, un sélecteur en haut de la fenêtre demande simplement : <b>🎲 un jeu</b> ou <b>🧩 une extension</b>. Dans le second cas, il faut désigner son <b>jeu de base</b> — soit un jeu de la ludothèque, soit une autre fiche « À venir » si le jeu de base n'est pas encore sorti.</p>
             <p style={{ margin: "0 0 8px" }}><b>Ce qui se passe quand on clique sur « Je l'ai&nbsp;! »</b> — et c'est là toute la différence avec un jeu : <b>aucune fiche nouvelle n'est créée</b>. L'extension vient se ranger dans la rubrique « 🧩 Extensions » de la fiche du jeu de base, dans la ludothèque, et vous y êtes inscrit comme propriétaire. Si un autre membre l'avait déjà déclarée, vous vous ajoutez simplement à ses côtés.</p>
             <p style={{ margin: "0 0 8px" }}><b>Et elle disparaît de la veille au bout de {UPCOMING_EXT_GRACE_DAYS} jours.</b> Un jeu quitte l'onglet « À venir » quand sa fiche de ludothèque a reçu deux notes — une extension, elle, ne se note pas. Le déclencheur est donc la <b>possession</b> : dès qu'un membre la déclare, la fiche reste encore {UPCOMING_EXT_GRACE_DAYS} jours — le temps que les autres la voient passer et disent « moi aussi » — puis s'efface d'elle-même. Le décompte s'affiche sur la fiche.</p>
-            <p style={{ margin: 0 }}>Le filtre <b>« Jeux et extensions »</b> en haut de l'onglet permet de n'afficher que les unes ou que les autres, et le <b>Top 20 hype</b> reste réservé aux jeux. Si le jeu de base n'est pas encore entré dans la ludothèque, la bascule attend : le site le dit clairement plutôt que d'échouer en silence.</p>
+            <p style={{ margin: 0 }}>Les pastilles <b>« Quoi ? »</b> (🎲 Les jeux, 🧩 Les extensions) permettent de n'afficher que les uns ou que les autres, et le <b>Top 20 hype</b> reste réservé aux jeux. Si le jeu de base n'est pas encore entré dans la ludothèque, la bascule attend : le site le dit clairement plutôt que d'échouer en silence.</p>
           </>,
         },
         {
@@ -12042,7 +12050,7 @@ function consumeMomentJump(kind) {
 
 function HomeStatTiles({ stats }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+    <div className="aladj-stattiles" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
       {stats.map((st, i) => {
         const Icon = st.icon;
         return (
@@ -18364,6 +18372,260 @@ function compareByRelease(a, b) {
 }
 
 /* Pastille d'etat, utilisee sur la vignette comme sur la fiche. */
+/* =============================================================================
+   (lot AL) LES OUTILS COMMUNS DE LA LUDOTHEQUE ET DE LA VEILLE « A VENIR »
+   Une grande barre de recherche, des pastilles a un clic au lieu d'une rangee
+   de menus deroulants, les filtres actifs rappeles (et effacables un par un),
+   un tri en onglets, et des classements presentes en podium.
+   ============================================================================= */
+const catPanel = {
+  background: "#fff", border: "1px solid #ece2d0", borderRadius: 22, padding: "clamp(14px,2.4vw,20px)",
+  boxShadow: "0 6px 22px rgba(18,41,63,.06)", marginBottom: 18, display: "grid", gap: 14, scrollMarginTop: 90,
+};
+const catPill = (on, tone) => ({
+  minHeight: 36, padding: "0 13px", borderRadius: 999, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+  border: on ? `2px solid ${tone}` : "2px solid #e6dcc9", background: on ? tone : "#fff", color: on ? "#fff" : C.navy,
+  boxShadow: on ? `0 3px 10px ${tone}44` : "none", transition: "background .12s, border-color .12s", whiteSpace: "nowrap",
+});
+
+/* Une rangee de pastilles : un clic choisit, un second clic sur la meme efface. */
+function CatChips({ label, icon: Icon, options, value, onChange, tone = C.teal }) {
+  return (
+    <div role="group" aria-label={label} style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
+      {label && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a", marginRight: 2 }}>
+          {Icon && <Icon size={15} />} {label}
+        </span>
+      )}
+      {options.map((o) => {
+        const on = value === o.v;
+        return (
+          <button key={o.v} type="button" aria-pressed={on} title={o.title || undefined} onClick={() => onChange(on ? "" : o.v)} style={catPill(on, tone)}>
+            {o.l}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Une pastille a bascule (oui / non). */
+function CatToggle({ on, onClick, children, tone = C.teal, title }) {
+  return (
+    <button type="button" aria-pressed={!!on} title={title || undefined} onClick={onClick} style={catPill(!!on, tone)}>
+      {children}
+    </button>
+  );
+}
+
+/* Le tri, en onglets. */
+function CatSort({ options, value, onChange }) {
+  return (
+    <div role="tablist" aria-label="Trier" style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: 4, borderRadius: 14, background: "rgba(26,58,92,.06)" }}>
+      {options.map((s) => {
+        const on = value === s.key;
+        const Icon = s.icon;
+        return (
+          <button key={s.key} type="button" role="tab" aria-selected={on} onClick={() => onChange(s.key)} title={s.title || undefined} style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: "none", cursor: "pointer",
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+            background: on ? "#fff" : "transparent", color: on ? C.navy : "#8a7c6a", boxShadow: on ? "0 2px 8px rgba(18,41,63,.1)" : "none",
+          }}>
+            {Icon && <Icon size={14} color={on ? (s.tone || C.teal) : "#a89a86"} fill={on && s.fill ? s.tone || C.teal : "none"} />} {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Grille ou liste. */
+function CatView({ value, onChange }) {
+  const opts = [{ k: "grid", icon: LayoutGrid, l: "grille" }, { k: "list", icon: List, l: "liste" }];
+  return (
+    <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 14, background: "rgba(26,58,92,.06)", flexShrink: 0 }}>
+      {opts.map((o) => {
+        const on = value === o.k;
+        const Icon = o.icon;
+        return (
+          <button key={o.k} type="button" aria-pressed={on} title={`Afficher en ${o.l}`} aria-label={`Afficher en ${o.l}`} onClick={() => onChange(o.k)}
+            style={{ width: 44, height: 40, borderRadius: 10, border: "none", cursor: "pointer", display: "grid", placeItems: "center",
+              background: on ? "#fff" : "transparent", color: on ? C.teal : "#a89a86", boxShadow: on ? "0 2px 8px rgba(18,41,63,.1)" : "none" }}>
+            <Icon size={19} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* La grande barre de recherche. */
+function CatSearch({ value, onChange, placeholder }) {
+  return (
+    <div style={{ flex: "1 1 260px", minWidth: 0, position: "relative" }}>
+      <Search size={20} color={C.teal} style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+      <TextInput value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder}
+        style={{ paddingLeft: 48, paddingRight: value ? 46 : 16, minHeight: 50, fontSize: 16, borderRadius: 14 }} />
+      {value && (
+        <button type="button" onClick={() => onChange("")} title="Effacer la recherche" aria-label="Effacer la recherche"
+          style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 8, display: "grid", placeItems: "center" }}>
+          <X size={18} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* Un menu deroulant etiquete, pour les filtres plus rares. */
+function CatSelect({ label, value, onChange, children, title }) {
+  return (
+    <label title={title || undefined} style={{ display: "grid", gap: 5, minWidth: 0 }}>
+      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: "#8a7c6a" }}>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ ...inputStyle, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: value ? C.teal : "#e6dcc9" }}>
+        {children}
+      </select>
+    </label>
+  );
+}
+
+/* Le nombre de resultats et les filtres actifs, chacun effacable. */
+function CatActive({ count, noun, items, onClearAll }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 18px" }}>
+      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17, marginRight: 4 }}>
+        {count.toLocaleString("fr-FR")} {count > 1 ? noun[1] : noun[0]}
+      </span>
+      {items.map((it) => (
+        <button key={it.k} type="button" onClick={it.onClear} title="Retirer ce filtre"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 9px 5px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+            background: "rgba(30,138,138,.12)", color: C.teal, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>
+          {it.label} <X size={14} />
+        </button>
+      ))}
+      {items.length > 1 && (
+        <button type="button" onClick={onClearAll}
+          style={{ background: "none", border: "none", cursor: "pointer", color: C.red, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, textDecoration: "underline", padding: "4px 6px" }}>
+          Tout effacer
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* Vignette carree d'un jeu, pour les classements et la vue liste. */
+function RankThumb({ g, size = 44, ring }) {
+  const [bad, setBad] = useState(false);
+  const name = (g && g.name) || "?";
+  const palette = [C.teal, C.amber, C.red, C.purple, C.navy];
+  const col = palette[(name.charCodeAt(0) + name.length) % palette.length];
+  const initials = name.split(" ").slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
+  return (
+    <span style={{ width: size, height: size, borderRadius: Math.round(size * 0.28), flexShrink: 0, overflow: "hidden", display: "grid", placeItems: "center",
+      background: `linear-gradient(135deg, ${col}, ${col}bb)`, boxShadow: ring ? `0 0 0 3px ${ring}, 0 8px 16px rgba(0,0,0,.28)` : "0 3px 8px rgba(0,0,0,.18)",
+      filter: g && g.unowned ? "grayscale(1)" : "none" }}>
+      {g && g.img && !bad
+        ? <img src={g.img} alt="" loading="lazy" onError={() => setBad(true)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        : <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#fff", fontSize: Math.round(size * 0.34) }}>{initials}</span>}
+    </span>
+  );
+}
+
+/* Un classement : les trois premiers sur un podium, la suite en liste.
+   Sur telephone, seul le podium s'affiche d'abord ; un bouton deplie la suite. */
+const RANK_TONES = {
+  navy: { bg: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, accent: "#F6C24A", row: "rgba(255,255,255,.07)", sub: "rgba(255,255,255,.62)" },
+  hype: { bg: `linear-gradient(160deg, ${C.red}, ${C.purple})`, accent: "#FFD9A3", row: "rgba(255,255,255,.1)", sub: "rgba(255,255,255,.72)" },
+};
+const RANK_MEDALS = ["#F6C24A", "#D9DEE4", "#D99A62"];
+function RankBoard({ title, icon: Icon, tone = "navy", tabs, onOpen }) {
+  const T = RANK_TONES[tone] || RANK_TONES.navy;
+  const [tab, setTab] = useState(tabs[0].key);
+  const [open, setOpen] = useState(false);
+  const cur = tabs.find((t) => t.key === tab) || tabs[0];
+  const items = cur.items || [];
+  const podium = items.slice(0, 3);
+  const rest = items.slice(3);
+  const steps = [70, 50, 38];
+  return (
+    <div className="aladj-rankboard" data-open={open ? "1" : "0"}
+      style={{ position: "relative", overflow: "hidden", background: T.bg, borderRadius: 24, padding: 20, color: "#fff", boxShadow: "0 14px 30px rgba(18,41,63,.18)" }}>
+      <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <Dice color={T.accent} n={6} style={{ position: "absolute", width: 96, right: -26, top: -34, opacity: .14, transform: "rotate(18deg)" }} />
+      </div>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span style={{ width: 38, height: 38, borderRadius: 12, display: "grid", placeItems: "center", background: "rgba(255,255,255,.14)", transform: "rotate(-6deg)", flexShrink: 0 }}>
+          <Icon size={20} color={T.accent} />
+        </span>
+        <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>{title}</h3>
+      </div>
+      {tabs.length > 1 && (
+        <div role="tablist" style={{ position: "relative", display: "flex", gap: 4, padding: 4, borderRadius: 12, background: "rgba(0,0,0,.2)", marginBottom: 10 }}>
+          {tabs.map((t) => {
+            const on = t.key === tab;
+            return (
+              <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.key)}
+                style={{ flex: 1, padding: "8px 6px", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+                  background: on ? "rgba(255,255,255,.95)" : "transparent", color: on ? "#12293F" : "rgba(255,255,255,.78)" }}>
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {cur.note && <p style={{ position: "relative", fontSize: 12.5, color: T.sub, lineHeight: 1.5, margin: "0 0 10px" }}>{cur.note}</p>}
+      {items.length === 0 ? (
+        <p style={{ position: "relative", fontSize: 13.5, color: T.sub, lineHeight: 1.55, margin: "4px 0 0" }}>{cur.empty}</p>
+      ) : (
+        <>
+          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", alignItems: "end", gap: 8, marginTop: 8 }}>
+            {[1, 0, 2].map((idx) => {
+              const it = podium[idx];
+              if (!it) return <span key={"vide" + idx} />;
+              return (
+                <button key={it.id} type="button" onClick={() => onOpen(it.id)} title={it.sub ? `${it.name} — ${it.sub}` : it.name}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0, color: "#fff", minWidth: 0 }}>
+                  <RankThumb g={it} size={idx === 0 ? 62 : 50} ring={RANK_MEDALS[idx]} />
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, lineHeight: 1.2, textAlign: "center", width: "100%",
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 30 }}>{it.name}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: T.accent }}>{it.scoreIcon}{it.score}</span>
+                  <span style={{ width: "100%", height: steps[idx], borderRadius: "12px 12px 4px 4px", display: "grid", placeItems: "center",
+                    background: `linear-gradient(180deg, ${RANK_MEDALS[idx]}, ${RANK_MEDALS[idx]}99)`,
+                    fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: idx === 0 ? 28 : 22, color: "rgba(18,41,63,.82)" }}>{idx + 1}</span>
+                </button>
+              );
+            })}
+          </div>
+          {rest.length > 0 && (
+            <div className="aladj-rank-rest" style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginTop: 12, maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>
+              {rest.map((it, i) => (
+                <button key={it.id} type="button" onClick={() => onOpen(it.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: T.row, border: "none", borderRadius: 12, padding: "7px 10px", cursor: "pointer", textAlign: "left", minWidth: 0, color: "#fff" }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, width: 22, textAlign: "center", flexShrink: 0, color: T.sub }}>{i + 4}</span>
+                  <RankThumb g={it} size={34} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                    {it.sub && <span style={{ display: "block", fontSize: 11.5, color: T.sub }}>{it.sub}</span>}
+                  </span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: T.accent, fontSize: 13.5, display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0 }}>{it.scoreIcon}{it.score}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {rest.length > 0 && (
+            <button type="button" className="aladj-rank-more" onClick={() => setOpen((o) => !o)}
+              style={{ position: "relative", display: "none", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 12, minHeight: 42, borderRadius: 12,
+                border: "none", cursor: "pointer", background: "rgba(255,255,255,.12)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14 }}>
+              {open ? "Replier le classement" : `Voir la suite du classement (${rest.length})`}
+              <ChevronDown size={17} style={{ transform: open ? "rotate(180deg)" : "none" }} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ReleaseBadge({ u, big }) {
   const st = releaseState(u);
   if (st.kind === "unknown") return null;
@@ -18455,67 +18717,103 @@ function ExtensionBadge({ baseName, big }) {
   );
 }
 
+/* ---- (lot AL) Petit calendrier pose sur la vignette d'une sortie datee ---- */
+function ReleaseLeaf({ d, days }) {
+  const mon = d.toLocaleDateString("fr-FR", { month: "short" }).replace(".", "");
+  return (
+    <span title={`Sortie le ${formatReleaseDate(d)}`}
+      style={{ position: "absolute", top: 10, left: 10, width: 56, borderRadius: 12, overflow: "hidden", background: "#FFFDF6", boxShadow: "0 6px 14px rgba(0,0,0,.28)", textAlign: "center", transform: "rotate(-4deg)" }}>
+      <span style={{ display: "block", background: days <= 7 ? C.red : C.amber, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", padding: "3px 0" }}>{mon}</span>
+      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 23, color: "#12293F", lineHeight: 1.1, padding: "2px 0 0" }}>{d.getDate()}</span>
+      <span style={{ display: "block", fontSize: 10, color: "#7a6c5a", paddingBottom: 3 }}>{d.getFullYear()}</span>
+    </span>
+  );
+}
+
+/* ---- (lot AL) Le thermometre de la hype, en cinq segments ---- */
+function HypeMeter({ avg, count, mine }) {
+  const lvl = Math.max(1, Math.min(5, Math.round(avg)));
+  const cfg = HYPE_LABELS[lvl];
+  return (
+    <div title={count ? `Hype moyenne : ${avg.toFixed(1).replace(".", ",")} sur 5 (${count} vote${count > 1 ? "s" : ""})${mine ? ` — la vôtre : ${mine}` : ""}` : "Pas encore de vote de hype"}
+      style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <Flame size={15} color={count ? cfg.color : "#cdbfa8"} fill={mine ? cfg.color : "none"} style={{ flexShrink: 0 }} />
+      <span style={{ display: "flex", gap: 3, flex: 1, minWidth: 0 }}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span key={n} style={{ flex: 1, height: 7, borderRadius: 99, background: count && n <= lvl ? cfg.color : "#ece2d0" }} />
+        ))}
+      </span>
+      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, color: count ? cfg.color : "#a89a86", whiteSpace: "nowrap" }}>
+        {count ? `${cfg.label} · ${count}` : "Pas de vote"}
+      </span>
+    </div>
+  );
+}
+
 /* ---- Carte d'une fiche À venir (grille principale) ---- */
 function UpcomingCard({ u, onOpen, currentUserId }) {
   const { avg, count } = upcomingStats(u);
   const myHype = currentUserId ? (u.hypes?.[currentUserId] || 0) : 0;
-  const iVoted = myHype > 0;
-  const cfg = HYPE_LABELS[Math.round(avg)] || HYPE_LABELS[1];
+  const myIntent = currentUserId ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[currentUserId]) : null;
+  const st = releaseState(u);
+  const owners = (u.ludoOwners || []).length;
+  const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length;
   return (
-    <button onClick={onOpen} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 18, overflow: "hidden", padding: 0, background: C.paper, boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s" }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(18,41,63,.12)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(18,41,63,.05)"; }}>
-      <div style={{ position: "relative" }}>
+    <button type="button" onClick={onOpen} className="aladj-upc-card"
+      style={{ width: "100%", minWidth: 0, textAlign: "left", cursor: "pointer", border: "1px solid #ece2d0", borderRadius: 20, overflow: "hidden", padding: 0, background: C.paper,
+        boxShadow: "0 4px 16px rgba(18,41,63,.05)", transition: "transform .15s, box-shadow .2s", display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "relative", width: "100%" }}>
         <GameCover g={u} />
-        {count > 0 && (
-          <div title={iVoted ? "Hype moyenne — vous avez voté" : "Hype moyenne — vous n'avez pas encore voté"}
-            style={{ position: "absolute", top: 10, right: 10, background: iVoted ? cfg.color : "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "4px 11px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
-            🌡️ {avg.toFixed(1).replace(".", ",")}
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 50%, rgba(12,31,48,.55))", pointerEvents: "none" }} />
+        {st.kind === "soon" && st.date && <ReleaseLeaf d={st.date} days={st.days} />}
+        {(st.kind === "available" || st.kind === "vo") && <div style={{ position: "absolute", top: 10, left: 10 }}><ReleaseBadge u={u} /></div>}
+        {myIntent && (
+          <div title="Mon intention d'achat" style={{ position: "absolute", top: 10, right: 10, maxWidth: "58%", background: myIntent.color, color: "#fff", borderRadius: 999, padding: "4px 10px",
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12, boxShadow: "0 2px 6px rgba(0,0,0,.2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            🎯 {myIntent.label}
           </div>
         )}
-        <div style={{ position: "absolute", bottom: 10, left: 10, display: "flex", gap: 6, flexWrap: "wrap", maxWidth: "calc(100% - 20px)" }}>
-          <ReleaseBadge u={u} />
+        <div style={{ position: "absolute", bottom: 10, left: 10, right: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {st.kind === "soon" && st.days <= 30 && (
+            <span style={{ background: st.days <= 7 ? C.red : "rgba(18,41,63,.85)", color: "#fff", borderRadius: 999, padding: "3px 10px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12 }}>
+              ⏳ {st.label}
+            </span>
+          )}
           {u.kind === "extension" && <ExtensionBadge baseName={u.baseName} />}
         </div>
       </div>
-      <div style={{ padding: 14 }}>
-        <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16, margin: "0 0 4px", lineHeight: 1.2 }}>{u.name}</h3>
-        {(() => {
-          const st = releaseState(u);
-          if (st.kind === "soon" && st.date) return <p style={{ fontSize: 12, color: C.amber, fontWeight: 700, margin: "0 0 8px" }}>Sortie le {formatReleaseDate(st.date)}</p>;
-          if (st.kind === "available" && st.date) return <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sorti le {formatReleaseDate(st.date)}</p>;
-          return u.year ? <p style={{ fontSize: 12, color: "#9c8d79", margin: "0 0 8px" }}>Sortie : {u.year}</p> : null;
-        })()}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 12, color: "#5e5346" }}>
-          {u.min && <span>{u.min}{u.max && u.max !== u.min ? `-${u.max}` : ""} j.</span>}
-          {u.time && <span>· {u.time} min</span>}
-          {u.newPrice != null && <span>· {u.newPrice.toFixed(2).replace(".", ",")} €</span>}
+      <div style={{ padding: "13px 15px 15px", display: "flex", flexDirection: "column", gap: 9, flex: 1, width: "100%", boxSizing: "border-box" }}>
+        <div>
+          <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 16.5, margin: "0 0 3px", lineHeight: 1.2 }}>{u.name}</h3>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#8a7c6a" }}>
+            {st.kind === "soon" && st.date && <span style={{ color: C.amber, fontWeight: 700 }}>Sortie le {formatReleaseDate(st.date)}</span>}
+            {st.kind === "available" && st.date && <span>Sorti le {formatReleaseDate(st.date)}</span>}
+            {st.kind !== "soon" && !st.date && u.year && <span>Sortie : {u.year}</span>}
+            {u.min && <span><Users size={11} style={{ verticalAlign: "-1px" }} /> {u.min}{u.max && u.max !== u.min ? `-${u.max}` : ""}</span>}
+            {u.time && <span><Clock size={11} style={{ verticalAlign: "-1px" }} /> {u.time} min</span>}
+          </div>
         </div>
-        {(() => {
-          const owners = (u.ludoOwners || []).length;
-          const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length;
-          if (!owners && !wanted && !count) return null;
-          return (
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8, fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
-              {owners > 0 && <span title={`${owners} membre${owners > 1 ? "s l'ont" : " l'a"} déjà`} style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
-              {wanted > 0 && <span title={`${wanted} membre${wanted > 1 ? "s intéressés" : " intéressé"} par l'achat`} style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 9px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
-              {count > 0 && <span style={{ color: "#8a7c6a" }}>{count} vote{count > 1 ? "s" : ""} de hype</span>}
-            </div>
-          );
-        })()}
+        <HypeMeter avg={avg} count={count} mine={myHype} />
+        <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 9, fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
+          {owners > 0 && <span title={`${owners} membre${owners > 1 ? "s l'ont" : " l'a"} déjà`} style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
+          {wanted > 0 && <span title={`${wanted} membre${wanted > 1 ? "s intéressés" : " intéressé"} par l'achat`} style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 9px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
+          {!owners && !wanted && <span style={{ color: "#a89a86", fontWeight: 600 }}>Personne ne s'est encore prononcé</span>}
+          {u.newPrice != null && <span style={{ marginLeft: "auto", color: C.navy, fontSize: 14.5 }}>{u.newPrice.toFixed(2).replace(".", ",")} €</span>}
+        </div>
       </div>
     </button>
   );
 }
 
 /* ---- (lot AG) Sorties récentes -------------------------------------------
-   Une liste dépliable, en tête de la page, des fiches sorties en France il y
+   Une vitrine dépliable, en tête de la page, des fiches sorties en France il y
    a deux mois ou moins : de quoi faire ses emplettes sans parcourir toute la
    veille. Seule une DATE de sortie permet de dater la parution : une fiche
    simplement cochée « déjà sorti », sans date, ne peut pas y figurer.
    Les fiches qui ont quitté la veille (règle de bascule habituelle : jeu
    noté deux fois dans la ludothèque, extension possédée depuis quinze jours)
    n'y sont pas non plus : la liste part de `upcoming`, déjà filtrée.
+   (lot AL) Les fiches s'y présentent en vignettes, dans un bandeau qui défile.
    ------------------------------------------------------------------------ */
 const RECENT_RELEASE_MONTHS = 2;
 const RECENT_OPEN_KEY = "aladj_upc_recent_open";
@@ -18542,11 +18840,13 @@ function releasedAgo(d) {
   return `il y a ${w} semaines`;
 }
 
-function RecentReleasesPanel({ items, currentUserId, onOpen }) {
+function RecentReleasesPanel({ items, currentUserId, onOpen, openTick = 0 }) {
   const [open, setOpen] = useState(() => {
     try { return typeof window !== "undefined" && window.localStorage && window.localStorage.getItem(RECENT_OPEN_KEY) === "1"; }
     catch (e) { return false; }
   });
+  // (lot AL) La tuile « sorties récentes » du bandeau ouvre la vitrine.
+  useEffect(() => { if (openTick) setOpen(true); }, [openTick]);
   const toggle = () => setOpen((o) => {
     const next = !o;
     try { if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(RECENT_OPEN_KEY, next ? "1" : "0"); }
@@ -18556,24 +18856,24 @@ function RecentReleasesPanel({ items, currentUserId, onOpen }) {
   if (!items.length) return null;
   const n = items.length;
   return (
-    <div style={{ background: "#fff", border: `1.5px solid ${C.teal}44`, borderRadius: 16, marginBottom: 18, overflow: "hidden", boxShadow: "0 4px 16px rgba(18,41,63,.05)" }}>
+    <div id="upc-recent" style={{ borderRadius: 22, marginBottom: 18, overflow: "hidden", background: "linear-gradient(135deg, #1E8A8A, #14605F)", color: "#fff", boxShadow: "0 10px 24px rgba(18,41,63,.12)", scrollMarginTop: 90 }}>
       <button type="button" onClick={toggle} aria-expanded={open}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", border: "none", cursor: "pointer", textAlign: "left", background: open ? "rgba(30,138,138,.07)" : "#fff" }}>
-        <span style={{ width: 38, height: 38, borderRadius: 11, background: C.teal, color: "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>
-          <ShoppingBag size={19} />
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", border: "none", cursor: "pointer", textAlign: "left", background: "transparent", color: "#fff" }}>
+        <span style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(255,255,255,.18)", display: "grid", placeItems: "center", flexShrink: 0, transform: "rotate(-6deg)" }}>
+          <ShoppingBag size={22} />
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 16.5 }}>
-            Sorties récentes <span style={{ color: C.teal }}>· {n}</span>
-          </span>
-          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.4 }}>
+          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17.5 }}>Sorties récentes · {n}</span>
+          <span style={{ display: "block", fontSize: 13, color: "rgba(255,255,255,.82)", lineHeight: 1.4 }}>
             {n} sortie{n > 1 ? "s" : ""} ces deux derniers mois, la plus récente en tête — de quoi faire ses emplettes.
           </span>
         </span>
-        <ChevronDown size={20} color={C.teal} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 999, background: "rgba(255,255,255,.16)", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, flexShrink: 0 }}>
+          {open ? "Replier" : "Voir"} <ChevronDown size={16} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        </span>
       </button>
       {open && (
-        <div style={{ borderTop: "1px solid #efe6d6", maxHeight: 440, overflowY: "auto" }}>
+        <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "2px 18px 18px", scrollSnapType: "x mandatory" }}>
           {items.map(({ u, date }) => {
             const myIntent = currentUserId ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[currentUserId]) : null;
             const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length;
@@ -18581,32 +18881,31 @@ function RecentReleasesPanel({ items, currentUserId, onOpen }) {
             return (
               <div key={u.id} role="button" tabIndex={0} onClick={() => onOpen(u.id)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(u.id); } }}
-                style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 16px", borderBottom: "1px solid #f3ecdf", cursor: "pointer" }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(232,163,23,.06)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 12, flex: "1 1 240px", minWidth: 0 }}>
-                  {u.img
-                    ? <img src={u.img} alt="" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#f3ecdf" }} />
-                    : <span style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, background: `linear-gradient(135deg, ${C.teal}, ${C.navy})` }} />}
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
-                    {u.kind === "extension" && <span style={{ display: "block", fontSize: 11.5, color: C.purple, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
-                    <span style={{ display: "block", fontSize: 12, color: "#8a7c6a" }}>
-                      {u.kind === "extension" ? "Sortie" : "Sorti"} le {formatReleaseDate(date)} · <b style={{ color: C.teal }}>{releasedAgo(date)}</b>
-                    </span>
+                style={{ flex: "0 0 210px", scrollSnapAlign: "start", background: "#fff", borderRadius: 16, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column", boxShadow: "0 6px 16px rgba(0,0,0,.16)" }}>
+                <div style={{ position: "relative", height: 100, background: "linear-gradient(135deg, #1E8A8A, #1A3A5C)" }}>
+                  {u.img && <img src={u.img} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                  <span style={{ position: "absolute", bottom: 8, left: 8, background: C.teal, color: "#fff", borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11.5 }}>
+                    {u.kind === "extension" ? "Sortie" : "Sorti"} {releasedAgo(date)}
                   </span>
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto", fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
-                  {myIntent && <span title="Mon intention d'achat" style={{ color: "#fff", background: myIntent.color, borderRadius: 999, padding: "2px 9px" }}>🎯 {myIntent.label}</span>}
-                  {!myIntent && wanted > 0 && <span title="Membres intéressés par l'achat" style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 9px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
-                  {owners > 0 && <span title={`${owners} membre${owners > 1 ? "s l'ont" : " l'a"} déjà`} style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
-                  {u.newPrice != null && <span style={{ color: C.navy, fontSize: 13.5 }}>{u.newPrice.toFixed(2).replace(".", ",")} €</span>}
-                  <a href={ludumLink(u.name, u.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
-                    onClick={(e) => e.stopPropagation()} title={`Acheter « ${u.name} » chez Ludum`}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 5, background: C.amber, color: "#fff", borderRadius: 10, padding: "6px 11px", textDecoration: "none", fontSize: 12.5, whiteSpace: "nowrap" }}>
-                    <ShoppingBag size={14} /> Ludum
-                  </a>
-                </span>
+                </div>
+                <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{u.name}</span>
+                  {u.kind === "extension" && <span style={{ fontSize: 11.5, color: C.purple, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
+                  <span style={{ fontSize: 12, color: "#8a7c6a" }}>le {formatReleaseDate(date)}</span>
+                  <span style={{ display: "flex", gap: 5, flexWrap: "wrap", fontSize: 11, fontWeight: 700, fontFamily: "'Fredoka',sans-serif" }}>
+                    {myIntent && <span title="Mon intention d'achat" style={{ color: "#fff", background: myIntent.color, borderRadius: 999, padding: "2px 8px" }}>🎯 {myIntent.label}</span>}
+                    {!myIntent && wanted > 0 && <span style={{ color: "#8a6a1f", background: "rgba(232,163,23,.18)", borderRadius: 999, padding: "2px 8px" }}>🎯 {wanted} intéressé{wanted > 1 ? "s" : ""}</span>}
+                    {owners > 0 && <span style={{ color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 8px" }}>📦 {owners} l'{owners > 1 ? "ont" : "a"}</span>}
+                  </span>
+                  <span style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+                    {u.newPrice != null && <b style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 14.5 }}>{u.newPrice.toFixed(2).replace(".", ",")} €</b>}
+                    <a href={ludumLink(u.name, u.ludumUrl)} target="_blank" rel="noopener noreferrer sponsored"
+                      onClick={(e) => e.stopPropagation()} title={`Acheter « ${u.name} » chez Ludum`}
+                      style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, background: C.amber, color: "#12293F", borderRadius: 10, padding: "6px 10px", textDecoration: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 12.5, whiteSpace: "nowrap" }}>
+                      <ShoppingBag size={14} /> Ludum
+                    </a>
+                  </span>
+                </div>
               </div>
             );
           })}
@@ -18616,9 +18915,27 @@ function RecentReleasesPanel({ items, currentUserId, onOpen }) {
   );
 }
 
+/* (lot AL) Les rubriques du calendrier, quand la page est classée par date. */
+function upcGroupOf(u) {
+  const st = releaseState(u);
+  if (st.kind === "soon") {
+    if (st.days <= 7) return { k: "w", l: "Cette semaine", tone: C.red };
+    if (st.days <= 30) return { k: "m", l: "D'ici un mois", tone: C.amber };
+    return { k: "later", l: "Plus tard", tone: C.purple };
+  }
+  if (st.kind === "available") return { k: "a", l: "Déjà disponibles", tone: C.teal };
+  if (st.kind === "vo") return { k: "vo", l: "Sortis en VO, la VF se fait attendre", tone: "#5B86B5" };
+  return { k: "u", l: "Date de sortie inconnue", tone: "#8a7c6a" };
+}
+
+const UPC_WHEN = [
+  { v: "month", l: "D'ici 30 jours" }, { v: "later", l: "Plus tard" }, { v: "out", l: "Déjà sortis" },
+  { v: "vo", l: "En VO" }, { v: "unknown", l: "Date inconnue" },
+];
+
 /* ---- Page "À venir" ---- */
 function UpcomingPage({ onAuth, setToast }) {
-  const { upcoming, users, currentUser, games: allGames } = useApp();
+  const { upcoming, currentUser, games: allGames } = useApp();
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
   // Par defaut on classe par date de sortie : c'est l'information qu'on vient
@@ -18627,8 +18944,11 @@ function UpcomingPage({ onAuth, setToast }) {
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [view, setView] = useState("grid");   // (point 6) "grid" | "list"
-  const [mine, setMine] = useState("");       // (point 7) "" | "intent" | "hype" | "both"
+  const [mine, setMine] = useState("");       // (point 7) "" | "intent" | "hype" | "both" | (lot AL) "todo"
   const [kind, setKind] = useState("");       // (lot AA) "" | "game" | "extension"
+  const [when, setWhen] = useState("");       // (lot AL) "" | "month" | "later" | "out" | "vo" | "unknown"
+  const [recentTick, setRecentTick] = useState(0);
+  const uid = currentUser ? currentUser.id : null;
   // Le nom du jeu de base, résolu une fois pour toutes : la vignette, la liste
   // et la fiche l'affichent, inutile de le rechercher trois fois.
   const withBase = useMemo(() => upcoming.map((u) => (u.kind === "extension"
@@ -18649,24 +18969,36 @@ function UpcomingPage({ onAuth, setToast }) {
   }, [upcoming]);
 
   const filtered = useMemo(() => {
-    const uid = currentUser?.id;
     // (point 7) Deux lectures personnelles de la veille : « ce que je compte
-    // acheter » et « ce qui me fait envie ». Sans membre connecte, le filtre
-    // n'est pas propose et ne s'applique donc jamais.
+    // acheter » et « ce qui me fait envie ». (lot AL) Et une troisième : les
+    // fiches sur lesquelles je ne me suis pas encore prononcé du tout.
+    // Sans membre connecte, le filtre n'est pas propose et ne s'applique donc jamais.
     const mineOk = (u) => {
       if (!mine || !uid) return true;
-      const hasIntent = INTENT_INTERESTED.includes((u.intents || {})[uid]);
+      const intent = (u.intents || {})[uid];
+      const hasIntent = INTENT_INTERESTED.includes(intent);
       const hasHype = ((u.hypes || {})[uid] || 0) > 0;
       if (mine === "intent") return hasIntent;
       if (mine === "hype") return hasHype;
       if (mine === "both") return hasIntent && hasHype;
+      if (mine === "todo") return !intent && !hasHype;
+      return true;
+    };
+    const whenOk = (u) => {
+      if (!when) return true;
+      const st = releaseState(u);
+      if (when === "month") return st.kind === "soon" && st.days <= 30;
+      if (when === "later") return st.kind === "soon" && st.days > 30;
+      if (when === "out") return st.kind === "available";
+      if (when === "vo") return st.kind === "vo";
+      if (when === "unknown") return st.kind === "unknown";
       return true;
     };
     let list = withBase.filter((u) => {
       const okQ = !q || u.name.toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (u.mechanics || []).includes(mech);
       const okK = !kind || (kind === "extension" ? u.kind === "extension" : u.kind !== "extension");
-      return okQ && okM && okK && mineOk(u);
+      return okQ && okM && okK && mineOk(u) && whenOk(u);
     }).map((u) => {
       const st = upcomingStats(u);
       return { ...u, _avg: st.avg, _count: st.count };
@@ -18680,7 +19012,22 @@ function UpcomingPage({ onAuth, setToast }) {
     else if (sort === "year") list.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
     else if (sort === "recent") list.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return list;
-  }, [withBase, q, mech, sort, mine, kind, currentUser]);
+  }, [withBase, q, mech, sort, mine, kind, when, uid]);
+
+  // Classée par date, la grille se range en rubriques : cette semaine, d'ici
+  // un mois, plus tard, puis ce qui est déjà disponible (les mêmes périodes
+  // que les pastilles « Quand ? »).
+  const groups = useMemo(() => {
+    if (sort !== "release") return [{ k: "all", l: "", items: filtered }];
+    const out = [];
+    filtered.forEach((u) => {
+      const g = upcGroupOf(u);
+      const last = out[out.length - 1];
+      if (last && last.k === g.k) last.items.push(u);
+      else out.push({ ...g, items: [u] });
+    });
+    return out;
+  }, [filtered, sort]);
 
   // Top 20 : toutes les fiches qui ont au moins 1 vote (différence avec ludothèque !)
   const top = useMemo(() => {
@@ -18690,144 +19037,178 @@ function UpcomingPage({ onAuth, setToast }) {
       .sort((a, b) => b._avg - a._avg || b._count - a._count || a.name.localeCompare(b.name, "fr"))
       .slice(0, 20);
   }, [upcoming]);
+  // (lot AL) Les achats prévus : les fiches qui réunissent le plus d'acheteurs.
+  const topBuy = useMemo(() => upcoming
+    .map((u) => ({ ...u, _w: Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length }))
+    .filter((u) => u._w > 0)
+    .sort((a, b) => intentScore(b) - intentScore(a) || b._w - a._w || a.name.localeCompare(b.name, "fr"))
+    .slice(0, 20), [upcoming]);
+
+  // Les chiffres du bandeau.
+  const soon30 = useMemo(() => upcoming.filter((u) => { const s = releaseState(u); return s.kind === "soon" && s.days <= 30; }).length, [upcoming]);
+  const myIntents = useMemo(() => (uid ? upcoming.filter((u) => INTENT_INTERESTED.includes((u.intents || {})[uid])).length : 0), [upcoming, uid]);
+  const toJudge = useMemo(() => (uid ? upcoming.filter((u) => !(u.intents || {})[uid] && !((u.hypes || {})[uid] > 0)).length : 0), [upcoming, uid]);
+
+  const resetFilters = () => { setQ(""); setMech(""); setMine(""); setKind(""); setWhen(""); };
+  const goList = () => setTimeout(() => scrollToId("upc-list"), 40);
+  const tiles = [
+    { n: soon30, l: soon30 > 1 ? "sorties d'ici 30 jours" : "sortie d'ici 30 jours", icon: Calendar, c1: "#F6C24A", c2: C.amber,
+      onClick: () => { resetFilters(); setWhen("month"); setSort("release"); goList(); } },
+    { n: recentReleases.length, l: recentReleases.length > 1 ? "sorties récentes" : "sortie récente", icon: ShoppingBag, c1: "#2BB3AE", c2: C.teal,
+      onClick: () => {
+        if (recentReleases.length) { setRecentTick((t) => t + 1); setTimeout(() => scrollToId("upc-recent"), 60); }
+        else { resetFilters(); setWhen("out"); goList(); }
+      } },
+    ...(uid ? [
+      { n: myIntents, l: "mes intentions d'achat", icon: Ticket, c1: "#E25B6E", c2: C.red, onClick: () => { resetFilters(); setMine("intent"); goList(); } },
+      { n: toJudge, l: toJudge > 1 ? "fiches à évaluer" : "fiche à évaluer", icon: Flame, c1: "#A66BB8", c2: C.purple, onClick: () => { resetFilters(); setMine("todo"); goList(); } },
+    ] : [
+      { n: upcoming.length, l: "fiches suivies", icon: Sparkles, c1: "#A66BB8", c2: C.purple, onClick: () => { resetFilters(); goList(); } },
+    ]),
+  ];
+
+  const sorts = [
+    { key: "release", label: "Date de sortie", icon: Calendar, tone: C.amber },
+    { key: "interest", label: "Intérêt", icon: TrendingUp, tone: C.purple, title: "Score d'intérêt : possesseurs et intentions d'achat, plus la somme des votes de hype" },
+    { key: "intent", label: "Intention d'achat", icon: ShoppingBag, tone: C.red },
+    { key: "hype", label: "Hype", icon: Flame, tone: C.red },
+    { key: "alpha", label: "A → Z", icon: Type },
+    { key: "year", label: "Année", icon: CalendarDays },
+    { key: "recent", label: "Ajoutés récemment", icon: Sparkles, tone: C.purple },
+  ];
+  const MINE_LABELS = { intent: "Mes intentions d'achat", hype: "Ma hype", both: "Intention et hype", todo: "À évaluer" };
+  const active = [
+    q && { k: "q", label: `« ${q} »`, onClear: () => setQ("") },
+    when && { k: "when", label: (UPC_WHEN.find((w) => w.v === when) || {}).l, onClear: () => setWhen("") },
+    kind && { k: "kind", label: kind === "extension" ? "Extensions" : "Jeux", onClear: () => setKind("") },
+    mech && { k: "mech", label: mech, onClear: () => setMech("") },
+    mine && uid && { k: "mine", label: MINE_LABELS[mine], onClear: () => setMine("") },
+  ].filter(Boolean);
+
+  const hypeRank = (u) => ({ id: u.id, name: u.name, img: u.img, score: u._avg.toFixed(1).replace(".", ","), scoreIcon: <Flame size={12} />, sub: `${u._count} vote${u._count > 1 ? "s" : ""}` });
+  const buyRank = (u) => ({ id: u.id, name: u.name, img: u.img, score: String(u._w), scoreIcon: <span aria-hidden="true">🎯</span>, sub: `${u._w} acheteur${u._w > 1 ? "s" : ""} potentiel${u._w > 1 ? "s" : ""}` });
+
+  const emptyText = upcoming.length === 0 ? "Aucun jeu en veille pour l'instant. Ajoutez-en un pour lancer le suivi !"
+    : mine === "intent" ? "Vous n'avez encore déclaré aucune intention d'achat. Ouvrez une fiche pour vous prononcer."
+    : mine === "hype" ? "Vous n'avez encore voté sur aucune fiche. Ouvrez-en une pour faire grimper le thermomètre."
+    : mine === "both" ? "Aucune fiche ne réunit à la fois votre intention d'achat et votre vote de hype."
+    : mine === "todo" ? "Bravo : vous vous êtes prononcé sur toutes les fiches qui correspondent."
+    : "Aucun jeu ne correspond aux filtres.";
 
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 24px 60px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 26 }}>
-        <div>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 32, margin: 0 }}>À venir</h1>
-          <p style={{ color: "#6e6256", fontSize: 14.5, margin: "6px 0 0", maxWidth: 560 }}>
-            Les jeux — et les <b>extensions</b> — qui viennent de sortir ou qui arrivent bientôt, classés par <b>date de sortie</b>. <b>Faites grimper votre thermomètre de la hype</b> et indiquez votre intention d'achat — chaque membre voit qui veut quoi, et qui l'a déjà.
-          </p>
-        </div>
-        {currentUser
+      <PageHero badge="La veille de l'asso" BadgeIcon={Sparkles} title="Les sorties" accent="à venir" dice={[C.amber, C.red]}
+        text={<>Les jeux — et les <b>extensions</b> — qui viennent de sortir ou qui arrivent bientôt. Faites grimper le <b>thermomètre de la hype</b> et dites si vous comptez l'acheter : chacun voit qui veut quoi, et qui l'a déjà.</>}
+        actions={currentUser
           ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter une sortie</Btn>
-          : <Btn variant="amber" size="lg" onClick={() => onAuth("login")}><LogIn size={18} /> Se connecter</Btn>}
-      </div>
+          : <Btn size="lg" onClick={() => onAuth("login")} style={heroGhost}><LogIn size={18} /> Se connecter pour participer</Btn>}
+        tiles={tiles} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
-        <div className="aladj-ludo-main">
-          <RecentReleasesPanel items={recentReleases} currentUserId={currentUser?.id} onOpen={(id) => setSelected(id)} />
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
-            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
-              <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu ou une extension..." style={{ paddingLeft: 42, paddingRight: q ? 40 : 14 }} />
-              {q && (
-                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
-                  <X size={17} />
-                </button>
+      <div className="aladj-cat-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 330px", gap: 28, alignItems: "start" }}>
+        <div className="aladj-cat-main" style={{ minWidth: 0 }}>
+          <RecentReleasesPanel items={recentReleases} currentUserId={uid} onOpen={(id) => setSelected(id)} openTick={recentTick} />
+          <div id="upc-list" className="aladj-cat-tools" style={catPanel}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu ou une extension…" />
+              {allMechanics.length > 0 && (
+                <select value={mech} onChange={(e) => setMech(e.target.value)} aria-label="Mécanique"
+                  style={{ ...inputStyle, width: "auto", maxWidth: 220, minHeight: 50, borderRadius: 14, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: mech ? C.teal : "#e6dcc9" }}>
+                  <option value="">Toutes mécaniques</option>
+                  {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              )}
+              <CatView value={view} onChange={setView} />
+            </div>
+            <CatChips label="Quand ?" icon={Calendar} value={when} onChange={setWhen} tone={C.amber} options={UPC_WHEN} />
+            <div style={{ display: "flex", gap: "12px 26px", flexWrap: "wrap" }}>
+              <CatChips label="Quoi ?" icon={Puzzle} value={kind} onChange={setKind} tone={C.purple}
+                options={[{ v: "game", l: "🎲 Les jeux" }, { v: "extension", l: "🧩 Les extensions" }]} />
+              {uid && (
+                <CatChips label="Moi" icon={Heart} value={mine} onChange={setMine} tone={C.red}
+                  options={[{ v: "intent", l: "🎯 Mes intentions" }, { v: "hype", l: "🌡️ Ma hype" }, { v: "both", l: "Les deux" },
+                    { v: "todo", l: "✋ À évaluer", title: "Les fiches où vous n'avez encore ni voté ni dit si vous comptez l'acheter" }]} />
               )}
             </div>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} title="Ne garder que les jeux, ou que les extensions"
-              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: kind ? C.purple : undefined }}>
-              <option value="">Jeux et extensions</option>
-              <option value="game">🎲 Les jeux</option>
-              <option value="extension">🧩 Les extensions</option>
-            </select>
-            <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toutes mécaniques</option>
-              {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-            {currentUser && (
-              <select value={mine} onChange={(e) => setMine(e.target.value)} title="Ne garder que les fiches sur lesquelles je me suis prononcé"
-                style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: mine ? C.amber : undefined }}>
-                <option value="">Toutes les fiches</option>
-                <option value="intent">🎯 Mes intentions d'achat</option>
-                <option value="hype">🌡️ Ma hype</option>
-                <option value="both">Les deux à la fois</option>
-              </select>
-            )}
-            <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="release">Date de sortie</option>
-              <option value="interest">Score d'intérêt</option>
-              <option value="intent">Intention d'achat</option>
-              <option value="hype">Hype</option>
-              <option value="alpha">A → Z</option>
-              <option value="year">Année (récent)</option>
-              <option value="recent">Récemment ajoutés</option>
-            </select>
-            <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
-              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
-              {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px 12px", flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 12 }}>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a" }}>Trier</span>
+              <CatSort options={sorts} value={sort} onChange={setSort} />
+            </div>
           </div>
 
+          <CatActive count={filtered.length} noun={["fiche", "fiches"]} items={active} onClearAll={resetFilters} />
+
           {filtered.length === 0 ? (
-            <EmptyHint icon={Sparkles} text={
-              upcoming.length === 0 ? "Aucun jeu en veille pour l'instant. Ajoutez-en un pour lancer le suivi !"
-                : mine === "intent" ? "Vous n'avez encore déclaré aucune intention d'achat. Ouvrez une fiche pour vous prononcer."
-                : mine === "hype" ? "Vous n'avez encore voté sur aucune fiche. Ouvrez-en une pour faire grimper le thermomètre."
-                : mine === "both" ? "Aucune fiche ne réunit à la fois votre intention d'achat et votre vote de hype."
-                : "Aucun jeu ne correspond aux filtres."} />
+            <div style={{ display: "grid", justifyItems: "center", gap: 12 }}>
+              <EmptyHint icon={Sparkles} text={emptyText} />
+              {active.length > 0 && <Btn variant="soft" onClick={resetFilters}><RotateCcw size={16} /> Effacer les filtres</Btn>}
+            </div>
           ) : view === "list" ? (
             /* (point 6) Vue liste : la grille est jolie, mais pour comparer une
                trentaine de sorties, une liste dense se parcourt bien plus vite. */
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-                <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
-                <span style={{ width: 128, flexShrink: 0 }} className="aladj-upc-col">Sortie</span>
-                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Score d'intérêt : possesseurs et intentions d'achat, plus la somme des votes de hype">Score</span>
-                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Membres intéressés par l'achat">Intérêt</span>
-                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Hype moyenne">Hype</span>
-                <span style={{ width: 62, flexShrink: 0, textAlign: "center" }} title="Ma hype">La mienne</span>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "4px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1, minWidth: 0, paddingLeft: 54 }}>Jeu</span>
+                <span className="aladj-hide-phone" style={{ width: 128, flexShrink: 0 }}>Sortie</span>
+                <span className="aladj-hide-phone" style={{ width: 58, flexShrink: 0, textAlign: "center" }} title="Score d'intérêt : possesseurs et intentions d'achat, plus la somme des votes de hype">Score</span>
+                <span style={{ width: 58, flexShrink: 0, textAlign: "center" }} title="Membres intéressés par l'achat">Intérêt</span>
+                <span style={{ width: 58, flexShrink: 0, textAlign: "center" }} title="Hype moyenne">Hype</span>
+                {uid && <span style={{ width: 58, flexShrink: 0, textAlign: "center" }} title="Ma hype">La mienne</span>}
               </div>
               {filtered.map((u) => {
                 const st = releaseState(u);
-                const myHype = currentUser ? ((u.hypes || {})[currentUser.id] || 0) : 0;
-                const myIntent = currentUser ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[currentUser.id]) : null;
+                const myHype = uid ? ((u.hypes || {})[uid] || 0) : 0;
+                const myIntent = uid ? INTENT_OPTIONS.find((o) => o.key === (u.intents || {})[uid]) : null;
                 const wanted = Object.values(u.intents || {}).filter((v) => INTENT_INTERESTED.includes(v)).length
                   + (u.ludoOwners || []).length;
                 return (
-                  <button key={u.id} onClick={() => setSelected(u.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(232,163,23,.06)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                  <button key={u.id} type="button" onClick={() => setSelected(u.id)} className="aladj-cat-row"
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderRadius: 14, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
+                    <RankThumb g={u} size={42} />
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
-                      {u.kind === "extension" && <span style={{ display: "block", fontSize: 11.5, color: C.purple, fontWeight: 700, marginTop: 1 }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
-                      {myIntent && <span style={{ display: "block", fontSize: 11.5, color: myIntent.color, fontWeight: 700, marginTop: 1 }}>🎯 {myIntent.label}</span>}
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
+                      <span style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11.5, fontWeight: 700 }}>
+                        {u.kind === "extension" && <span style={{ color: C.purple }}>🧩 Extension{u.baseName ? ` · ${u.baseName}` : ""}</span>}
+                        {myIntent && <span style={{ color: myIntent.color }}>🎯 {myIntent.label}</span>}
+                        <span className="aladj-show-phone" style={{ display: "none", color: st.kind === "soon" ? C.amber : "#8a7c6a" }}>{st.kind === "unknown" ? (u.year ? String(u.year) : "") : st.label}</span>
+                      </span>
                     </span>
-                    <span style={{ width: 128, flexShrink: 0, fontSize: 12, color: st.kind === "soon" ? C.amber : "#8a7c6a", fontWeight: st.kind === "soon" ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="aladj-upc-col">
+                    <span className="aladj-hide-phone" style={{ width: 128, flexShrink: 0, fontSize: 12, color: st.kind === "soon" ? C.amber : "#8a7c6a", fontWeight: st.kind === "soon" ? 700 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {st.kind === "unknown" ? (u.year ? String(u.year) : "—") : st.label}
                     </span>
-                    <span title="Score d'intérêt" style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._interest > 0 ? C.purple : (u._interest < 0 ? C.red : "#cdbfa8") }}>{u._interest || "—"}</span>
-                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wanted ? C.amber : "#cdbfa8" }}>{wanted || "—"}</span>
-                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._count ? (HYPE_LABELS[Math.round(u._avg)] || HYPE_LABELS[1]).color : "#cdbfa8" }}>
+                    <span className="aladj-hide-phone" title="Score d'intérêt" style={{ width: 58, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._interest > 0 ? C.purple : (u._interest < 0 ? C.red : "#cdbfa8") }}>{u._interest || "—"}</span>
+                    <span style={{ width: 58, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wanted ? C.amber : "#cdbfa8" }}>{wanted || "—"}</span>
+                    <span style={{ width: 58, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: u._count ? (HYPE_LABELS[Math.round(u._avg)] || HYPE_LABELS[1]).color : "#cdbfa8" }}>
                       {u._count ? u._avg.toFixed(1).replace(".", ",") : "—"}
                     </span>
-                    <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: myHype ? HYPE_LABELS[myHype].color : "#cdbfa8" }}>{myHype || "—"}</span>
+                    {uid && <span style={{ width: 58, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: myHype ? HYPE_LABELS[myHype].color : "#cdbfa8" }}>{myHype || "—"}</span>}
                   </button>
                 );
               })}
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
-              {filtered.map((u) => <UpcomingCard key={u.id} u={u} onOpen={() => setSelected(u.id)} currentUserId={currentUser?.id} />)}
-            </div>
+            groups.map((g, gi) => (
+              <section key={g.k} style={{ marginTop: gi ? 30 : 0 }}>
+                {g.l && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                    <span aria-hidden="true" style={{ width: 13, height: 13, borderRadius: 4, background: g.tone, transform: "rotate(45deg)", flexShrink: 0 }} />
+                    <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 21, color: C.navy, margin: 0 }}>{g.l}</h2>
+                    <span style={{ minWidth: 26, height: 26, padding: "0 8px", borderRadius: 999, display: "grid", placeItems: "center", background: g.tone, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13 }}>{g.items.length}</span>
+                    <span aria-hidden="true" style={{ flex: 1, height: 2, borderRadius: 2, background: `linear-gradient(90deg, ${g.tone}55, transparent)` }} />
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
+                  {g.items.map((u) => <UpcomingCard key={u.id} u={u} onOpen={() => setSelected(u.id)} currentUserId={uid} />)}
+                </div>
+              </section>
+            ))
           )}
         </div>
 
-        <aside style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 18 }} className="aladj-ludo-aside">
-          <div style={{ background: `linear-gradient(160deg, ${C.red}, ${C.purple})`, borderRadius: 20, padding: 22, color: "#fff" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-              <Sparkles size={20} color="#ffd9a3" />
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0 }}>Top 20 hype</h3>
-            </div>
-            <p style={{ opacity: .75, fontSize: 12, margin: "0 0 12px", lineHeight: 1.5 }}>Dès qu'un jeu reçoit un vote, il entre dans ce classement.</p>
-            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5 }}>Pas encore de vote.</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
-              {top.map((u, i) => (
-                <button key={u.id} onClick={() => setSelected(u.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.09)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 17 : 14, color: "rgba(255,255,255,.85)", width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
-                    <span style={{ fontSize: 11, color: "rgba(255,255,255,.6)" }}>{u._count} vote{u._count > 1 ? "s" : ""}</span>
-                  </span>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: "#ffd9a3" }}>{u._avg.toFixed(1).replace(".", ",")}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+        <aside className="aladj-cat-aside" style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
+          <RankBoard title="Les classements" icon={Flame} tone="hype" onOpen={(id) => setSelected(id)} tabs={[
+            { key: "hype", label: "Top 20 hype", items: top.map(hypeRank), note: "Dès qu'un jeu reçoit un vote, il entre dans ce classement.", empty: "Pas encore de vote." },
+            { key: "buy", label: "Achats prévus", items: topBuy.map(buyRank), note: "Les fiches qui réunissent le plus d'acheteurs potentiels.", empty: "Personne n'a encore déclaré d'intention d'achat." },
+          ]} />
         </aside>
       </div>
 
@@ -19883,6 +20264,17 @@ function rankGames(games, restrictUserIds = null, preferLessPlayed = false) {
   });
 }
 
+/* =============================================================================
+   (lot AL) LA LUDOTHEQUE
+   Le bandeau commun (chiffres cliquables, ajout, tablee sur-mesure, jeu au
+   hasard), une barre de recherche unique et des pastilles a un clic pour les
+   joueurs et la duree, les filtres plus rares repliés, le tri en onglets, et
+   les deux classements reunis en podium dans la colonne de droite.
+   ============================================================================= */
+const LUDO_DURATIONS = [
+  { v: "30", l: "≤ 30 min" }, { v: "45", l: "≤ 45 min" }, { v: "60", l: "≤ 1 h" },
+  { v: "90", l: "≤ 1 h 30" }, { v: "120", l: "≤ 2 h" }, { v: "121", l: "+ de 2 h" },
+];
 function LudothequePage({ onAuth, setToast, setPage }) {
   const { games, users, currentUser } = useApp();
   const [q, setQ] = useState("");
@@ -19891,6 +20283,9 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [duration, setDuration] = useState("");
   const [year, setYear] = useState("");
   const [wantFilter, setWantFilter] = useState(""); // "" | "mine" | "any" | "none"
+  const [coop, setCoop] = useState(false);
+  const [myRated, setMyRated] = useState(""); // "" | "rated" | "unrated"
+  const [moreOpen, setMoreOpen] = useState(false);
   const [showBoth, setShowBoth] = useState(false); // afficher moyenne + ma note simultanément sur les cartes
   const [sort, setSort] = useState("note");
   const [view, setView] = useState("grid"); // "grid" | "list"
@@ -19944,11 +20339,18 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const [visibleCount, setVisibleCount] = useState(60);
   // "" = tout ; "owned" = jeux de l'asso seulement ; "ref" = fiches de reference seulement
   const [ownFilter, setOwnFilter] = useState("");
+  const uid = currentUser ? currentUser.id : null;
   const filtered = useMemo(() => {
     let list = communGames.filter((g) => {
       // filtre possession : jeux de l'association / fiches de reference
       if (ownFilter === "owned" && g.unowned) return false;
       if (ownFilter === "ref" && !g.unowned) return false;
+      if (coop && !g.isCoop) return false;
+      if (myRated && uid) {
+        const mine = (g.ratings || {})[uid] || 0;
+        if (myRated === "rated" && !mine) return false;
+        if (myRated === "unrated" && mine) return false;
+      }
       const okQ = !q || g.name.toLowerCase().includes(q.toLowerCase()) || (g.ownerName || "").toLowerCase().includes(q.toLowerCase());
       const okM = !mech || (g.mechanics || []).includes(mech);
       // filtre nombre de joueurs : le jeu accepte-t-il ce nombre ? (entre min et max)
@@ -19977,20 +20379,23 @@ function LudothequePage({ onAuth, setToast, setPage }) {
       let okW = true;
       if (wantFilter) {
         const wantIds = g.wantIds || [];
-        if (wantFilter === "mine") okW = currentUser && wantIds.includes(currentUser.id);
+        if (wantFilter === "mine") okW = !!uid && wantIds.includes(uid);
         else if (wantFilter === "any") okW = wantIds.length > 0;
         else if (wantFilter === "none") okW = wantIds.length === 0;
       }
       return okQ && okM && okP && okD && okY && okW;
     });
     if (sort === "note") list = rankGames(list);
-    else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[currentUser?.id] || 0) - (a.ratings?.[currentUser?.id] || 0));
+    else if (sort === "myNote") list = [...list].sort((a, b) => (b.ratings?.[uid] || 0) - (a.ratings?.[uid] || 0));
     else if (sort === "alpha") list = [...list].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     else if (sort === "recent") list = [...list].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     else if (sort === "wants") list = [...list].sort((a, b) => (b.wantIds?.length || 0) - (a.wantIds?.length || 0));
     else if (sort === "played") list = [...list].sort((a, b) => (b.playCount || 0) - (a.playCount || 0) || a.name.localeCompare(b.name, "fr"));
     return list;
-  }, [communGames, q, mech, players, duration, year, wantFilter, ownFilter, sort, currentUser]);
+  }, [communGames, q, mech, players, duration, year, wantFilter, ownFilter, coop, myRated, sort, uid]);
+
+  // Un nouveau filtre repart du haut de la liste.
+  useEffect(() => { setVisibleCount(60); }, [q, mech, players, duration, year, wantFilter, ownFilter, coop, myRated, sort]);
 
   // Jeux réellement possédés par des membres : c'est eux, et eux seuls, qui
   // constituent « la ludothèque de l'association ». Les fiches de référence
@@ -20003,141 +20408,199 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   const top = useMemo(() => rankGames(communGames).filter((g) => g._count >= 4).slice(0, 20), [communGames]);
 
   // (lot V) Top 20 des jeux du moment : les jeux entrés dans la ludothèque au
-  // cours des MOMENT_MONTHS derniers mois. On sert d'abord ceux qui ont au
-  // moins 4 votes (le même seuil que le Top 20 de l'asso), puis, si la liste
-  // n'est pas pleine, on la complète par les mieux notés d'entre les autres —
-  // repérés par une pastille « peu de votes » pour que la lecture reste honnête.
+  // cours des MOMENT_MONTHS derniers mois (voir momentTopGames).
   const momentTop = useMemo(() => momentTopGames(communGames), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
 
-  return (
-    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 80px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 26 }}>
-        <div>
-          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>La collection de l'asso</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Ludothèque · {ownedCount} jeux</h1>
-          {refCount > 0 && (
-            <span style={{ display: "block", fontSize: 13, color: "#9c8d79", marginTop: 5 }}>
-              + {refCount} fiche{refCount > 1 ? "s" : ""} de référence <span style={{ color: "#b6a78f" }}>· jeux que personne ne possède, gardés pour enregistrer des parties</span>
-            </span>
-          )}
-        </div>
-        {currentUser
-          ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
-          : <Btn variant="ghost" onClick={() => onAuth("login")}><LogIn size={16} /> Connectez-vous pour ajouter</Btn>}
-      </div>
+  // Les chiffres du bandeau.
+  const totalPlays = useMemo(() => communGames.reduce((s, g) => s + (g.playCount || 0), 0), [communGames]);
+  const nWanted = useMemo(() => communGames.filter((g) => (g.wantIds || []).length > 0).length, [communGames]);
+  const nUnrated = useMemo(() => (uid ? communGames.filter((g) => !g.unowned && !((g.ratings || {})[uid])).length : 0), [communGames, uid]);
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 340px", gap: 28, alignItems: "start" }} className="aladj-ludo-grid">
+  const resetFilters = () => {
+    setQ(""); setMech(""); setPlayers(""); setDuration(""); setYear("");
+    setWantFilter(""); setOwnFilter(""); setCoop(false); setMyRated("");
+  };
+  const goList = () => setTimeout(() => scrollToId("ludo-list"), 40);
+  const pickRandom = () => {
+    const pool = filtered.filter((g) => !g.unowned);
+    const src = pool.length ? pool : filtered;
+    if (!src.length) { setToast("Aucun jeu ne correspond aux filtres : élargissez un peu la recherche."); return; }
+    setSelected(src[Math.floor(Math.random() * src.length)].id);
+  };
+
+  const tiles = [
+    { n: ownedCount, l: "jeux à emprunter", icon: Library, c1: "#2BB3AE", c2: C.teal, onClick: () => { resetFilters(); setOwnFilter("owned"); goList(); } },
+    { n: totalPlays, l: totalPlays > 1 ? "parties enregistrées" : "partie enregistrée", icon: Dice5, c1: "#F6C24A", c2: C.amber, onClick: () => { setSort("played"); goList(); } },
+    { n: nWanted, l: nWanted > 1 ? "jeux qui font envie" : "jeu qui fait envie", icon: Heart, c1: "#E25B6E", c2: C.red, onClick: () => { resetFilters(); setWantFilter("any"); goList(); } },
+    uid
+      ? { n: nUnrated, l: "pas encore notés par vous", icon: Star, c1: "#A66BB8", c2: C.purple, onClick: () => { resetFilters(); setMyRated("unrated"); goList(); } }
+      : { n: allMechanics.length, l: "mécaniques de jeu", icon: Puzzle, c1: "#A66BB8", c2: C.purple, onClick: () => { setMoreOpen(true); goList(); } },
+  ];
+
+  const sorts = [
+    { key: "note", label: "Mieux notés", icon: Star, tone: C.amber, fill: true },
+    ...(uid ? [{ key: "myNote", label: "Mes notes", icon: Award, title: "Mes meilleures notes, comparées à la moyenne" }] : []),
+    { key: "played", label: "Les plus joués", icon: Dice5 },
+    { key: "wants", label: "Envies", icon: Heart, tone: C.red, fill: true },
+    { key: "recent", label: "Arrivés récemment", icon: Sparkles, tone: C.purple },
+    { key: "alpha", label: "A → Z", icon: Type },
+  ];
+
+  const durLabel = (LUDO_DURATIONS.find((d) => d.v === duration) || {}).l;
+  const active = [
+    q && { k: "q", label: `« ${q} »`, onClear: () => setQ("") },
+    players && { k: "p", label: players === "7" ? "7 joueurs et +" : `${players} joueur${players === "1" ? "" : "s"}`, onClear: () => setPlayers("") },
+    duration && { k: "d", label: duration === "121" ? "Plus de 2 h" : durLabel, onClear: () => setDuration("") },
+    coop && { k: "c", label: "Coopératifs", onClear: () => setCoop(false) },
+    mech && { k: "m", label: mech, onClear: () => setMech("") },
+    year && { k: "y", label: year === "none" ? "Sans année" : `Paru en ${year}`, onClear: () => setYear("") },
+    wantFilter && { k: "w", label: { mine: "Mes envies de découverte", any: "Avec au moins une envie", none: "Sans envie" }[wantFilter], onClear: () => setWantFilter("") },
+    ownFilter && { k: "o", label: ownFilter === "owned" ? "Jeux de l'asso" : "Fiches de référence", onClear: () => setOwnFilter("") },
+    myRated && uid && { k: "r", label: myRated === "rated" ? "Notés par moi" : "Pas encore notés par moi", onClear: () => setMyRated("") },
+  ].filter(Boolean);
+  const nMore = [mech, year, wantFilter && wantFilter !== "mine", ownFilter === "ref", myRated === "rated"].filter(Boolean).length;
+
+  const thisYear = new Date().getFullYear();
+  const toRank = (g) => ({
+    id: g.id, name: g.name, img: g.img, unowned: g.unowned,
+    score: g._avg.toFixed(2).replace(".", ","), scoreIcon: <Star size={12} fill="currentColor" />,
+    sub: `${g._count} vote${g._count > 1 ? "s" : ""}${g._thin ? " · peu de votes" : ""}`,
+  });
+
+  return (
+    <div style={{ maxWidth: 1240, margin: "0 auto", padding: "32px 24px 80px" }}>
+      <PageHero badge="La collection de l'asso" BadgeIcon={Library} title="Ludothèque" accent="de l'asso" dice={[C.teal, C.amber]}
+        text={<>{ownedCount.toLocaleString("fr-FR")} jeux prêtés par les membres{refCount > 0 ? <>, et {refCount} fiche{refCount > 1 ? "s" : ""} de référence</> : null}. Choisissez le nombre de joueurs et le temps dont vous disposez — ou laissez le hasard choisir pour vous.</>}
+        actions={<>
+          {currentUser
+            ? <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
+            : <Btn size="lg" onClick={() => onAuth("login")} style={heroGhost}><LogIn size={18} /> Connectez-vous pour ajouter</Btn>}
+          <Btn size="lg" onClick={() => setShowCustomRank(true)} style={heroGhost}><Filter size={18} /> Composer ma tablée</Btn>
+          <Btn size="lg" onClick={pickRandom} style={heroGhost}><Shuffle size={18} /> Un jeu au hasard</Btn>
+        </>}
+        tiles={tiles} />
+
+      <div className="aladj-cat-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 330px", gap: 28, alignItems: "start" }}>
         {/* COLONNE PRINCIPALE */}
-        <div className="aladj-ludo-main">
-          <RatingScaleNote />
-          {/* recherche + filtres */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
-            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
-              <Search size={18} color="#b6a78f" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un jeu, un propriétaire..." style={{ paddingLeft: 42, paddingRight: q ? 40 : 14 }} />
-              {q && (
-                <button type="button" onClick={() => setQ("")} title="Effacer la recherche" aria-label="Effacer la recherche"
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9c8d79", padding: 6, display: "grid", placeItems: "center" }}>
-                  <X size={17} />
-                </button>
+        <div className="aladj-cat-main" style={{ minWidth: 0 }}>
+          <div id="ludo-list" className="aladj-cat-tools" style={catPanel}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu, un propriétaire…" />
+              <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
+                style={{ minHeight: 50, padding: "0 16px", borderRadius: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8,
+                  border: `2px solid ${moreOpen || nMore ? C.teal : "#e6dcc9"}`, background: moreOpen ? "rgba(30,138,138,.1)" : "#fff",
+                  color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5 }}>
+                <SlidersHorizontal size={18} color={C.teal} /> Plus de filtres
+                {nMore > 0 && <span style={{ minWidth: 22, height: 22, borderRadius: 999, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontSize: 12.5, padding: "0 6px" }}>{nMore}</span>}
+              </button>
+              <CatView value={view} onChange={setView} />
+            </div>
+            <div style={{ display: "flex", gap: "12px 26px", flexWrap: "wrap" }}>
+              <CatChips label="Joueurs" icon={Users} value={players} onChange={setPlayers}
+                options={[...["1", "2", "3", "4", "5", "6"].map((v) => ({ v, l: v })), { v: "7", l: "7 +" }]} />
+              <CatChips label="Durée" icon={Clock} value={duration} onChange={setDuration} tone={C.amber} options={LUDO_DURATIONS} />
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <CatToggle on={coop} onClick={() => setCoop((c) => !c)} title="Jeux où l'on gagne ou perd ensemble">🤝 Coopératifs</CatToggle>
+              {uid && <CatToggle on={wantFilter === "mine"} tone={C.red} onClick={() => setWantFilter((w) => (w === "mine" ? "" : "mine"))}>❤ J'ai envie de découvrir</CatToggle>}
+              {uid && <CatToggle on={myRated === "unrated"} tone={C.purple} onClick={() => setMyRated((r) => (r === "unrated" ? "" : "unrated"))}>⭐ Pas encore noté par moi</CatToggle>}
+              <CatToggle on={ownFilter === "owned"} tone={C.navy} onClick={() => setOwnFilter((o) => (o === "owned" ? "" : "owned"))}
+                title="Sans les fiches de référence, que personne ne possède">📦 Seulement les jeux de l'asso</CatToggle>
+            </div>
+            {moreOpen && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, padding: 14, borderRadius: 16, background: "rgba(26,58,92,.04)" }}>
+                <CatSelect label="Mécanique" value={mech} onChange={setMech}>
+                  <option value="">Toutes mécaniques</option>
+                  {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+                </CatSelect>
+                <CatSelect label="Année de parution" value={year} onChange={setYear}>
+                  <option value="">Toutes années</option>
+                  {allYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+                  {hasNoYear && <option value="none">Sans année renseignée</option>}
+                </CatSelect>
+                <CatSelect label="Envies de découverte" value={wantFilter} onChange={setWantFilter}>
+                  <option value="">Toutes envies ❤</option>
+                  {uid && <option value="mine">Que j'ai envie de découvrir</option>}
+                  <option value="any">Avec au moins une envie</option>
+                  <option value="none">Sans envie</option>
+                </CatSelect>
+                <CatSelect label="Collection" value={ownFilter} onChange={setOwnFilter} title="Filtrer sur les jeux réellement possédés, ou sur les fiches de référence">
+                  <option value="">Toute la ludothèque</option>
+                  <option value="owned">Jeux de l'association</option>
+                  <option value="ref">Fiches de référence</option>
+                </CatSelect>
+                {uid && (
+                  <CatSelect label="Mes notes" value={myRated} onChange={setMyRated}>
+                    <option value="">Tous les jeux</option>
+                    <option value="rated">Ceux que j'ai notés</option>
+                    <option value="unrated">Ceux que je n'ai pas notés</option>
+                  </CatSelect>
+                )}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px 12px", flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 12 }}>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a" }}>Trier</span>
+              <CatSort options={sorts} value={sort} onChange={setSort} />
+              {uid && view === "grid" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 7, marginLeft: "auto", cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy }}
+                  title={bothAuto ? "Le tri « Mes notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
+                  <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 17, height: 17, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
+                  Voir les 2 notes
+                </label>
               )}
             </div>
-            <select value={mech} onChange={(e) => setMech(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toutes mécaniques</option>
-              {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <select value={players} onChange={(e) => setPlayers(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Tous joueurs</option>
-              <option value="1">1 joueur</option>
-              <option value="2">2 joueurs</option>
-              <option value="3">3 joueurs</option>
-              <option value="4">4 joueurs</option>
-              <option value="5">5 joueurs</option>
-              <option value="6">6 joueurs</option>
-              <option value="7">7+ joueurs</option>
-            </select>
-            <select value={duration} onChange={(e) => setDuration(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toutes durées</option>
-              <option value="30">≤ 30 min</option>
-              <option value="45">≤ 45 min</option>
-              <option value="60">≤ 1 h</option>
-              <option value="90">≤ 1 h 30</option>
-              <option value="120">≤ 2 h</option>
-              <option value="121">{"> 2 h"}</option>
-            </select>
-            <select value={year} onChange={(e) => setYear(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toutes années</option>
-              {allYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
-              {hasNoYear && <option value="none">Sans année renseignée</option>}
-            </select>
-            <select value={wantFilter} onChange={(e) => setWantFilter(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toutes envies ❤</option>
-              {currentUser && <option value="mine">Que j'ai envie de découvrir</option>}
-              <option value="any">Avec au moins une envie</option>
-              <option value="none">Sans envie</option>
-            </select>
-            <select value={ownFilter} onChange={(e) => setOwnFilter(e.target.value)} title="Filtrer sur les jeux réellement possédés, ou sur les fiches de référence" style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="">Toute la ludothèque</option>
-              <option value="owned">Jeux de l'association</option>
-              <option value="ref">Fiches de référence</option>
-            </select>
-            <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-              <option value="note">Mieux notés (général)</option>
-              <option value="myNote">Mes meilleures notes</option>
-              <option value="played">Les plus joués 🎲</option>
-              <option value="wants">Plus d'envies ❤</option>
-              <option value="alpha">A → Z</option>
-              <option value="recent">Récents</option>
-            </select>
-            <button onClick={() => setView((v) => v === "grid" ? "list" : "grid")} title={view === "grid" ? "Afficher en liste" : "Afficher en grille"}
-              style={{ ...inputStyle, width: "auto", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, display: "flex", alignItems: "center", gap: 6, color: C.navy }}>
-              {view === "grid" ? <><Menu size={16} /> Liste</> : <><Library size={16} /> Grille</>}
-            </button>
-            {currentUser && view === "grid" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy, padding: "0 4px" }}
-                title={bothAuto ? "Le tri « Mes meilleures notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
-                <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
-                Voir les 2 notes
-              </label>
-            )}
           </div>
 
+          <CatActive count={filtered.length} noun={["jeu", "jeux"]} items={active} onClearAll={resetFilters} />
+
           {filtered.length === 0 ? (
-            <EmptyHint icon={Library} text="Aucun jeu ne correspond." />
+            <div style={{ display: "grid", justifyItems: "center", gap: 12 }}>
+              <EmptyHint icon={Library} text="Aucun jeu ne correspond." />
+              {active.length > 0 && <Btn variant="soft" onClick={resetFilters}><RotateCcw size={16} /> Effacer les filtres</Btn>}
+            </div>
           ) : view === "list" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 4 }}>
-              {/* en-tête de liste */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "6px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
-                <span style={{ flex: 1, minWidth: 0 }}>Jeu</span>
-                <span style={{ width: 60, flexShrink: 0, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
-                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Moyenne</span>
-                <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>Ma note</span>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, padding: "4px 14px", fontSize: 12, color: "#9c8d79", fontFamily: "'Fredoka',sans-serif", fontWeight: 600 }}>
+                <span style={{ flex: 1, minWidth: 0, paddingLeft: 54 }}>Jeu</span>
+                <span className="aladj-hide-phone" style={{ width: 62, flexShrink: 0, textAlign: "center" }}>Parties</span>
+                <span style={{ width: 56, flexShrink: 0, textAlign: "center" }} title="Membres qui veulent découvrir ce jeu">Envies</span>
+                <span style={{ width: 66, flexShrink: 0, textAlign: "center" }}>Moyenne</span>
+                {uid && <span style={{ width: 62, flexShrink: 0, textAlign: "center" }}>Ma note</span>}
               </div>
               {filtered.slice(0, visibleCount).map((g) => {
                 const { avg, count } = gameStats(g);
-                const myR = currentUser ? (g.ratings?.[currentUser.id] || 0) : 0;
+                const myR = uid ? (g.ratings?.[uid] || 0) : 0;
                 const wantC = (g.wantIds || []).length;
                 return (
-                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30,138,138,.05)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
-                    <span style={{ flex: 1, minWidth: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-                    <span style={{ width: 60, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                  <button key={g.id} type="button" onClick={() => setSelected(g.id)} className="aladj-cat-row"
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", borderRadius: 14, border: "1px solid #efe6d6", background: "#fff", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
+                    <RankThumb g={g} size={42} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                      <span style={{ display: "flex", gap: 10, fontSize: 12, color: "#8a7c6a", flexWrap: "wrap" }}>
+                        {g.min && <span><Users size={11} style={{ verticalAlign: "-1px" }} /> {g.min}{g.max && g.max !== g.min ? `-${g.max}` : ""}</span>}
+                        {g.time && <span><Clock size={11} style={{ verticalAlign: "-1px" }} /> {g.time} min</span>}
+                        {g.unowned ? <i>Fiche de référence</i> : (g.ownerName ? <span>chez <b style={{ color: C.teal }}>{g.ownerName}</b></span> : null)}
+                      </span>
+                    </span>
+                    <span className="aladj-hide-phone" style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: g.playCount ? C.navy : "#cdbfa8" }}>{g.playCount || "—"}</span>
+                    <span style={{ width: 56, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: wantC ? C.red : "#cdbfa8", display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                       {wantC > 0 && <Heart size={12} fill={C.red} color={C.red} />}{wantC || "—"}
                     </span>
-                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
-                    <span style={{ width: 70, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>
+                    <span style={{ width: 66, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: count ? C.amber : "#cdbfa8", fontSize: 14.5 }}>{count ? avg.toFixed(2).replace(".", ",") : "—"}</span>
+                    {uid && <span style={{ width: 62, flexShrink: 0, textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: myR ? C.teal : "#cdbfa8", fontSize: 14.5 }}>{myR ? String(myR).replace(".", ",") : "—"}</span>}
                   </button>
                 );
               })}
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 18 }}>
+            <div className="aladj-ludo-cards" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 18 }}>
               {filtered.slice(0, visibleCount).map((g) => <GameCard key={g.id} g={g} onOpen={() => setSelected(g.id)} showBoth={showBoth || bothAuto} />)}
             </div>
           )}
           {filtered.length > visibleCount && (
-            <div style={{ textAlign: "center", marginTop: 20 }}>
+            <div style={{ textAlign: "center", marginTop: 22 }}>
               <Btn variant="soft" onClick={() => setVisibleCount((c) => c + 60)}>
                 Afficher plus de jeux ({filtered.length - visibleCount} restant{filtered.length - visibleCount > 1 ? "s" : ""})
               </Btn>
@@ -20145,79 +20608,17 @@ function LudothequePage({ onAuth, setToast, setPage }) {
           )}
         </div>
 
-        {/* COLONNE LATÉRALE : classements */}
-        <aside style={{ position: "sticky", top: 88, display: "flex", flexDirection: "column", gap: 18, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 6 }} className="aladj-ludo-aside">
-          {/* CLASSEMENT PERSONNALISÉ (placé en premier pour remonter en haut sur mobile) */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.teal}`, flexShrink: 0 }} className="aladj-ludo-custom">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <Award size={20} color={C.teal} />
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Classement sur-mesure</h3>
-            </div>
-            <p style={{ fontSize: 13.5, color: "#6e6256", lineHeight: 1.5, margin: "0 0 14px" }}>
-              Choisissez les membres présents à votre moment jeux pour trouver le jeu qui plaira au plus grand nombre.
-            </p>
-            <Btn full variant="teal" onClick={() => setShowCustomRank(true)}><Filter size={16} /> Composer ma tablée</Btn>
-          </div>
-
-          {/* TOP 20 */}
-          <div style={{ background: `linear-gradient(160deg, ${C.navy}, ${C.navyDeep})`, borderRadius: 20, padding: 22, color: "#fff", display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }} className="aladj-ludo-rank">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-              <Trophy size={20} color={C.amber} />
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>Top 20 de l'asso</h3>
-            </div>
-            {top.length === 0 && <p style={{ opacity: .7, fontSize: 13.5, lineHeight: 1.5 }}>Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !</p>}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 auto", minHeight: "min(350px, 40vh)", maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
-              {top.map((g, i) => {
-                const medal = i === 0 ? C.amber : i === 1 ? "#d9d9d9" : i === 2 ? "#cd9b6a" : "rgba(255,255,255,.5)";
-                return (
-                  <button key={g.id} onClick={() => setSelected(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.07)", border: "none", borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
-                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 18 : 15, color: medal, width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-                      <span style={{ fontSize: 11.5, color: "rgba(255,255,255,.55)" }}>{g._count} vote{g._count > 1 ? "s" : ""}</span>
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
-                      <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* (lot V) TOP 20 DES JEUX DU MOMENT — les arrivées récentes */}
-          <div style={{ background: C.paper, borderRadius: 20, padding: 22, border: `2px solid ${C.purple}`, display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }} className="aladj-ludo-rank">
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <Sparkles size={20} color={C.purple} />
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, margin: 0, color: C.navy }}>Top 20 du moment</h3>
-            </div>
-            <p style={{ fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.5, margin: "0 0 14px" }}>
-              Parus en <b>{new Date().getFullYear() - 1}</b> ou <b>{new Date().getFullYear()}</b>, et arrivés ici depuis moins de {MOMENT_MONTHS} mois. Les mieux notés d'abord.
-            </p>
-            {momentTop.length === 0 && (
-              <p style={{ color: "#a89a86", fontSize: 13.5, lineHeight: 1.5, margin: 0 }}>
-                Aucune nouveauté notée parmi les arrivées des {MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !
-              </p>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8, flex: "1 1 auto", minHeight: "min(350px, 40vh)", maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
-              {momentTop.map((g, i) => (
-                <button key={g.id} onClick={() => setSelected(g.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(107,58,122,.07)", border: `1px solid ${C.purple}22`, borderRadius: 12, padding: "9px 12px", cursor: "pointer", textAlign: "left", minWidth: 0 }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: i < 3 ? 17 : 14.5, color: i < 3 ? C.purple : "#a89a86", width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
-                    <span style={{ fontSize: 11.5, color: "#9c8d79" }}>
-                      {g._count} vote{g._count > 1 ? "s" : ""}
-                      {g._thin && <span style={{ color: C.purple, fontWeight: 700 }}> · peu de votes</span>}
-                    </span>
-                  </span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: C.amber, fontFamily: "'Fredoka',sans-serif", fontWeight: 700 }}>
-                    <Star size={14} fill={C.amber} /> {g._avg.toFixed(2).replace(".", ",")}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* COLONNE LATÉRALE : les classements, puis le barème */}
+        <aside className="aladj-cat-aside" style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
+          <RankBoard title="Les classements" icon={Trophy} tone="navy" onOpen={(id) => setSelected(id)} tabs={[
+            { key: "asso", label: "Top 20 de l'asso", items: top.map(toRank),
+              note: "Les jeux les mieux notés par les membres, à partir de 4 votes.",
+              empty: "Pas encore de jeu avec au moins 4 votes. Notez des jeux pour faire vivre le classement !" },
+            { key: "moment", label: "Du moment", items: momentTop.map(toRank),
+              note: <>Parus en <b>{thisYear - 1}</b> ou <b>{thisYear}</b>, et arrivés ici depuis moins de {MOMENT_MONTHS} mois.</>,
+              empty: `Aucune nouveauté notée parmi les arrivées des ${MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !` },
+          ]} />
+          <RatingScaleNote />
         </aside>
       </div>
 
@@ -25200,6 +25601,30 @@ export default function App() {
           .aladj-ludo-aside { position: static !important; order: -1; display: block !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; }
           .aladj-ludo-aside .aladj-ludo-rank { margin-top: 18px; }
           .aladj-ludo-aside .aladj-ludo-custom { border-width: 2px; }
+        }
+        /* (lot AL) Ludotheque et veille, sur tablette et telephone : la
+           recherche d'abord, puis les classements (le seul podium, a deplier),
+           puis les jeux. */
+        @media (max-width: 920px), (orientation: portrait) and (max-width: 1200px) {
+          .aladj-cat-grid { display: flex !important; flex-direction: column !important; align-items: stretch !important; gap: 0 !important; }
+          .aladj-cat-main { display: contents; }
+          .aladj-cat-main > * { order: 3; }
+          .aladj-cat-main > .aladj-cat-tools, .aladj-cat-main > #upc-recent { order: 1; }
+          .aladj-cat-aside { order: 2; margin-bottom: 22px; position: static !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; width: 100%; box-sizing: border-box; }
+          .aladj-rankboard[data-open="0"] .aladj-rank-rest { display: none !important; }
+          .aladj-rank-more { display: flex !important; }
+        }
+        @media (max-width: 520px) {
+          .aladj-show-phone { display: inline !important; }
+          .aladj-ludo-cards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+          .aladj-ludo-cards h3 { font-size: 15px !important; }
+          .aladj-stattiles { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; }
+          .aladj-stattiles .aladj-statcard { flex-direction: column; align-items: flex-start !important; gap: 8px !important; }
+          .aladj-stattiles .aladj-statcard > span:first-child { width: 40px !important; height: 40px !important; border-radius: 13px !important; }
+        }
+        @media (hover: hover) {
+          .aladj-upc-card:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(18,41,63,.12) !important; }
+          .aladj-cat-row:hover { border-color: rgba(30,138,138,.45) !important; box-shadow: 0 4px 14px rgba(18,41,63,.08); }
         }
         /* (lot AI) Le Mag. Vignettes qui se soulevent au survol, et colonnes qui
            s'empilent sur telephone. */
