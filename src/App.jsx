@@ -5542,6 +5542,13 @@ const NAV_ME = [
   { key: "decideur", label: "Espace décisionnaire", desc: "Votes en ligne, idées et informations", tint: "#6B3A7A", decider: true },
   { key: "guide", desc: "Le mode d'emploi du site, rubrique par rubrique", tint: "#1A3A5C", open: true },
 ];
+/* Les trois grandes cartes du panneau « Jeux ». */
+const JEUX_LOOK = {
+  "ludotheque": { bg: "linear-gradient(150deg, #2BA5A2, #0F4F4E)", ink: "#fff", sub: "rgba(255,255,255,.88)", chip: "rgba(255,255,255,.22)", glow: "rgba(30,138,138,.38)", ring: "#7FE0DA", pillBg: "#fff", pillInk: "#0F4F4E", shadow: "0 3px 0 rgba(0,0,0,.16)" },
+  "a-venir": { bg: "linear-gradient(150deg, #FAD06A, #E0940F)", ink: "#12293F", sub: "#2A2105", chip: "rgba(18,41,63,.14)", glow: "rgba(232,163,23,.4)", ring: "#12293F", pillBg: "#12293F", pillInk: "#fff", shadow: "none" },
+  "web-jeux": { bg: "linear-gradient(150deg, #9A61AC, #4E2659)", ink: "#fff", sub: "rgba(255,255,255,.88)", chip: "rgba(255,255,255,.22)", glow: "rgba(107,58,122,.4)", ring: "#C59AD4", pillBg: "#fff", pillInk: "#4E2659", shadow: "0 3px 0 rgba(0,0,0,.16)" },
+};
+
 /* (lot AL) Apparence du site : clair ou sombre, memorise sur l'appareil.
    L'attribut pose sur <html> declenche la feuille de style sombre. */
 function readSiteTheme() {
@@ -5670,9 +5677,10 @@ function Navbar({ page, setPage, onAuth }) {
   const nGames = (games || []).filter((g) => !g.unowned).length;
   const nUpcoming = (upcoming || []).length;
   const nWeb = (webGames || []).filter((w) => w.status === "live" || w.status === "dev").length;
+  const nWebLive = (webGames || []).filter((w) => w.status === "live").length;
   const countOf = (k) => (k === "ludotheque" ? (nGames ? `${nGames.toLocaleString("fr-FR")} jeu${nGames > 1 ? "x" : ""}` : null)
-    : k === "a-venir" ? (nUpcoming ? `${nUpcoming} fiche${nUpcoming > 1 ? "s" : ""}` : null)
-    : k === "web-jeux" ? (nWeb ? `${nWeb} jeu${nWeb > 1 ? "x" : ""}` : null) : null);
+    : k === "a-venir" ? (nUpcoming ? `${nUpcoming} fiche${nUpcoming > 1 ? "s" : ""} suivie${nUpcoming > 1 ? "s" : ""}` : null)
+    : k === "web-jeux" ? (nWebLive ? `${nWebLive} jeu${nWebLive > 1 ? "x" : ""} à jouer` : (nWeb ? `${nWeb} jeu${nWeb > 1 ? "x" : ""} en préparation` : null)) : null);
   const go = (k) => { setPage(k); setMenu(null); setOpen(false); };
 
   // Bouton d'onglet de la rangee principale.
@@ -5718,7 +5726,7 @@ function Navbar({ page, setPage, onAuth }) {
     <header style={{ position: "sticky", top: 0, zIndex: 500, background: "rgba(255,255,255,.94)", backdropFilter: "blur(12px)",
       boxShadow: "0 1px 0 #ece2d0, 0 8px 24px rgba(18,41,63,.05)" }}>
       <div aria-hidden="true" style={{ height: 5, background: NAV_STRIPE }} />
-      <div ref={barRef} style={{ maxWidth: 1180, margin: "0 auto", padding: "8px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "nowrap" }}>
+      <div ref={barRef} style={{ position: "relative", maxWidth: 1180, margin: "0 auto", padding: "8px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "nowrap" }}>
         <button onClick={() => go("accueil")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 0, flexShrink: 0 }} title="Accueil">
           <img src={LOGO_URL} alt="ALADJ — À l'assaut des jeux" style={{ height: 52, width: "auto", display: "block" }} />
         </button>
@@ -5730,16 +5738,66 @@ function Navbar({ page, setPage, onAuth }) {
           <div style={{ position: "relative" }}>
             {tab("ludotheque", { label: "Jeux", menu: "jeux", active: jeuxActive, badge: 0,
               onClick: () => setMenu((m) => (m === "jeux" ? null : "jeux")) })}
-            {menu === "jeux" && panel(
-              <>
-                {NAV_JEUX.map((it) => (
-                  <NavMenuRow key={it.key} item={it} active={page === it.key} count={countOf(it.key)} onClick={() => go(it.key)} />
-                ))}
-              </>, "left")}
           </div>
           {tab("mag")}
           {tab("chrono")}
         </nav>
+
+        {menu === "jeux" && (
+          <div role="menu" aria-label="Jeux" className="aladj-desktop-nav" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 20,
+            width: 940, maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", background: "#fff", borderRadius: 32, padding: 22,
+            boxShadow: "0 30px 70px rgba(12,31,48,.38), 0 0 0 1px rgba(18,41,63,.05)", animation: "popIn .16s ease" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+              {NAV_JEUX.map((it, i) => {
+                const n = navOf(it.key);
+                const Icon = n.icon;
+                const look = JEUX_LOOK[it.key];
+                const count = countOf(it.key);
+                const active = page === it.key;
+                return (
+                  <button key={it.key} type="button" role="menuitem" onClick={() => go(it.key)} className="aladj-jeuxcard"
+                    style={{ position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, minHeight: 280,
+                      boxSizing: "border-box", padding: 22, borderRadius: 24, border: "none", cursor: "pointer", textAlign: "left",
+                      background: look.bg, color: look.ink, boxShadow: `0 16px 30px ${look.glow}${active ? `, 0 0 0 4px ${look.ring}` : ""}`, transition: "transform .15s" }}>
+                    <svg aria-hidden="true" width="150" height="150" viewBox="0 0 100 100" style={{ position: "absolute", right: -34, bottom: -34, opacity: .18, transform: `rotate(${i % 2 ? -12 : 14}deg)` }}>
+                      <rect x="6" y="6" width="88" height="88" rx="22" fill="#fff" />
+                    </svg>
+                    <span style={{ position: "relative", width: 60, height: 60, borderRadius: 18, background: look.chip, display: "grid", placeItems: "center", transform: `rotate(${i % 2 ? 5 : -6}deg)` }}>
+                      <Icon size={30} />
+                    </span>
+                    <span style={{ position: "relative", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 27, marginTop: 6, textShadow: look.shadow }}>{n.label}</span>
+                    <span style={{ position: "relative", fontSize: 15, lineHeight: 1.5, color: look.sub }}>{it.desc}</span>
+                    <span style={{ position: "relative", marginTop: "auto", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 10 }}>
+                      {count ? <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5, background: look.pillBg, color: look.pillInk, padding: "6px 14px", borderRadius: 999 }}>{count}</span> : <span />}
+                      <ArrowRight size={22} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {currentUser && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 18, paddingTop: 16, borderTop: "2px dashed #EFE6D6" }}>
+                <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, letterSpacing: ".12em", textTransform: "uppercase", color: "#6F6355", marginRight: 6 }}>Raccourcis</span>
+                {[
+                  { k: "add-game", l: "Ajouter un jeu", icon: Plus, main: true },
+                  { k: "ludo", l: "Ma ludothèque", icon: BookOpen },
+                  { k: "wishlist", l: "Ma liste d'envie", icon: Gift },
+                  { k: "record", l: "Enregistrer une partie jouée", icon: Trophy },
+                ].map((x) => {
+                  const XI = x.icon;
+                  return (
+                    <button key={x.k} type="button" role="menuitem" onClick={() => { momentJump(x.k, true); go("ma-ludo"); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 46, padding: "0 18px", borderRadius: 14, border: "none", cursor: "pointer",
+                        background: x.main ? "linear-gradient(180deg, #F6C24A, #E8A317)" : "#F3EDE0", boxShadow: x.main ? "0 4px 0 #B47A06" : "none",
+                        color: x.main ? "#12293F" : C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15.5 }}>
+                      <XI size={17} /> {x.l}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="aladj-desktop-nav" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {currentUser ? (
@@ -6714,7 +6772,7 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Le menu du haut tient en <b>cinq entrées</b>, toujours visibles : <b>Accueil</b>, <b>Moments jeux</b>, <b>Jeux</b>, <b>Le Mag</b> et <b>Chrono</b>.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
-              <li><b>Jeux ▾</b> ouvre un panneau qui regroupe la <b>Ludothèque</b>, <b>À venir</b> (les sorties à surveiller) et les <b>Jeux en ligne</b> de l'association, chacun avec une ligne d'explication et son nombre de fiches.</li>
+              <li><b>Jeux ▾</b> ouvre un grand panneau à trois cartes de couleur : la <b>Ludothèque</b> (bleu-vert), <b>À venir</b> (les sorties à surveiller, en ambre) et les <b>Jeux en ligne</b> de l'association (violet), chacune avec une ligne d'explication et son compteur. Connecté, une rangée <b>« Raccourcis »</b> en dessous mène droit au but : <b>Ajouter un jeu</b>, <b>Ma ludothèque</b>, <b>Ma liste d'envie</b> et <b>Enregistrer une partie jouée</b> (ces raccourcis ouvrent Mon espace au bon endroit, fenêtre déjà ouverte).</li>
               <li><b>Le bouton à votre nom</b>, tout à droite, ouvre votre espace personnel : <b>Mon espace</b>, <b>Mes locations</b>, l'<b>Espace décisionnaire</b> (pour les membres décisionnaires), le <b>Guide</b>, puis <b>Mon profil</b> et <b>Se déconnecter</b>. Les pastilles rouges de notifications et de locations s'y retrouvent ; leur total s'affiche sur le bouton lui-même.</li>
               <li>Sans être connecté, le <b>Guide</b> reste à portée de clic, à côté de « Connexion » et « Adhérer ».</li>
             </ul>
@@ -6840,9 +6898,10 @@ function GuidePage() {
           </>,
         },
         {
-          q: "Mon espace : les 4 tuiles du haut sont cliquables",
+          q: "Mon espace : le bandeau et ses 4 tuiles cliquables",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>En haut de <b>Mon espace</b>, quatre tuiles résument votre activité. Elles ne sont plus de simples compteurs : un petit chevron indique qu'on peut <b>cliquer dessus</b>.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Mon espace</b> s'ouvre sur un bandeau bleu nuit, comme Le Mag et les Moments jeux : votre avatar, votre prénom, et les actions principales — <b>Ajouter un jeu</b>, <b>Enregistrer une partie</b>, <b>Voir ma fiche</b> (votre fiche telle que les autres membres la voient) et <b>Export Excel</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Dans le bas du bandeau, quatre tuiles résument votre activité. Une petite flèche indique qu'on peut <b>cliquer dessus</b>.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20 }}>
               <li><b>Jeux apportés</b> — vous fait descendre directement sur <b>Ma ludothèque</b>, tout en bas de la page.</li>
               <li><b>Extensions</b> — ouvre la liste de vos extensions ; cliquez sur l'une d'elles pour ouvrir la fiche du jeu auquel elle se rattache.</li>
@@ -7120,6 +7179,13 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>Sur chaque carte de <b>Mes locations</b> — demande reçue, location à venir, demande envoyée acceptée — un bouton <b>« Discuter »</b> ouvre un fil privé avec l'autre personne. Pratique pour convenir du lieu et de l'heure de la remise en main propre, ce que le petit message de la demande ne permet pas.</p>
             <p style={{ margin: 0 }}>Ce fil est une discussion ordinaire : il apparaît dans <b>Ma messagerie</b> comme les autres, avec une étiquette « Location » qui rappelle son origine. Il survit à la location : rien ne s'efface quand le jeu est rendu.</p>
+          </>,
+        },
+        {
+          q: "Mes locations : le bandeau et ses tuiles",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>En haut de <b>Mes locations</b>, un bandeau résume vos prêts en tuiles : <b>demandes reçues</b>, jeux <b>à remettre</b>, <b>jeux prêtés</b> et <b>jeux empruntés</b>. Si un jeu que vous avez emprunté est <b>en retard</b>, une tuile rouge s'ajoute en tête.</p>
+            <p style={{ margin: 0 }}>Chaque tuile vous fait <b>descendre directement sur la rubrique</b> correspondante de la page. Le bouton <b>« Trouver un jeu à emprunter »</b> ouvre la ludothèque : c'est depuis la fiche d'un jeu qu'on en demande la location.</p>
           </>,
         },
         {
@@ -7854,7 +7920,9 @@ function GuidePage() {
           q: "À quoi sert l'onglet « Décisionnaire » ?",
           a: <>
             <p style={{ margin: "0 0 8px" }}>C'est un onglet <b>réservé aux membres décisionnaires</b> (et aux administrateurs) : les autres membres ne le voient même pas apparaître dans le menu. Tout ce qui s'y écrit n'est visible que d'eux — c'est garanti côté serveur, pas seulement à l'affichage.</p>
-            <p style={{ margin: "0 0 8px" }}>Il sert à faire vivre l'association entre deux assemblées générales : partager des idées, en discuter, puis trancher par un vote. Deux volets : la <b>💡 boîte à idées</b> et les <b>🗳️ votes</b>. Si votre statut décisionnaire expire, l'onglet disparaît simplement.</p>
+            <p style={{ margin: "0 0 8px" }}>Il sert à faire vivre l'association entre deux assemblées générales : partager des idées, en discuter, puis trancher par un vote. Si votre statut décisionnaire expire, l'onglet disparaît simplement.</p>
+            <p style={{ margin: "0 0 8px" }}>La page s'ouvre sur un <b>bandeau</b> avec deux boutons, <b>« Lancer un vote »</b> et <b>« Proposer une idée »</b>, et quatre tuiles : les <b>votes en cours</b>, ceux <b>en attente de votre voix</b>, les <b>idées sur la table</b> et le nombre de <b>décisionnaires</b>. Dessous, deux grandes cartes servent d'onglets : <b>🗳️ Les votes</b> (affichés par défaut) et <b>💡 La boîte à idées</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Chaque vote est une carte avec un bandeau de couleur — <b>ambre</b> tant qu'il est ouvert, <b>bleu nuit</b> une fois clos — et une étiquette qui vous dit d'un coup d'œil si <b>vous avez voté</b> ou s'il reste <b>à voter</b>. Les idées sont rangées sur deux colonnes, avec leur bouton de soutien bien visible.</p>
             <p style={{ margin: 0 }}><b>C'est la seule différence de fonctionnalité entre les deux statuts sur le site.</b> Un membre non décisionnaire profite de tout le reste à l'identique — ludothèque, moments jeux, parties, chrono, badges, commentaires de jeux. Ce qui lui manque, c'est cet onglet : proposer une idée, la soutenir, la commenter, lancer un vote, y participer ou en lire les résultats.</p>
           </>,
         },
@@ -7871,7 +7939,7 @@ function GuidePage() {
         {
           q: "Lancer un vote",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Onglet <b>🗳️ Votes</b> → <b>« Lancer un vote »</b>. Vous rédigez la question, ajoutez de <b>2 à 12 réponses</b> possibles, et réglez trois choses :</p>
+            <p style={{ margin: "0 0 8px" }}>Bouton <b>« Lancer un vote »</b> du bandeau (ou celui de la carte <b>🗳️ Les votes</b>). Vous rédigez la question, ajoutez de <b>2 à 12 réponses</b> possibles, et réglez trois choses :</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li><b>Réponse unique ou multiple</b> : cochez « Autoriser plusieurs réponses » pour que chacun puisse sélectionner plusieurs options, avec un plafond facultatif (« trois choix maximum », par exemple).</li>
               <li><b>Le quorum</b> : le nombre de votants attendus. Le vote reste valable en deçà, mais l'écart est affiché en clair sur la carte (« il en manque 2 ») — de quoi relancer les retardataires.</li>
@@ -11987,7 +12055,7 @@ function HomeStatTiles({ stats }) {
               <Icon size={24} color="#fff" />
             </span>
             <span style={{ minWidth: 0 }}>
-              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 32, lineHeight: 1 }}>{Number(st.n).toLocaleString("fr-FR")}</span>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: typeof st.n === "number" ? 32 : 21, lineHeight: 1.05 }}>{typeof st.n === "number" ? st.n.toLocaleString("fr-FR") : st.n}</span>
               <span style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 3 }}>{st.l}</span>
             </span>
             <ArrowRight size={17} style={{ marginLeft: "auto", flexShrink: 0, opacity: .55 }} />
@@ -13393,9 +13461,57 @@ function pollTimeLeft(p) {
   return `${days} jour${days > 1 ? "s" : ""} restant${days > 1 ? "s" : ""}`;
 }
 
+/* =============================================================================
+   (lot AL) BANDEAU COMMUN DES PAGES PERSONNELLES
+   Mon espace, Mes locations et l'Espace decisionnaire s'ouvrent sur le meme
+   bandeau bleu nuit que Le Mag et les Moments jeux : un intitule, un titre
+   avec sa partie en degrade, une phrase, les actions principales, et des
+   tuiles de chiffres qui menent chacune a la bonne rubrique.
+   ============================================================================= */
+function PageHero({ badge, BadgeIcon, title, accent, text, actions, tiles, avatar, dice = [C.teal, C.amber] }) {
+  return (
+    <div style={{ position: "relative", overflow: "hidden", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDeep} 55%, #0c1f30 100%)`,
+      borderRadius: 28, padding: "clamp(22px,4vw,40px)", color: "#fff", marginBottom: 30, boxShadow: "0 14px 34px rgba(18,41,63,.18)" }}>
+      <div className="aladj-hero-deco" aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <Dice color={dice[0]} n={5} style={{ position: "absolute", width: 104, top: -12, right: 30, opacity: .22, transform: "rotate(12deg)" }} />
+        <Dice color={dice[1]} n={2} style={{ position: "absolute", width: 64, top: 120, right: 160, opacity: .16, transform: "rotate(-10deg)" }} />
+      </div>
+      <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+        {avatar && (
+          <span style={{ width: 84, height: 84, borderRadius: 26, overflow: "hidden", flexShrink: 0, background: "linear-gradient(150deg, #2BA5A2, #14605F)",
+            display: "grid", placeItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 38, boxShadow: "0 0 0 4px rgba(255,255,255,.16), 0 14px 26px rgba(0,0,0,.3)", transform: "rotate(-4deg)" }}>
+            {avatar.url ? <img src={avatar.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : String(avatar.name || "?")[0].toUpperCase()}
+          </span>
+        )}
+        <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+          <Badge color={C.amber} soft={false}>{BadgeIcon ? <BadgeIcon size={13} /> : null} {badge}</Badge>
+          <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: "clamp(30px,5vw,50px)", margin: "12px 0 8px", lineHeight: 1.05, letterSpacing: "-0.02em" }}>
+            {title}{accent ? " " : ""}
+            {accent && <span style={{ background: "linear-gradient(90deg, #7FE0DA, #F6C24A 45%, #EF6B7E 75%, #C59AD4)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>{accent}</span>}
+          </h1>
+          {text && <p style={{ color: "rgba(255,255,255,.82)", fontSize: "clamp(15px,1.8vw,17px)", lineHeight: 1.6, margin: 0, maxWidth: 660 }}>{text}</p>}
+          {actions && <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>{actions}</div>}
+        </div>
+      </div>
+      {tiles && tiles.length > 0 && <div style={{ position: "relative", marginTop: 26 }}><HomeStatTiles stats={tiles} /></div>}
+    </div>
+  );
+}
+/* Bouton clair, pose sur le bandeau bleu nuit. */
+const heroGhost = { background: "rgba(255,255,255,.1)", border: "2px solid rgba(255,255,255,.3)", color: "#fff" };
+const scrollToId = (id) => {
+  const el = typeof document !== "undefined" ? document.getElementById(id) : null;
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+};
+
 function DeciderPage({ setToast }) {
-  const { currentUser } = useApp();
-  const [tab, setTab] = useState("idees");
+  const { currentUser, users } = useApp();
+  // (lot AL) Les votes d'abord : c'est la que l'on attend quelque chose de vous.
+  const [tab, setTab] = useState("votes");
+  const [pollTick, setPollTick] = useState(0);
+  const [ideaTick, setIdeaTick] = useState(0);
+  const [pollStats, setPollStats] = useState({ open: 0, toVote: 0 });
+  const [ideaStats, setIdeaStats] = useState({ open: 0 });
   if (!isDecideur(currentUser)) {
     return (
       <div style={{ maxWidth: 700, margin: "0 auto", padding: "60px 24px" }}>
@@ -13403,39 +13519,60 @@ function DeciderPage({ setToast }) {
       </div>
     );
   }
-  return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "40px 24px 80px" }}>
-      <div style={{ marginBottom: 22 }}>
-        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.amber, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em", display: "flex", alignItems: "center", gap: 6 }}>
-          <Crown size={15} color={C.amber} /> Espace réservé
+  const deciders = (users || []).filter((u) => u.role === "decideur" || u.admin).length;
+  const go = (k) => { setTab(k); setTimeout(() => scrollToId("decider-board"), 60); };
+  const switchCard = (k, title, desc, Icon, look, count) => {
+    const on = tab === k;
+    return (
+      <button type="button" onClick={() => setTab(k)} aria-pressed={on} className="aladj-jeuxcard"
+        style={{ position: "relative", overflow: "hidden", display: "flex", alignItems: "center", gap: 16, minHeight: 120, padding: "18px 20px", borderRadius: 26, border: "none", cursor: "pointer", textAlign: "left",
+          background: look.bg, color: look.ink, boxShadow: on ? `0 18px 34px ${look.glow}, 0 0 0 4px ${look.ring}` : `0 10px 22px ${look.glow}`, opacity: on ? 1 : .82, transition: "transform .15s, opacity .15s" }}>
+        <svg aria-hidden="true" width="140" height="140" viewBox="0 0 100 100" style={{ position: "absolute", right: -30, bottom: -38, opacity: .16, transform: "rotate(14deg)" }}><rect x="6" y="6" width="88" height="88" rx="22" fill="#fff" /></svg>
+        <span style={{ position: "relative", width: 62, height: 62, borderRadius: 19, background: look.chip, display: "grid", placeItems: "center", flexShrink: 0, transform: "rotate(-6deg)" }}><Icon size={30} /></span>
+        <span style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 25 }}>{title}</span>
+          <span style={{ display: "block", fontSize: 14.5, lineHeight: 1.45, color: look.sub, marginTop: 2 }}>{desc}</span>
         </span>
-        <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(28px,5vw,42px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Décisionnaire</h1>
-        <p style={{ margin: "8px 0 0", fontSize: 14.5, color: "#6e6256", lineHeight: 1.6, maxWidth: 640 }}>
-          L'endroit où l'on partage les idées et où l'on tranche, entre membres décisionnaires.
-          Ce que vous écrivez ici n'est visible que d'eux.
-        </p>
+        {count != null && <span style={{ position: "relative", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, background: look.pillBg, color: look.pillInk, padding: "6px 14px", borderRadius: 999, flexShrink: 0 }}>{count}</span>}
+      </button>
+    );
+  };
+  return (
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 80px" }}>
+      {/* (lot AL) Bandeau, deux grandes cartes pour choisir, puis le contenu. */}
+      <PageHero badge="Espace réservé aux décisionnaires" BadgeIcon={Crown} title="L'espace" accent="décisionnaire" dice={[C.amber, C.purple]}
+        text="L'endroit où l'on partage les idées et où l'on tranche, entre membres décisionnaires. Ce que vous écrivez ici n'est visible que d'eux."
+        actions={<>
+          <Btn variant="amber" size="lg" onClick={() => { setPollTick((x) => x + 1); go("votes"); }}><Plus size={18} /> Lancer un vote</Btn>
+          <Btn size="lg" onClick={() => { setIdeaTick((x) => x + 1); go("idees"); }} style={heroGhost}><Lightbulb size={18} /> Proposer une idée</Btn>
+        </>}
+        tiles={[
+          { n: pollStats.open, l: pollStats.open > 1 ? "votes en cours" : "vote en cours", icon: Crown, c1: "#F6C24A", c2: C.amber, onClick: () => go("votes") },
+          { n: pollStats.toVote, l: "en attente de votre voix", icon: Check, c1: "#E25B6E", c2: C.red, onClick: () => go("votes") },
+          { n: ideaStats.open, l: ideaStats.open > 1 ? "idées sur la table" : "idée sur la table", icon: Lightbulb, c1: "#2BB3AE", c2: C.teal, onClick: () => go("idees") },
+          { n: deciders, l: "décisionnaires", icon: Users, c1: "#A66BB8", c2: C.purple, onClick: () => go("votes") },
+        ]} />
+
+      <div className="aladj-decider-switch" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16, marginBottom: 28 }}>
+        {switchCard("votes", "Les votes", "Les questions à trancher : votez, discutez, découvrez le résultat à la clôture.", Crown,
+          { bg: "linear-gradient(150deg, #FAD06A, #E0940F)", ink: "#12293F", sub: "#2A2105", chip: "rgba(18,41,63,.14)", glow: "rgba(232,163,23,.35)", ring: "#12293F", pillBg: "#12293F", pillInk: "#fff" },
+          pollStats.toVote ? `${pollStats.toVote} à voter` : `${pollStats.open} en cours`)}
+        {switchCard("idees", "La boîte à idées", "Les propositions de chacun : soutenez-les, commentez-les, marquez-les tranchées.", Lightbulb,
+          { bg: "linear-gradient(150deg, #2BA5A2, #0F4F4E)", ink: "#fff", sub: "rgba(255,255,255,.88)", chip: "rgba(255,255,255,.22)", glow: "rgba(30,138,138,.35)", ring: "#7FE0DA", pillBg: "#fff", pillInk: "#0F4F4E" },
+          `${ideaStats.open} idée${ideaStats.open > 1 ? "s" : ""}`)}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-        {[
-          { k: "idees", t: "\ud83d\udca1 Boîte à idées" },
-          { k: "votes", t: "\ud83d\uddf3️ Votes" },
-        ].map((x) => (
-          <button key={x.k} type="button" onClick={() => setTab(x.k)}
-            style={{ padding: "10px 20px", borderRadius: 12, cursor: "pointer", border: "none", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15,
-              background: tab === x.k ? C.navy : "rgba(26,58,92,.07)", color: tab === x.k ? "#fff" : C.navy }}>
-            {x.t}
-          </button>
-        ))}
+      <div id="decider-board" style={{ scrollMarginTop: 90 }}>
+        {/* Les deux tableaux restent montes : leurs chiffres alimentent le bandeau. */}
+        <div style={{ display: tab === "idees" ? "block" : "none" }}><IdeaBox setToast={setToast} addTick={ideaTick} onStats={setIdeaStats} /></div>
+        <div style={{ display: tab === "votes" ? "block" : "none" }}><PollBoard setToast={setToast} createTick={pollTick} onStats={setPollStats} /></div>
       </div>
-
-      {tab === "idees" ? <IdeaBox setToast={setToast} /> : <PollBoard setToast={setToast} />}
     </div>
   );
 }
 
 /* ---- Boite a idees --------------------------------------------------------- */
-function IdeaBox({ setToast }) {
+function IdeaBox({ setToast, addTick = 0, onStats }) {
   const { currentUser, users, askConfirm } = useApp();
   const [ideas, setIdeas] = useState(null);
   const [supports, setSupports] = useState([]);
@@ -13449,6 +13586,11 @@ function IdeaBox({ setToast }) {
   // Modification d'une idee : son auteur ou un administrateur peuvent la corriger.
   const [editId, setEditId] = useState(null);
   const [editDraft, setEditDraft] = useState({ title: "", content: "" });
+  // (lot AL) Le bouton « Proposer une idée » du bandeau ouvre le formulaire.
+  useEffect(() => { if (addTick > 0) setAdding(true); }, [addTick]);
+  useEffect(() => {
+    if (onStats && ideas) onStats({ open: ideas.filter((i) => i.status !== "archived" && i.status !== "done").length });
+  }, [ideas]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     const [a, b, c] = await Promise.all([
@@ -13531,7 +13673,7 @@ function IdeaBox({ setToast }) {
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
 
       {!adding ? (
-        <Btn variant="amber" onClick={() => setAdding(true)} style={{ marginBottom: 20 }}><Plus size={17} /> Proposer une idée</Btn>
+        <Btn variant="teal" onClick={() => setAdding(true)} style={{ marginBottom: 20 }}><Plus size={17} /> Proposer une idée</Btn>
       ) : (
         <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 16, padding: 18, marginBottom: 20 }}>
           <Field label="L'idée en une phrase"><TextInput value={draft.title} maxLength={200} autoFocus placeholder="Ex. : organiser un week-end jeux en septembre" onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></Field>
@@ -13552,7 +13694,7 @@ function IdeaBox({ setToast }) {
       ) : visible.length === 0 ? (
         <EmptyHint icon={Sparkles} text="La boîte à idées est vide. Lancez la première !" />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 440px), 1fr))", gap: 16, alignItems: "start" }}>
           {visible.map((idea) => {
             const sup = supportsOf(idea.id);
             const mine = idea.author_id === currentUser?.id;
@@ -13562,13 +13704,16 @@ function IdeaBox({ setToast }) {
             const done = idea.status === "done";
             const archived = idea.status === "archived";
             return (
-              <div key={idea.id} style={{ background: C.paper, border: `1px solid ${done ? "rgba(30,138,138,.35)" : "#ece2d0"}`, borderRadius: 16, padding: "16px 18px", opacity: archived ? .6 : 1 }}>
+              <div key={idea.id} style={{ position: "relative", overflow: "hidden", background: C.paper, border: "1px solid #ece2d0", borderRadius: 24, padding: "18px 18px 16px 24px",
+                boxShadow: "0 12px 26px rgba(18,41,63,.08)", opacity: archived ? .6 : 1 }}>
+                <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 7, background: done ? C.teal : (archived ? "#9c8d79" : C.amber) }} />
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                   <button type="button" onClick={() => toggleSupport(idea.id)} title={iSupport(idea.id) ? "Retirer mon soutien" : "Je soutiens cette idée"}
-                    style={{ flexShrink: 0, display: "grid", placeItems: "center", width: 46, padding: "6px 0", borderRadius: 11, cursor: "pointer",
-                      border: `1.5px solid ${iSupport(idea.id) ? C.amber : "#e6dcc9"}`, background: iSupport(idea.id) ? "rgba(232,163,23,.12)" : "#fff" }}>
-                    <ThumbsUp size={15} color={iSupport(idea.id) ? C.amber : "#b6a78f"} />
-                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, color: iSupport(idea.id) ? C.amber : "#8a7c6a", marginTop: 2 }}>{sup.length}</span>
+                    style={{ flexShrink: 0, display: "grid", placeItems: "center", width: 54, minHeight: 58, padding: "6px 0", borderRadius: 16, cursor: "pointer",
+                      border: "none", background: iSupport(idea.id) ? "linear-gradient(180deg, #F6C24A, #E8A317)" : "#F3EDE0",
+                      boxShadow: iSupport(idea.id) ? "0 4px 0 #B47A06" : "none" }}>
+                    <ThumbsUp size={17} color={iSupport(idea.id) ? "#12293F" : "#8a7c6a"} />
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 16, color: iSupport(idea.id) ? "#12293F" : C.navy, marginTop: 2 }}>{sup.length}</span>
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {editId === idea.id ? (
@@ -13585,7 +13730,7 @@ function IdeaBox({ setToast }) {
                     ) : (
                     <>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 16.5, overflowWrap: "anywhere" }}>{idea.title}</span>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 19, lineHeight: 1.25, overflowWrap: "anywhere" }}>{idea.title}</span>
                       {done && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: C.teal, borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>TRANCHÉE</span>}
                       {archived && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#9c8d79", borderRadius: 999, padding: "2px 9px", fontFamily: "'Fredoka',sans-serif" }}>ARCHIVÉE</span>}
                     </div>
@@ -13710,7 +13855,7 @@ function IdeaComments({ ideaId, rows, onChange, nameOf }) {
 }
 
 /* ---- Votes ----------------------------------------------------------------- */
-function PollBoard({ setToast }) {
+function PollBoard({ setToast, createTick = 0, onStats }) {
   const { currentUser, users, askConfirm } = useApp();
   const [polls, setPolls] = useState(null);
   const [options, setOptions] = useState([]);
@@ -13721,6 +13866,13 @@ function PollBoard({ setToast }) {
   const [err, setErr] = useState("");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);   // vote en cours de modification
+  // (lot AL) Le bouton « Lancer un vote » du bandeau ouvre le formulaire.
+  useEffect(() => { if (createTick > 0) setCreating(true); }, [createTick]);
+  useEffect(() => {
+    if (!onStats || !polls) return;
+    const opened = polls.filter((p) => !isPollClosed(p));
+    onStats({ open: opened.length, toVote: opened.filter((p) => !myVotes.some((v) => v.poll_id === p.id)).length });
+  }, [polls, myVotes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     const [p, o, v, st, cm] = await Promise.all([
@@ -13774,7 +13926,6 @@ function PollBoard({ setToast }) {
     <div>
       {err && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
 
-      <Btn variant="amber" onClick={() => setCreating(true)} style={{ marginBottom: 20 }}><Plus size={17} /> Lancer un vote</Btn>
 
       {polls === null ? (
         <div style={{ color: "#a89a86", fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={16} className="aladj-spin" /> Chargement…</div>
@@ -13784,8 +13935,10 @@ function PollBoard({ setToast }) {
         <>
           {open.length > 0 && (
             <>
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px" }}>En cours ({open.length})</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14, marginBottom: 26 }}>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 12, height: 12, borderRadius: "50%", background: C.amber, boxShadow: "0 0 0 5px rgba(232,163,23,.2)" }} /> En cours <span style={{ fontFamily: "'Nunito',sans-serif", fontSize: 16, fontWeight: 700, color: "#8a7c6a" }}>{open.length}</span>
+              </h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 460px), 1fr))", gap: 18, marginBottom: 34, alignItems: "start" }}>
                 {open.map((p) => (
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
@@ -13798,8 +13951,10 @@ function PollBoard({ setToast }) {
           )}
           {closed.length > 0 && (
             <>
-              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 17, margin: "0 0 12px" }}>Terminés ({closed.length})</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+              <h3 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: 24, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 12, height: 12, borderRadius: "50%", background: C.navy, boxShadow: "0 0 0 5px rgba(26,58,92,.15)" }} /> Terminés <span style={{ fontFamily: "'Nunito',sans-serif", fontSize: 16, fontWeight: 700, color: "#8a7c6a" }}>{closed.length}</span>
+              </h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 460px), 1fr))", gap: 18, alignItems: "start" }}>
                 {closed.map((p) => (
                   <PollCard key={p.id} poll={p} options={options.filter((o) => o.poll_id === p.id)}
                     myOptionIds={myVotes.filter((v) => v.poll_id === p.id).map((v) => v.option_id)}
@@ -13885,13 +14040,21 @@ function PollCard({ poll, options, myOptionIds, st, result, users, comments = []
   const dirty = sel.slice().sort().join("|") !== myOptionIds.slice().sort().join("|");
 
   return (
-    <div style={{ background: C.paper, border: `1px solid ${closedNow ? "#ece2d0" : "rgba(232,163,23,.45)"}`, borderRadius: 16, padding: "18px 20px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
-        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 18, minWidth: 0, overflowWrap: "anywhere" }}>{poll.question}</span>
-        <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, fontFamily: "'Fredoka',sans-serif", borderRadius: 999, padding: "3px 11px",
-          background: closedNow ? "rgba(26,58,92,.08)" : "rgba(232,163,23,.16)", color: closedNow ? "#8a7c6a" : "#8a6a1f" }}>
-          {closedNow ? "TERMINÉ" : pollTimeLeft(poll).toUpperCase()}
+    <div style={{ background: C.paper, border: "1px solid #ece2d0", borderRadius: 24, overflow: "hidden", boxShadow: "0 14px 30px rgba(18,41,63,.09)" }}>
+      {/* (lot AL) Bandeau de tete : la couleur dit l'etat du vote, la pastille dit ou vous en etes. */}
+      <div style={{ position: "relative", overflow: "hidden", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "12px 18px",
+        background: closedNow ? "linear-gradient(140deg, #24507A, #12293F)" : "linear-gradient(140deg, #FAD06A, #E0940F)", color: closedNow ? "#fff" : "#12293F" }}>
+        <svg aria-hidden="true" width="90" height="90" viewBox="0 0 100 100" style={{ position: "absolute", right: -18, top: -30, opacity: .16, transform: "rotate(14deg)" }}><rect x="6" y="6" width="88" height="88" rx="22" fill="#fff" /></svg>
+        <Crown size={17} style={{ position: "relative" }} />
+        <span style={{ position: "relative", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: ".06em", textTransform: "uppercase" }}>{closedNow ? "Vote terminé" : pollTimeLeft(poll)}</span>
+        <span style={{ position: "relative", marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
+          padding: "4px 12px", borderRadius: 999, background: closedNow ? "rgba(255,255,255,.16)" : (iVoted ? "#12293F" : "#fff"), color: closedNow ? "#fff" : (iVoted ? "#fff" : C.red) }}>
+          {iVoted ? <><Check size={14} /> Vous avez voté</> : (closedNow ? "Vous n'avez pas voté" : "À voter")}
         </span>
+      </div>
+      <div style={{ padding: "16px 20px 18px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 21, lineHeight: 1.25, minWidth: 0, overflowWrap: "anywhere" }}>{poll.question}</span>
       </div>
 
       <div style={{ fontSize: 12.5, color: "#9c8d79", marginBottom: 12, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -14018,6 +14181,7 @@ function PollCard({ poll, options, myOptionIds, st, result, users, comments = []
           <Btn size="sm" variant="danger" onClick={() => onRemove(poll)}><Trash2 size={14} /> Supprimer</Btn>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -19321,13 +19485,22 @@ function LocationsPage({ setToast }) {
   const fmtDue = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) + " à " + new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 20px 80px" }}>
-      <h1 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 32, color: C.navy, margin: "0 0 6px" }}>Mes locations</h1>
-      <p style={{ color: "#8a7c6a", margin: "0 0 32px", fontSize: 15 }}>Les jeux que vous prêtez et ceux que vous empruntez.</p>
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 80px" }}>
+      {/* (lot AL) Le bandeau de Mes locations, sur le modele du Mag et des Moments. */}
+      <PageHero badge="Prêts entre membres" BadgeIcon={ArrowRightLeft} title="Mes" accent="locations" dice={[C.amber, C.teal]}
+        text="Les jeux que vous prêtez, ceux que vous empruntez, et les demandes en cours. Chaque tuile mène à sa rubrique."
+        actions={<Btn variant="amber" size="lg" onClick={() => { try { window.dispatchEvent(new CustomEvent("aladj:goto", { detail: { page: "ludotheque" } })); } catch (e) { /* sans gravite */ } }}><Library size={18} /> Trouver un jeu à emprunter</Btn>}
+        tiles={[
+          ...(alerts.lateBorrowed.length ? [{ n: alerts.lateBorrowed.length, l: "en retard, à rendre", icon: AlertTriangle, c1: "#E25B6E", c2: C.red, onClick: () => scrollToId("loc-late") }] : []),
+          { n: alerts.pendingForMe.length, l: alerts.pendingForMe.length > 1 ? "demandes reçues" : "demande reçue", icon: ArrowRightLeft, c1: "#2BB3AE", c2: C.teal, onClick: () => scrollToId(alerts.pendingForMe.length ? "loc-requests" : "loc-lent") },
+          { n: alerts.upcoming.length, l: "à remettre", icon: Clock, c1: "#F6C24A", c2: C.amber, onClick: () => scrollToId(alerts.upcoming.length ? "loc-upcoming" : "loc-lent") },
+          { n: myLent.length, l: myLent.length > 1 ? "jeux prêtés" : "jeu prêté", icon: Library, c1: "#A66BB8", c2: C.purple, onClick: () => scrollToId("loc-lent") },
+          { n: myBorrowed.length, l: myBorrowed.length > 1 ? "jeux empruntés" : "jeu emprunté", icon: Package, c1: "#5B86B5", c2: "#24507A", onClick: () => scrollToId("loc-borrowed") },
+        ]} />
 
       {/* RETARDS — priorité absolue : c'est l'emprunteur qui doit agir */}
       {alerts.lateBorrowed.length > 0 && (
-        <section style={{ background: "rgba(181,40,58,.07)", border: `2px solid ${C.red}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+        <section id="loc-late" style={{ background: "rgba(181,40,58,.07)", border: `2px solid ${C.red}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.red, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
             <AlertTriangle size={19} color={C.red} /> À rendre en retard ({alerts.lateBorrowed.length})
           </h2>
@@ -19349,7 +19522,7 @@ function LocationsPage({ setToast }) {
 
       {/* LOCATIONS À VENIR — je me suis engagé, il reste à enregistrer le prêt */}
       {alerts.upcoming.length > 0 && (
-        <section style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+        <section id="loc-upcoming" style={{ background: "rgba(232,163,23,.1)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.navy, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
             <Clock size={19} color={C.amber} /> Location à venir ({alerts.upcoming.length})
           </h2>
@@ -19396,7 +19569,7 @@ function LocationsPage({ setToast }) {
 
       {/* DEMANDES REÇUES — en attente de ma réponse */}
       {alerts.pendingForMe.length > 0 && (
-        <section style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+        <section id="loc-requests" style={{ background: "rgba(30,138,138,.07)", border: `2px solid ${C.teal}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
           <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 18, color: C.navy, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
             <Mail size={19} color={C.teal} /> Demandes de location reçues ({alerts.pendingForMe.length})
           </h2>
@@ -19495,7 +19668,7 @@ function LocationsPage({ setToast }) {
 
 
       {/* JEUX QUE JE PRÊTE */}
-      <section style={{ marginBottom: 40 }}>
+      <section id="loc-lent" style={{ marginBottom: 40 }}>
         <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
           <ArrowRightLeft size={20} color={C.teal} /> Jeux que je prête ({myLent.length})
         </h2>
@@ -19532,7 +19705,7 @@ function LocationsPage({ setToast }) {
       </section>
 
       {/* JEUX QUE J'EMPRUNTE */}
-      <section style={{ marginBottom: 40 }}>
+      <section id="loc-borrowed" style={{ marginBottom: 40 }}>
         <h2 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 20, color: C.navy, margin: "0 0 14px", display: "flex", alignItems: "center", gap: 8 }}>
           <Package size={20} color={C.amber} /> Jeux que j'emprunte ({myBorrowed.length})
         </h2>
@@ -23024,14 +23197,21 @@ function ContextChatButton({ contextKind, contextId, title, memberIds, setToast,
 
 function MyWishlistSection({ setToast }) {
   const { currentUser, setShareWishlist } = useApp();
-  const [open, setOpen] = useState(false);
+  // (lot AL) Raccourci « Ma liste d'envie » du panneau Jeux : depliee et sous les yeux.
+  const [open, setOpen] = useState(() => consumeMomentJump("wishlist") === true);
+  const wishRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const t = setTimeout(() => { const el = wishRef.current; if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 250);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [gameOpen, setGameOpen] = useState(null);
   const [upcOpen, setUpcOpen] = useState(null);
   const items = useWishlistOf(currentUser?.id);
   if (!currentUser) return null;
   const shared = currentUser.shareWishlist !== false;
   return (
-    <div style={{ background: "rgba(107,58,122,.07)", border: `2px solid ${C.purple}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
+    <div ref={wishRef} style={{ background: "rgba(107,58,122,.07)", border: `2px solid ${C.purple}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22, scrollMarginTop: 90 }}>
       <button type="button" onClick={() => setOpen((v) => !v)}
         style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", font: "inherit", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 9, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 17 }}>
@@ -23841,14 +24021,20 @@ function HiddenRecosModal({ rows, games, onClose, onRestore }) {
 
 function MyLudoPage({ setToast, setPage }) {
   const { games, currentUser, users, household, events, setShareLibrary, toggleGameShared, confirmOwnership, declineOwnership, confirmExtensionOwnership, removeExtensionOwner, confirmEventInvite, declineEventInvite, dismissedRecos, dismissReco, restoreReco, toggleDiscover, notifications, markNotificationRead, markAllNotificationsRead, deleteNotification, deleteAllNotifications, pushSupported, pushEnabled, enablePush, disablePush, setRetroEmails, askConfirm, personalReady } = useApp();
-  const [recordOpen, setRecordOpen] = useState(false);
+  const [recordOpen, setRecordOpen] = useState(() => consumeMomentJump("record") === true);
   const [selected, setSelected] = useState(null);
   const [viewSelf, setViewSelf] = useState(false); // voir sa fiche publique telle que les autres la voient
   const [statPanel, setStatPanel] = useState(null); // "ext" | "rated" | "status" — fenetre ouverte depuis les tuiles
   const [recoFeedback, setRecoFeedback] = useState(null); // jeu dont on demande le motif de rejet
   const [showHiddenRecos, setShowHiddenRecos] = useState(false);
   const ludoAnchorRef = useRef(null);               // ancre « Ma ludotheque » (bas de page)
-  const [showAdd, setShowAdd] = useState(false);
+  const [showAdd, setShowAdd] = useState(() => consumeMomentJump("add-game") === true);
+  // (lot AL) Raccourci « Ma ludothèque » du panneau Jeux : on descend jusqu'a elle.
+  useEffect(() => {
+    if (consumeMomentJump("ludo") !== true) return undefined;
+    const t = setTimeout(() => { const el = ludoAnchorRef.current; if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" }); }, 250);
+    return () => clearTimeout(t);
+  }, []);
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
   const [players, setPlayers] = useState("");
@@ -24062,24 +24248,22 @@ function MyLudoPage({ setToast, setPage }) {
   return (
     <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 80px" }}>
       <MembershipBanner setToast={setToast} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14, marginBottom: 26 }}>
-        <div>
-          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.teal, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.12em" }}>Espace membre</span>
-          <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5vw,44px)", margin: "4px 0 0", letterSpacing: "-0.02em" }}>Mon espace</h1>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Btn variant="ghost" onClick={() => setViewSelf(true)}><Eye size={17} /> Voir ma fiche</Btn>
-          <Btn variant="ghost" onClick={exportExcel} disabled={mine.length === 0}><Download size={17} /> Export Excel</Btn>
-          <Btn variant="amber" onClick={() => setShowAdd(true)}><Plus size={17} /> Ajouter un jeu</Btn>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        <StatCard icon={Library} color={C.teal} n={mine.length} label="jeux apportés" onClick={scrollToLudo} title="Aller à ma ludothèque" />
-        <StatCard icon={Package} color={C.red} n={myExtCount} label={myExtCount > 1 ? "extensions" : "extension"} onClick={() => setStatPanel("ext")} title="Voir la liste de mes extensions" />
-        <StatCard icon={Star} color={C.amber} n={myRatingsCount} label="jeux notés" onClick={() => setStatPanel("rated")} title="Voir la liste de mes jeux notés" />
-        <StatCard icon={currentUser.role === "decideur" ? Crown : Heart} color={C.purple} n={currentUser.role === "decideur" ? "Décisionnaire" : "Membre"} label="statut" small onClick={() => setStatPanel("status")} title="Ce que permet mon statut" />
-      </div>
+      {/* (lot AL) Le bandeau de Mon espace, sur le modele du Mag et des Moments. */}
+      <PageHero badge="Espace membre" BadgeIcon={BookOpen} title="Mon espace" accent={`· ${currentUser.name}`}
+        avatar={{ url: currentUser.avatar, name: currentUser.name }}
+        text="Vos jeux, vos parties, vos notifications, votre messagerie et vos badges, au même endroit."
+        actions={<>
+          <Btn variant="amber" size="lg" onClick={() => setShowAdd(true)}><Plus size={18} /> Ajouter un jeu</Btn>
+          <Btn size="lg" onClick={() => setRecordOpen(true)} style={heroGhost}><Trophy size={18} /> Enregistrer une partie</Btn>
+          <Btn onClick={() => setViewSelf(true)} style={heroGhost}><Eye size={17} /> Voir ma fiche</Btn>
+          <Btn onClick={exportExcel} disabled={mine.length === 0} style={heroGhost}><Download size={17} /> Export Excel</Btn>
+        </>}
+        tiles={[
+          { n: mine.length, l: "jeux apportés", icon: Library, c1: "#2BB3AE", c2: C.teal, onClick: scrollToLudo },
+          { n: myExtCount, l: myExtCount > 1 ? "extensions" : "extension", icon: Package, c1: "#E25B6E", c2: C.red, onClick: () => setStatPanel("ext") },
+          { n: myRatingsCount, l: "jeux notés", icon: Star, c1: "#F6C24A", c2: C.amber, onClick: () => setStatPanel("rated") },
+          { n: currentUser.role === "decideur" ? "Décisionnaire" : "Membre", l: "mon statut", icon: currentUser.role === "decideur" ? Crown : Heart, c1: "#A66BB8", c2: C.purple, onClick: () => setStatPanel("status") },
+        ]} />
 
       {myEventInvites.length > 0 && (
         <div style={{ background: "rgba(232,163,23,.08)", border: `2px solid ${C.amber}`, borderRadius: 16, padding: "16px 20px", marginBottom: 22 }}>
@@ -24535,35 +24719,6 @@ function MyLudoPage({ setToast, setPage }) {
   );
 }
 
-function StatCard({ icon: Icon, color, n, label, small, onClick, title }) {
-  const clickable = typeof onClick === "function";
-  const base = { flex: small ? "1 1 190px" : "1 1 160px", background: C.paper, borderRadius: 18, padding: small ? "16px 16px" : "18px 22px", border: "1px solid #ece2d0", display: "flex", alignItems: "center", gap: small ? 11 : 14, minWidth: 0, boxSizing: "border-box", maxWidth: "100%", overflow: "hidden" };
-  const inner = (
-    <>
-      <span style={{ width: 50, height: 50, borderRadius: 14, background: `${color}1a`, display: "grid", placeItems: "center", flexShrink: 0 }}><Icon size={24} color={color} /></span>
-      <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-        <div style={{
-          fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy,
-          fontSize: small ? "clamp(14px,3.6vw,18px)" : 28, lineHeight: 1.15,
-          overflowWrap: "anywhere", hyphens: "auto",
-        }}>{n}</div>
-        <div style={{ fontSize: 13, color: "#8a7c6a", marginTop: 2, display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-          {clickable && <ChevronRight size={13} color={color} style={{ flexShrink: 0 }} />}
-        </div>
-      </div>
-    </>
-  );
-  if (!clickable) return <div style={base}>{inner}</div>;
-  return (
-    <button type="button" onClick={onClick} title={title || label}
-      style={{ ...base, cursor: "pointer", font: "inherit", transition: "border-color .15s, box-shadow .15s" }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = color; e.currentTarget.style.boxShadow = `0 4px 14px ${color}26`; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#ece2d0"; e.currentTarget.style.boxShadow = "none"; }}>
-      {inner}
-    </button>
-  );
-}
 
 /* =============================================================================
    FOOTER
@@ -24751,7 +24906,10 @@ function Shell() {
   // (lot AI) Ouverture du Mag demandee depuis ailleurs dans le site : une
   // notification, la page d'accueil, la fiche d'un jeu (voir magGoto).
   useEffect(() => {
-    const onGoto = (ev) => { if (ev && ev.detail && ev.detail.page === "mag") setPage("mag"); };
+    const onGoto = (ev) => {
+      const pg = ev && ev.detail && ev.detail.page;
+      if (pg === "mag" || pg === "ludotheque") setPage(pg);
+    };
     window.addEventListener("aladj:goto", onGoto);
     return () => window.removeEventListener("aladj:goto", onGoto);
   }, []);
@@ -24867,6 +25025,9 @@ export default function App() {
         @media (max-width: 980px) { .aladj-moments { grid-template-columns: minmax(0, 1fr) !important; } .aladj-moments-side { position: static !important; } }
         @media (max-width: 560px) { .aladj-moment { grid-template-columns: 64px minmax(0, 1fr) !important; gap: 10px 14px !important; padding: 18px 14px 16px 20px !important; } .aladj-moment-ticket > div:nth-child(2) { font-size: 30px !important; } .aladj-moment-ticket > div { font-size: 11.5px; } }
         @media (hover: hover) { .aladj-moment:hover { transform: translateY(-3px); box-shadow: 0 20px 40px rgba(18,41,63,.14) !important; } }
+        [id^="loc-"] { scroll-margin-top: 90px; }
+        @media (max-width: 760px) { .aladj-decider-switch { grid-template-columns: minmax(0, 1fr) !important; } }
+        @media (hover: hover) { .aladj-jeuxcard:hover { transform: translateY(-3px); } }
         @media (max-width: 980px) { .aladj-member-top { grid-template-columns: minmax(0, 1fr) !important; } }
         @media (max-width: 520px) { .aladj-hide-phone { display: none !important; } }
         @media (max-width: 980px) { .aladj-mag-read { grid-template-columns: minmax(0, 1fr) !important; gap: 22px !important; } .aladj-mag-read > aside, .aladj-mag-read > .aladj-mag-main { grid-column: 1 !important; grid-row: auto !important; position: static !important; } .aladj-mag-who { display: none !important; } }
