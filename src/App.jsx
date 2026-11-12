@@ -8,7 +8,7 @@ import {
   EyeOff as EyeOffIcon, TrendingUp, TrendingDown, MessageCircle, Pencil, Gift, ThumbsDown, Camera,
   Smartphone, Share2, Rocket, Wrench, CalendarCheck, Puzzle,
   Newspaper, Megaphone, Lightbulb, Type, Heading2, ImagePlus, Quote, List, Scale,
-  MessageSquarePlus, Send, ArrowLeft, ArrowUp, ArrowDown, Save
+  MessageSquarePlus, Send, ArrowLeft, ArrowUp, ArrowDown, Save, Bell
 } from "lucide-react";
 import { supabase, isConfigured } from "./supabaseClient";
 import PlayTimer, { ScorePad, Confetti, playVictory } from "./PlayTimer";
@@ -6684,7 +6684,7 @@ function GuidePage() {
         {
           q: "Nos conversations Signal",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b>. Le plus simple : tout en haut de la page d'accueil, le bouton <b>« Rejoindre nos groupes Signal »</b> déplie la liste des groupes, chacun avec son bouton <b>Rejoindre</b> — sur un téléphone, l'application Signal s'ouvre directement sur le groupe. Plus bas sur la même page, chaque groupe a aussi son <b>QR code</b>, à scanner avec un autre téléphone.</p>
+            <p style={{ margin: "0 0 8px" }}>Le site sert à organiser, mais <b>l'essentiel de la vie de l'association se passe sur Signal</b>. Le plus simple : sur l'accueil d'un membre connecté, la rubrique <b>« Nos conversations Signal »</b> ; sur la page d'accueil des visiteurs, tout en haut, le bouton <b>« Rejoindre nos groupes Signal »</b> déplie la liste des groupes, chacun avec son bouton <b>Rejoindre</b> — sur un téléphone, l'application Signal s'ouvre directement sur le groupe. Plus bas sur la même page, chaque groupe a aussi son <b>QR code</b>, à scanner avec un autre téléphone.</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li><b>Organisation jeux</b> — pour caler les moments jeux, s'inscrire et prendre les places de dernière minute. C'est celle qu'il faut rejoindre en premier.</li>
               <li><b>Blabla</b> — les discussions informelles, entre deux parties.</li>
@@ -6692,6 +6692,21 @@ function GuidePage() {
               <li><b>Magic The Gathering</b> — les parties et les soirées Magic : decks, échanges et rendez-vous entre joueurs.</li>
             </ul>
             <p style={{ margin: 0 }}>Aucune n'est obligatoire, et l'on peut n'en rejoindre qu'une. Elles sont simplement de loin le moyen le plus pratique de ne rien rater.</p>
+          </>,
+        },
+        {
+          q: "L'accueil d'un membre connecté",
+          a: <>
+            <p style={{ margin: "0 0 8px" }}>Connecté, vous n'arrivez plus sur la présentation de l'association mais sur <b>votre accueil</b> :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li>un bonjour, la date, et une phrase qui résume la situation (votre prochain moment, ce qui demande votre attention) ;</li>
+              <li><b>Lancer un chrono</b> et <b>Proposer un moment</b> en deux boutons, les chiffres de l'asso (cliquables) et le lien Ludum ;</li>
+              <li><b>votre prochain moment jeux</b> (ou le prochain tout court si vous n'êtes inscrit nulle part), avec le bouton « Je viens » ;</li>
+              <li><b>À faire</b> : parties à confirmer ou à enregistrer, demandes de location, jeux à rendre, discussions non lues et dernières notifications. Un clic mène au bon endroit ;</li>
+              <li>les <b>parties de chrono en cours</b> auxquelles vous êtes relié, et un champ pour rejoindre une partie avec son code ;</li>
+              <li>les <b>groupes Signal</b>, les derniers articles du <b>Mag</b> et quelques <b>jeux qui devraient vous plaire</b>.</li>
+            </ul>
+            <p style={{ margin: 0 }}>Tout en bas, <b>« Voir la présentation »</b> affiche la page d'accueil des nouveaux joueurs (points forts, adhésion, location, QR codes Signal) — pratique pour la montrer à quelqu'un. Un bouton en haut permet d'en revenir.</p>
           </>,
         },
         {
@@ -11931,11 +11946,359 @@ function ChronoPage({ onAuth, setPage }) {
   );
 }
 
+/* =============================================================================
+   (lot AL) L'ACCUEIL D'UN MEMBRE CONNECTE
+   Un membre qui revient n'a pas besoin de la presentation de l'association :
+   il veut savoir ce qui l'attend et ce qui l'attend de lui. Cette page lui
+   donne, dans l'ordre :
+     - le bonjour, la date, et une phrase qui resume la situation ;
+     - les chiffres cles de l'asso (cliquables), Ludum et Signal a un clic ;
+     - son prochain moment jeux (ou le prochain tout court) ;
+     - ce qui demande son attention (parties a confirmer, locations,
+       messages, notifications), et les parties de chrono en cours ;
+     - les groupes Signal, Le Mag, des jeux choisis pour lui ;
+     - un lien vers la presentation complete, celle des nouveaux.
+   Les deplacements vers un moment precis passent par deux petits drapeaux
+   lus a l'ouverture de la page Moments jeux (voir EventsPage).
+   ============================================================================= */
+function momentJump(kind, value) {
+  try { window.__aladjMomentJump = { kind, value }; } catch (e) { /* sans gravite */ }
+}
+function consumeMomentJump(kind) {
+  try {
+    const j = window.__aladjMomentJump;
+    if (j && j.kind === kind) { window.__aladjMomentJump = null; return j.value; }
+  } catch (e) { /* sans gravite */ }
+  return kind === "create" ? false : null;
+}
+
+function HomeStatTiles({ stats }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+      {stats.map((st, i) => {
+        const Icon = st.icon;
+        return (
+          <button key={st.l} type="button" onClick={st.onClick} className="aladj-statcard"
+            style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, minHeight: 80, padding: "12px 16px", borderRadius: 22,
+              border: "none", cursor: "pointer", textAlign: "left", background: "rgba(255,255,255,.08)",
+              boxShadow: "inset 0 0 0 1.5px rgba(255,255,255,.14)", color: "#fff", transition: "transform .15s, background .15s" }}>
+            <span style={{ width: 50, height: 50, flexShrink: 0, borderRadius: 16, display: "grid", placeItems: "center",
+              background: `linear-gradient(150deg, ${st.c1}, ${st.c2})`, boxShadow: "0 8px 18px rgba(0,0,0,.28)", transform: `rotate(${i % 2 ? 6 : -6}deg)` }}>
+              <Icon size={24} color="#fff" />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 32, lineHeight: 1 }}>{Number(st.n).toLocaleString("fr-FR")}</span>
+              <span style={{ display: "block", fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 3 }}>{st.l}</span>
+            </span>
+            <ArrowRight size={17} style={{ marginLeft: "auto", flexShrink: 0, opacity: .55 }} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MemberHomeView({ setPage, stats, onPresentation, onAuth }) {
+  const { currentUser, events, users, games, notifications, markNotificationRead, eventPlaySuggestions, myPendingPlays,
+          loanAlerts, messagesUnread, myOwnershipPending, personalReady, openChrono, toggleJoin, dismissedRecos } = useApp();
+  const [code, setCode] = useState("");
+  const [openGame, setOpenGame] = useState(null);
+  const [live, setLive] = useState([]);
+  const [signalOpen, setSignalOpen] = useState(false);
+  const uid = currentUser ? currentUser.id : null;
+
+  // Parties de chrono en cours auxquelles le membre est relie (la base ne
+  // laisse voir que celles-la). Rien a afficher si la lecture echoue.
+  useEffect(() => {
+    let go = true;
+    (async () => {
+      try {
+        const { data } = await supabase.from("play_sessions").select("id,join_code,status,game_id,host_profile_id,created_at")
+          .in("status", ["lobby", "running"]).order("created_at", { ascending: false }).limit(3);
+        if (go) setLive(Array.isArray(data) ? data.filter((x) => x && x.join_code) : []);
+      } catch (e) { if (go) setLive([]); }
+    })();
+    return () => { go = false; };
+  }, [uid]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const visible = useMemo(() => (events || []).filter((e) => e.date >= today && isEventVisible(e) && canViewEvent(e, currentUser))
+    .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))), [events, currentUser, today]);
+  const myNext = visible.find((e) => (e.players || []).some((p) => p.id === uid)) || null;
+  const focus = myNext || visible[0] || null;
+  const otherCount = visible.filter((e) => !focus || e.id !== focus.id).length;
+
+  // Ce qui demande l'attention du membre.
+  const todo = [];
+  if (personalReady) {
+    const pend = (myPendingPlays || []).length;
+    if (pend) todo.push({ key: "pend", icon: Trophy, tint: C.amber, t: `${pend} partie${pend > 1 ? "s" : ""} à confirmer`, d: "Un membre vous a mis dans une partie jouée", go: () => setPage("ma-ludo") });
+    const sugg = (eventPlaySuggestions || []).length;
+    if (sugg) todo.push({ key: "sugg", icon: Dice5, tint: C.teal, t: `${sugg} partie${sugg > 1 ? "s" : ""} à enregistrer`, d: "Après un moment jeux auquel vous étiez", go: () => setPage("ma-ludo") });
+    const la = loanAlerts || {};
+    if ((la.pendingForMe || []).length) todo.push({ key: "loanreq", icon: ArrowRightLeft, tint: C.amber, t: `${la.pendingForMe.length} demande${la.pendingForMe.length > 1 ? "s" : ""} de location`, d: "Un membre aimerait emprunter un de vos jeux", go: () => setPage("locations") });
+    if ((la.upcoming || []).length) todo.push({ key: "loanup", icon: ArrowRightLeft, tint: C.teal, t: `${la.upcoming.length} location${la.upcoming.length > 1 ? "s" : ""} à remettre`, d: "Des jeux à confier bientôt", go: () => setPage("locations") });
+    if ((la.lateBorrowed || []).length) todo.push({ key: "loanlate", icon: AlertTriangle, tint: C.red, t: `${la.lateBorrowed.length} jeu${la.lateBorrowed.length > 1 ? "x" : ""} à rendre`, d: "La date de retour est passée", go: () => setPage("locations") });
+    if (messagesUnread) todo.push({ key: "msg", icon: MessageCircle, tint: C.purple, t: `${messagesUnread} discussion${messagesUnread > 1 ? "s" : ""} non lue${messagesUnread > 1 ? "s" : ""}`, d: "Dans votre messagerie", go: () => setPage("ma-ludo") });
+    if (myOwnershipPending) todo.push({ key: "own", icon: Library, tint: C.navy, t: `${myOwnershipPending} jeu${myOwnershipPending > 1 ? "x" : ""} déclaré${myOwnershipPending > 1 ? "s" : ""} à votre nom`, d: "À confirmer dans Mon espace", go: () => setPage("ma-ludo") });
+    (notifications || []).filter((n) => !n.read).slice(0, 3).forEach((n) => {
+      todo.push({ key: `n${n.id}`, icon: Bell, tint: C.teal, t: n.message, d: timeAgoFr(n.createdAt), go: () => {
+        markNotificationRead(n.id);
+        if (n.linkKind === "game" && n.linkId) setOpenGame(n.linkId);
+        else if (n.linkKind === "poll" || n.linkKind === "idea") setPage("decideur");
+        else if (n.linkKind === "event") { if (n.linkId) momentJump("open", n.linkId); setPage("soirees"); }
+        else if (n.linkKind === "loan") setPage("locations");
+        else if (n.linkKind === "webgame") setPage("web-jeux");
+        else if (n.linkKind === "mag") magGoto(n.linkId, n.type === "mag_comment" ? "comments" : null);
+        else setPage("ma-ludo");
+      } });
+    });
+  }
+  const unreadTotal = (notifications || []).filter((n) => !n.read).length;
+
+  const recos = useMemo(() => (uid ? recommendGames(games || [], uid, dismissedRecos || [], 4) : []), [games, uid, dismissedRecos]);
+
+  const hour = new Date().getHours();
+  const hello = hour >= 18 || hour < 5 ? "Bonsoir" : "Bonjour";
+  const dateTxt = (() => { const d = new Date(); return `${FR_DAYS[d.getDay()]} ${d.getDate()} ${FR_MONTHS[d.getMonth()]}`; })();
+  const sentence = (() => {
+    let a;
+    if (myNext) {
+      const d = new Date(myNext.date + "T00:00:00");
+      const days = Math.round((d.getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+      a = days === 0 ? "Un moment jeux vous attend aujourd'hui" : (days === 1 ? "Un moment jeux vous attend demain"
+        : (days < 7 ? `Un moment jeux vous attend ${FR_DAYS[d.getDay()].toLowerCase()}` : `Votre prochain moment jeux : le ${formatDateShort(myNext.date)}`));
+    } else if (visible.length) a = `Vous n'êtes inscrit à aucun des ${visible.length} moment${visible.length > 1 ? "s" : ""} à venir`;
+    else a = "Aucun moment jeux n'est prévu pour l'instant";
+    const n = todo.length;
+    return a + (n ? `, et ${n === 1 ? "une chose demande" : `${n} choses demandent`} votre attention.` : ".");
+  })();
+
+  const card = { background: C.paper, borderRadius: 26, border: "1px solid #ece2d0", boxShadow: "0 14px 32px rgba(18,41,63,.09)" };
+  const h2 = (t, extra) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+      <h2 style={{ margin: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 26, color: C.navy }}>{t}</h2>
+      {extra}
+    </div>
+  );
+
+  return (
+    <>
+      {/* ---- Bandeau ---- */}
+      <section style={{ position: "relative", overflow: "hidden", background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 60%, #0c1f30 100%)` }}>
+        <div className="aladj-hero-deco" aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          <Dice color={C.amber} n={6} style={{ position: "absolute", width: 120, top: 34, right: "5%", opacity: .95, transform: "rotate(12deg)", filter: "drop-shadow(0 18px 22px rgba(0,0,0,.35))" }} />
+          <Dice color={C.red} n={3} style={{ position: "absolute", width: 74, top: 170, right: "17%", opacity: .9, transform: "rotate(-14deg)", filter: "drop-shadow(0 14px 18px rgba(0,0,0,.35))" }} />
+          <div style={{ position: "absolute", top: 40, right: "28%", transform: "rotate(14deg)" }}><MeepleIcon size={56} color={C.teal} /></div>
+        </div>
+        <div style={{ position: "relative", maxWidth: 1180, margin: "0 auto", padding: "34px 24px 40px" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, background: "linear-gradient(180deg, #F6C24A, #E8A317)", color: "#12293F", padding: "6px 16px", borderRadius: 999, boxShadow: "0 8px 18px rgba(232,163,23,.35)" }}>{dateTxt}</span>
+          <h1 style={{ margin: "14px 0 0", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: "clamp(36px,6vw,62px)", lineHeight: 1.04, letterSpacing: "-0.02em", color: "#fff" }}>
+            {hello}{" "}
+            <span style={{ background: "linear-gradient(90deg, #7FE0DA, #F6C24A 45%, #EF6B7E 75%, #C59AD4)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>{currentUser.name} !</span>
+          </h1>
+          <p style={{ margin: "12px 0 0", maxWidth: 620, fontSize: "clamp(16px,2vw,19px)", lineHeight: 1.5, color: "#C9D8E6" }}>{sentence}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 22 }}>
+            <Btn variant="amber" size="lg" onClick={() => setPage("chrono")}><Clock size={19} /> Lancer un chrono</Btn>
+            <Btn size="lg" onClick={() => { momentJump("create", true); setPage("soirees"); }} style={{ background: "rgba(255,255,255,.1)", border: "2px solid rgba(255,255,255,.3)", color: "#fff" }}>
+              <Plus size={19} /> Proposer un moment
+            </Btn>
+          </div>
+          <div style={{ marginTop: 30 }}><HomeStatTiles stats={stats} /></div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 16 }}>
+            <a href="https://www.ludum.fr/?aff=146" target="_blank" rel="noopener noreferrer sponsored"
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 18px", borderRadius: 14,
+                background: "linear-gradient(180deg, #F6C24A, #E8A317)", boxShadow: "0 4px 0 #B47A06", color: "#12293F",
+                fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, textDecoration: "none" }}>
+              <ShoppingBag size={17} /> Acheter chez Ludum <span className="aladj-hide-phone" style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 12.5, opacity: .8 }}>· une partie revient à l'asso</span>
+            </a>
+          </div>
+        </div>
+        <svg viewBox="0 0 1440 60" style={{ display: "block", width: "100%", height: 40 }} preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 24 T1440 20 L1440 60 Z" fill={C.cream} /></svg>
+      </section>
+
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "26px 24px 70px", display: "flex", flexDirection: "column", gap: 44 }}>
+        {/* ---- Prochain moment + a faire ---- */}
+        <div className="aladj-member-top" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 380px", gap: 26, alignItems: "start" }}>
+          <section style={{ minWidth: 0 }}>
+            {h2(myNext ? "Votre prochain moment" : "Le prochain moment jeux",
+              <button type="button" onClick={() => setPage("soirees")} style={{ marginLeft: "auto", minHeight: 40, border: "none", background: "none", cursor: "pointer", color: C.teal, fontWeight: 800, fontSize: 14.5 }}>
+                {otherCount > 0 ? `Voir les ${otherCount} autre${otherCount > 1 ? "s" : ""}` : "Voir l'agenda"} →
+              </button>)}
+            {focus
+              ? <MomentCard e={focus} onAuth={onAuth}
+                  onOpen={() => { momentJump("open", focus.id); setPage("soirees"); }}
+                  onJoin={(id) => toggleJoin(id)} />
+              : (
+                <div style={{ ...card, padding: 26, textAlign: "center" }}>
+                  <p style={{ margin: "0 0 14px", color: "#6e6256", fontSize: 15.5 }}>Aucun moment jeux n'est prévu pour l'instant.</p>
+                  <Btn variant="amber" onClick={() => { momentJump("create", true); setPage("soirees"); }}><Plus size={17} /> Proposer le prochain</Btn>
+                </div>
+              )}
+          </section>
+
+          <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <section aria-label="À faire" style={{ ...card, padding: "18px 16px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 4px 10px" }}>
+                <h2 style={{ margin: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 21, color: C.navy }}>À faire</h2>
+                {todo.length > 0 && <span style={{ minWidth: 24, height: 24, padding: "0 7px", boxSizing: "border-box", borderRadius: 999, background: "linear-gradient(180deg, #D9475C, #B5283A)", color: "#fff", fontSize: 12.5, fontWeight: 800, lineHeight: "24px", textAlign: "center" }}>{todo.length}</span>}
+                <button type="button" onClick={() => setPage("ma-ludo")} style={{ marginLeft: "auto", border: "none", background: "none", cursor: "pointer", color: C.teal, fontWeight: 800, fontSize: 13.5, minHeight: 36 }}>Mon espace →</button>
+              </div>
+              {todo.length === 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 6px", color: "#6e6256", fontSize: 14.5 }}>
+                  <span style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(30,138,138,.12)", display: "grid", placeItems: "center", flexShrink: 0 }}><Check size={19} color={C.teal} /></span>
+                  Rien en attente : tout est à jour.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {todo.slice(0, 6).map((it) => {
+                    const Icon = it.icon;
+                    return (
+                      <button key={it.key} type="button" onClick={it.go} className="aladj-navrow"
+                        style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 56, padding: "8px 8px", borderRadius: 16, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, display: "grid", placeItems: "center", color: "#fff", background: `linear-gradient(150deg, ${it.tint}cc, ${it.tint})` }}><Icon size={19} /></span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", fontWeight: 700, fontSize: 14.5, color: C.navy, lineHeight: 1.3 }}>{it.t}</span>
+                          <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a", marginTop: 1 }}>{it.d}</span>
+                        </span>
+                        <ChevronRight size={17} color="#b6a78f" style={{ flexShrink: 0 }} />
+                      </button>
+                    );
+                  })}
+                  {(todo.length > 6 || unreadTotal > 3) && (
+                    <button type="button" onClick={() => setPage("ma-ludo")} style={{ minHeight: 40, border: "none", background: "none", cursor: "pointer", color: C.teal, fontWeight: 800, fontSize: 13.5 }}>
+                      Tout voir dans Mon espace
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section aria-label="Chrono" style={{ ...card, padding: "18px 18px 16px" }}>
+              {live.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+                  {live.map((ss) => {
+                    const g = (games || []).find((x) => x.id === ss.game_id);
+                    const host = (users || []).find((u) => u.id === ss.host_profile_id);
+                    return (
+                      <div key={ss.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, borderRadius: 18, background: "linear-gradient(150deg, #FAD06A, #E8A317)", color: "#12293F" }}>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, letterSpacing: ".06em", textTransform: "uppercase" }}>{ss.status === "running" ? "Partie en cours" : "Salle d'attente"}</span>
+                          <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 19, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g ? g.name : "Partie"}</span>
+                          {host && <span style={{ display: "block", fontSize: 13 }}>Table de {host.name}</span>}
+                        </span>
+                        <button type="button" onClick={() => openChrono({ joinCode: ss.join_code })}
+                          style={{ flexShrink: 0, minHeight: 44, padding: "0 14px", borderRadius: 13, border: "none", cursor: "pointer", background: "#12293F", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5 }}>
+                          Rejoindre
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: C.navy, marginBottom: 8 }}>Rejoindre une partie</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={code} onChange={(ev) => setCode(ev.target.value.toUpperCase())} maxLength={8} placeholder="Code, ex. K7P2"
+                  aria-label="Code de la partie"
+                  onKeyDown={(ev) => { if (ev.key === "Enter" && code.trim().length >= 4) openChrono({ joinCode: code.trim() }); }}
+                  style={{ flex: 1, minWidth: 0, minHeight: 46, boxSizing: "border-box", padding: "0 14px", borderRadius: 13, border: "1.5px solid #e6dcc9", background: "#fff", color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 17, letterSpacing: ".08em" }} />
+                <Btn variant="teal" disabled={code.trim().length < 4} onClick={() => openChrono({ joinCode: code.trim() })}>Rejoindre</Btn>
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        {/* ---- Signal ---- */}
+        <section>
+          {h2("Nos conversations Signal", <span style={{ fontSize: 15, color: "#8a7c6a" }}>Rejoignez celles qui vous concernent, d'un seul clic.</span>)}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+            {SIGNAL_GROUPS.map((grp) => (
+              <div key={grp.name} style={{ ...card, borderRadius: 22, display: "flex", alignItems: "center", gap: 12, padding: 14 }}>
+                <span style={{ width: 44, height: 44, borderRadius: 14, background: grp.color, display: "grid", placeItems: "center", flexShrink: 0 }}><grp.icon size={21} color="#fff" /></span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 16, color: C.navy }}>{grp.name}</span>
+                  <span style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.35 }}>{grp.desc}</span>
+                </span>
+                <a href={grp.url} target="_blank" rel="noopener noreferrer"
+                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", minHeight: 40, padding: "0 12px", borderRadius: 12, background: grp.color, color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, textDecoration: "none" }}>Rejoindre</a>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => setSignalOpen((v) => !v)} aria-expanded={signalOpen}
+            style={{ marginTop: 10, minHeight: 40, border: "none", background: "none", cursor: "pointer", color: C.teal, fontWeight: 800, fontSize: 14 }}>
+            {signalOpen ? "Masquer les QR codes" : "Afficher les QR codes, à scanner avec un autre téléphone"}
+          </button>
+          {signalOpen && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8 }}>
+              {SIGNAL_GROUPS.map((grp) => (
+                <figure key={grp.name} style={{ margin: 0, textAlign: "center" }}>
+                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=8&data=${encodeURIComponent(grp.url)}`} alt={`QR code ${grp.name}`}
+                    style={{ width: 130, height: 130, borderRadius: 12, border: "1px solid #ece2d0", background: "#fff" }} />
+                  <figcaption style={{ fontSize: 13, color: "#6e6256", marginTop: 4 }}>{grp.name}</figcaption>
+                </figure>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* ---- Le Mag ---- */}
+        <MagHomeStrip />
+
+        {/* ---- Choisis pour vous ---- */}
+        {recos.length > 0 && (
+          <section>
+            {h2("Des jeux qui devraient vous plaire",
+              <button type="button" onClick={() => setPage("ma-ludo")} style={{ marginLeft: "auto", minHeight: 40, border: "none", background: "none", cursor: "pointer", color: C.teal, fontWeight: 800, fontSize: 14.5 }}>Toutes mes suggestions →</button>)}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+              {recos.map((g) => {
+                const st = gameStats(g);
+                return (
+                  <button key={g.id} type="button" onClick={() => setOpenGame(g.id)} className="aladj-mag-card"
+                    style={{ ...card, borderRadius: 22, overflow: "hidden", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column" }}>
+                    <span style={{ position: "relative", display: "block" }}>
+                      <GameCover g={g} />
+                      {st.count > 0 && (
+                        <span style={{ position: "absolute", right: 10, top: 10, display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 999, background: "rgba(12,31,48,.72)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>
+                          <Star size={12} fill={C.amber} color={C.amber} /> {st.avg.toFixed(1).replace(".", ",")}
+                        </span>
+                      )}
+                    </span>
+                    <span style={{ padding: "12px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 17, color: C.navy, lineHeight: 1.2 }}>{g.name}</span>
+                      <GameQuickFacts g={g} size={12.5} />
+                      {g._recoReason && <span style={{ alignSelf: "flex-start", fontSize: 12, fontWeight: 700, color: C.teal, background: "rgba(30,138,138,.1)", borderRadius: 8, padding: "3px 8px", lineHeight: 1.3 }}>{g._recoReason}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ---- La presentation, pour les nouveaux ---- */}
+        <section style={{ ...card, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", padding: "22px 24px" }}>
+          <span style={{ width: 56, height: 56, borderRadius: 18, background: "linear-gradient(150deg, #24507A, #12293F)", display: "grid", placeItems: "center", flexShrink: 0 }}><MeepleIcon size={30} color={C.amber} /></span>
+          <span style={{ flex: "1 1 280px", minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 20, color: C.navy }}>La présentation de l'association</span>
+            <span style={{ display: "block", fontSize: 14.5, color: "#6e6256", lineHeight: 1.5, marginTop: 2 }}>Nos points forts, l'adhésion, la location de jeux, les QR codes Signal : la page que voient les nouveaux joueurs. Pratique à montrer à quelqu'un qui découvre l'asso.</span>
+          </span>
+          <Btn variant="primary" onClick={onPresentation}>Voir la présentation <ArrowRight size={16} /></Btn>
+        </section>
+      </div>
+
+      {openGame && <GameDetailModalById id={openGame} onClose={() => setOpenGame(null)} onAuth={onAuth} />}
+    </>
+  );
+}
+
 function HomePage({ setPage, onAuth }) {
   const { events, games, users, currentUser, openChrono, webGames } = useApp();
   const [showMembers, setShowMembers] = useState(false);
   const [viewMemberId, setViewMemberId] = useState(null); // pour consulter la ludothèque d'un membre
   const [chronoCode, setChronoCode] = useState("");
+  // (lot AL) Un membre connecte voit son propre accueil ; la presentation de
+  // l'association reste a un clic.
+  const [showPres, setShowPres] = useState(false);
   const joinChrono = () => {
     const code = chronoCode.trim().toUpperCase();
     if (code.length >= 4) openChrono({ joinCode: code });
@@ -11980,13 +12343,13 @@ function HomePage({ setPage, onAuth }) {
     const el = typeof document !== "undefined" ? document.getElementById("aladj-signal") : null;
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  // (lot AL) Pour un membre : son prochain moment jeux, s'il est inscrit quelque part.
-  const myNext = useMemo(() => {
-    if (!currentUser) return null;
-    const today = new Date().toISOString().slice(0, 10);
-    return [...events].filter((e) => e.date >= today && (e.players || []).some((p) => p.id === currentUser.id))
-      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0] || null;
-  }, [events, currentUser]);
+
+  const homeStats = [
+    { n: games.filter((g) => !g.unowned).length, l: "jeux partagés", icon: Library, c1: "#2BB3AE", c2: C.teal, onClick: () => setPage("ludotheque") },
+    { n: users.length, l: "membres", icon: Users, c1: "#F6C24A", c2: C.amber, onClick: () => setShowMembers(true) },
+    { n: upcomingCount, l: "moments à venir", icon: Calendar, c1: "#E25B6E", c2: C.red, onClick: () => setPage("soirees") },
+    ...(webStat.n > 0 ? [{ n: webStat.n, l: webStat.l, icon: Gamepad2, c1: "#A66BB8", c2: C.purple, onClick: () => setPage("web-jeux") }] : []),
+  ];
 
   const strongPoints = [
     { icon: Library, c: C.teal, t: "Une ludothèque vivante", d: "Des centaines de jeux partagés par les membres, notés et commentés par la communauté." },
@@ -11997,6 +12360,11 @@ function HomePage({ setPage, onAuth }) {
 
   return (
     <div>
+      {currentUser && !showPres ? (
+        <MemberHomeView setPage={setPage} stats={homeStats} onAuth={onAuth}
+          onPresentation={() => { setShowPres(true); try { window.scrollTo({ top: 0 }); } catch (e) { /* sans gravite */ } }} />
+      ) : (
+      <>
       {/* HERO */}
       <section style={{ position: "relative", overflow: "hidden", background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 60%, #0c1f30 100%)` }}>
         {/* formes décoratives (masquées sur téléphone : elles passaient sous les boutons) */}
@@ -12057,27 +12425,12 @@ function HomePage({ setPage, onAuth }) {
 
         <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 24px 84px", position: "relative", textAlign: "center" }}>
           {currentUser && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginBottom: 18 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 9, minHeight: 40, padding: "0 16px 0 5px", borderRadius: 999,
-                background: "rgba(255,255,255,.1)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
-                <span style={{ width: 30, height: 30, borderRadius: 10, overflow: "hidden", background: C.teal, display: "grid", placeItems: "center", fontSize: 14 }}>
-                  {currentUser.avatar ? <img src={currentUser.avatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : currentUser.name[0].toUpperCase()}
-                </span>
-                Bonjour {currentUser.name} !
-              </span>
-              {myNext ? (
-                <button type="button" onClick={() => setPage("soirees")}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 16px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: "rgba(30,138,138,.28)", boxShadow: "inset 0 0 0 1.5px rgba(127,224,218,.55)", color: "#fff", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 14.5 }}>
-                  <Calendar size={16} /> Votre prochain moment : {FR_DAYS[new Date(myNext.date + "T00:00:00").getDay()].toLowerCase()} {formatDateShort(myNext.date)}{myNext.time ? ` · ${myNext.time}` : ""}{myNext.title ? ` · ${myNext.title}` : ""}
-                </button>
-              ) : (
-                <button type="button" onClick={() => setPage("soirees")}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 16px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: "rgba(255,255,255,.1)", color: "#fff", fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 14.5 }}>
-                  <Calendar size={16} /> Pas encore inscrit à un prochain moment : voir l'agenda
-                </button>
-              )}
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+              <button type="button" onClick={() => { setShowPres(false); try { window.scrollTo({ top: 0 }); } catch (e) { /* sans gravite */ } }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 18px", borderRadius: 999, border: "none", cursor: "pointer",
+                  background: "rgba(255,255,255,.12)", boxShadow: "inset 0 0 0 1.5px rgba(255,255,255,.3)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15 }}>
+                <ArrowLeft size={17} /> Revenir à mon accueil
+              </button>
             </div>
           )}
           <Badge color={C.amber} soft={false}><MapPin size={13} /> Gouville-sur-Mer · Coutançais · Manche</Badge>
@@ -12453,6 +12806,9 @@ function HomePage({ setPage, onAuth }) {
           </a>
         </div>
       </section>
+
+      </>
+      )}
 
       {showMembers && <MembersModal onClose={() => setShowMembers(false)} onPickMember={(id) => { setShowMembers(false); setViewMemberId(id); }} />}
       {viewMemberId && <MemberLibraryModal memberId={viewMemberId} onClose={() => setViewMemberId(null)} onAuth={onAuth} />}
@@ -14315,10 +14671,10 @@ function MomentMiniCalendar({ cal, monthCursor, setMonthCursor, users, currentUs
 
 function EventsPage({ onAuth, setToast }) {
   const { events, currentUser, users, addEvent, toggleJoin, removeEvent } = useApp();
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(() => consumeMomentJump("create") === true);
   const [presetDate, setPresetDate] = useState(null); // date pré-remplie au clic sur le calendrier
   const [justCreated, setJustCreated] = useState(null); // moment tout juste créé → proposer le partage Signal
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(() => consumeMomentJump("open"));
   const [dayPicker, setDayPicker] = useState(null);
   const [birthdayDay, setBirthdayDay] = useState(null); // { iso, members, past }
   const [birthdayMember, setBirthdayMember] = useState(null); // fiche ouverte depuis la liste // plusieurs moments le même jour → fenêtre de choix
@@ -24511,6 +24867,8 @@ export default function App() {
         @media (max-width: 980px) { .aladj-moments { grid-template-columns: minmax(0, 1fr) !important; } .aladj-moments-side { position: static !important; } }
         @media (max-width: 560px) { .aladj-moment { grid-template-columns: 64px minmax(0, 1fr) !important; gap: 10px 14px !important; padding: 18px 14px 16px 20px !important; } .aladj-moment-ticket > div:nth-child(2) { font-size: 30px !important; } .aladj-moment-ticket > div { font-size: 11.5px; } }
         @media (hover: hover) { .aladj-moment:hover { transform: translateY(-3px); box-shadow: 0 20px 40px rgba(18,41,63,.14) !important; } }
+        @media (max-width: 980px) { .aladj-member-top { grid-template-columns: minmax(0, 1fr) !important; } }
+        @media (max-width: 520px) { .aladj-hide-phone { display: none !important; } }
         @media (max-width: 980px) { .aladj-mag-read { grid-template-columns: minmax(0, 1fr) !important; gap: 22px !important; } .aladj-mag-read > aside, .aladj-mag-read > .aladj-mag-main { grid-column: 1 !important; grid-row: auto !important; position: static !important; } .aladj-mag-who { display: none !important; } }
         @media (max-width: 760px) { .aladj-hero-deco { display: none; } .aladj-statcard { min-height: 72px !important; padding: 12px !important; gap: 10px !important; } .aladj-statcard > svg { display: none; } }
         @media (hover: hover) { .aladj-navrow:hover { background: #F7F2E8 !important; } .aladj-statcard:hover { transform: translateY(-3px); background: rgba(255,255,255,.14) !important; } }
