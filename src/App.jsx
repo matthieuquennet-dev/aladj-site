@@ -6847,7 +6847,7 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}>La page <b>À venir</b> s'ouvre sur un bandeau avec des tuiles cliquables : les <b>sorties d'ici 30 jours</b>, les <b>sorties récentes</b> (la tuile déplie la vitrine), et, pour un membre connecté, <b>mes intentions d'achat</b> et les <b>fiches à évaluer</b> — celles où vous n'avez encore ni voté ni dit si vous comptiez l'acheter. De quoi faire le tour de la veille en quelques clics.</p>
             <p style={{ margin: "0 0 8px" }}>Classée par <b>date de sortie</b> (le tri par défaut), la grille se range en <b>rubriques</b> : <b>Cette semaine</b>, <b>D'ici un mois</b>, <b>Plus tard</b>, <b>Déjà disponibles</b>, <b>Sortis en VO</b> et <b>Date de sortie inconnue</b>. Chaque carte porte un petit <b>calendrier</b> avec le jour de sortie (rouge quand c'est dans la semaine), le compte à rebours quand la sortie approche, le <b>thermomètre de la hype</b> en cinq segments (la flamme se remplit quand vous avez voté), votre intention d'achat, qui l'a déjà, qui est intéressé, et le prix neuf.</p>
-            <p style={{ margin: "0 0 8px" }}>Les filtres sont des <b>pastilles à un clic</b> : <b>Quand ?</b> (d'ici 30 jours, plus tard, déjà sortis, en VO, date inconnue), <b>Quoi ?</b> (les jeux, les extensions) et, pour un membre connecté, <b>Moi</b> : <b>🎯 Mes intentions</b>, <b>🌡️ Ma hype</b>, <b>les deux</b> ou <b>✋ À évaluer</b>. Le tri se choisit en onglets. Les filtres actifs sont rappelés au-dessus des fiches, chacun avec sa croix.</p>
+            <p style={{ margin: "0 0 8px" }}>La barre de recherche se trouve en bas du cadre des filtres, juste au-dessus des fiches. Les filtres sont des <b>pastilles à un clic</b> : <b>Quand ?</b> (d'ici 30 jours, plus tard, déjà sortis, en VO, date inconnue), <b>Quoi ?</b> (les jeux, les extensions) et, pour un membre connecté, <b>Moi</b> : <b>🎯 Mes intentions</b>, <b>🌡️ Ma hype</b>, <b>les deux</b> ou <b>✋ À évaluer</b>. Le tri se choisit en onglets. Les filtres actifs sont rappelés au-dessus des fiches, chacun avec sa croix.</p>
             <p style={{ margin: "0 0 8px" }}>Les deux petits boutons à droite de la recherche basculent entre la <b>grille</b> et la <b>liste</b> (dense, pour comparer d'un coup d'œil) : la sortie, le score, le nombre de membres <b>intéressés</b>, la <b>hype moyenne</b> et <b>votre propre vote</b> — votre intention d'achat apparaissant sous le titre.</p>
             <p style={{ margin: "0 0 8px" }}>Dans la colonne de droite, deux classements en onglets, avec podium : le <b>Top 20 hype</b> et les <b>Achats prévus</b> — les fiches qui réunissent le plus d'acheteurs potentiels.</p>
             <p style={{ margin: "0 0 8px" }}>La <b>disponibilité</b> (date de sortie française, « déjà sorti », « sorti en VO ») se renseigne désormais <b>dès la création</b> de la fiche, y compris après un import BoardGameGeek — il n'est plus nécessaire de repasser par « Modifier la fiche ». Un bloc <b>« Mon avis »</b> y est également proposé : vous pouvez poser <b>votre hype</b> et <b>votre intention d'achat</b> dans la foulée, au moment où vous avez le jeu en tête. Tout reste modifiable ensuite depuis la fiche.</p>
@@ -6947,7 +6947,7 @@ function GuidePage() {
           q: "Trouver un jeu",
           a: <>
             <p style={{ margin: "0 0 8px" }}>La page <b>Ludothèque</b> s'ouvre sur un bandeau, comme Le Mag : le nombre de jeux, les boutons <b>Ajouter un jeu</b>, <b>Composer ma tablée</b> et <b>Un jeu au hasard</b>, et quatre tuiles cliquables — les <b>jeux à emprunter</b>, les <b>parties enregistrées</b> (classe par « les plus joués »), les <b>jeux qui font envie</b> et les jeux que <b>vous n'avez pas encore notés</b>. Chaque tuile applique le filtre correspondant et descend à la liste.</p>
-            <p style={{ margin: "0 0 8px" }}>Dessous, une seule barre de recherche (un nom de jeu ou de propriétaire ; les accents ne comptent pas), puis des <b>pastilles à un clic</b> : le <b>nombre de joueurs</b> (1 à 7 +), la <b>durée</b> (≤ 30 min à + de 2 h), et quatre bascules — <b>🤝 Coopératifs</b>, <b>❤ J'ai envie de découvrir</b>, <b>⭐ Pas encore noté par moi</b> et <b>📦 Seulement les jeux de l'asso</b>. Un second clic sur une pastille l'éteint. Les filtres plus rares (mécanique, année, envies, collection, mes notes) sont rangés derrière <b>« Plus de filtres »</b> ; un petit chiffre indique combien y sont actifs.</p>
+            <p style={{ margin: "0 0 8px" }}>Dessous, un cadre réunit des <b>pastilles à un clic</b> : le <b>nombre de joueurs</b> (1 à 7 +), la <b>durée</b> (≤ 30 min à + de 2 h), et quatre bascules — <b>🤝 Coopératifs</b>, <b>❤ J'ai envie de découvrir</b>, <b>⭐ Pas encore noté par moi</b> et <b>📦 Seulement les jeux de l'asso</b>. Un second clic sur une pastille l'éteint. Tout en bas du cadre, juste au-dessus des jeux, la <b>barre de recherche</b> (un nom de jeu ou de propriétaire ; les accents ne comptent pas) : les jeux qui correspondent s'affichent dessous au fil des lettres tapées. À côté, <b>« Plus de filtres »</b> range les filtres plus rares (mécanique, année, envies, collection, mes notes) ; un petit chiffre indique combien y sont actifs. Sur téléphone, les classements s'effacent pendant une recherche pour laisser la place aux résultats.</p>
             <p style={{ margin: "0 0 8px" }}>Le tri se choisit en onglets : <b>Mieux notés</b>, <b>Mes notes</b>, <b>Les plus joués</b>, <b>Envies</b>, <b>Arrivés récemment</b>, <b>A → Z</b>. Juste au-dessus des jeux, le <b>nombre de résultats</b> et les <b>filtres actifs</b> sont rappelés : une croix sur chacun pour le retirer, ou « Tout effacer ».</p>
             <p style={{ margin: "0 0 8px" }}>Deux affichages, au choix des deux petits boutons à droite de la recherche : les <b>cartes</b>, ou la <b>liste</b> — avec la vignette, le nombre de joueurs, la durée, le propriétaire, les parties, les envies, la moyenne et votre note. La grille se charge par tranches de 60 — « Afficher plus » pour continuer, ou affinez la recherche.</p>
             <p style={{ margin: "0 0 8px" }}><b>Un jeu au hasard</b> tire une fiche parmi les jeux qui correspondent à vos filtres (les jeux de l'asso d'abord) : choisissez « 4 joueurs » et « ≤ 1 h », puis laissez le dé décider.</p>
@@ -7193,7 +7193,12 @@ function GuidePage() {
           q: "Mes locations : le bandeau et ses tuiles",
           a: <>
             <p style={{ margin: "0 0 8px" }}>En haut de <b>Mes locations</b>, un bandeau résume vos prêts en tuiles : <b>demandes reçues</b>, jeux <b>à remettre</b>, <b>jeux prêtés</b> et <b>jeux empruntés</b>. Si un jeu que vous avez emprunté est <b>en retard</b>, une tuile rouge s'ajoute en tête.</p>
-            <p style={{ margin: 0 }}>Chaque tuile vous fait <b>descendre directement sur la rubrique</b> correspondante de la page. Le bouton <b>« Trouver un jeu à emprunter »</b> ouvre la ludothèque : c'est depuis la fiche d'un jeu qu'on en demande la location.</p>
+            <p style={{ margin: 0 }}>Chaque tuile vous fait <b>descendre directement sur la rubrique</b> correspondante de la page. Tout en haut, deux boutons font gagner du temps :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>« Louer un de mes jeux »</b> : choisissez le jeu dans votre ludothèque (une recherche aide à le retrouver), puis la fenêtre habituelle s'ouvre — à qui, tarif convenu, poids relevé. Un jeu déjà prêté apparaît grisé, avec le nom de l'emprunteur.</li>
+              <li><b>« Demander une location »</b> : choisissez un jeu que d'autres membres possèdent (on peut chercher aussi par nom de propriétaire), puis cochez à qui envoyer la demande. Un jeu déjà chez vous ou déjà demandé apparaît grisé.</li>
+            </ul>
+            <p style={{ margin: 0 }}>On peut toujours, bien sûr, prêter ou demander un jeu depuis sa fiche dans la ludothèque.</p>
           </>,
         },
         {
@@ -7444,7 +7449,7 @@ function GuidePage() {
         {
           q: "Réagir à un commentaire",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Sous chaque commentaire du site — fiches de jeux, moments jeux, idées et votes de l'espace décisionnaire — quatre réactions sont proposées : <b>❤️ j'adore</b>, <b>👍 d'accord</b>, <b>👎 pas d'accord</b> et <b>💔 ça me fend le cœur</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque commentaire du site — fiches de jeux, moments jeux, articles du Mag, idées et votes de l'espace décisionnaire — quatre réactions sont proposées : <b>❤️ j'adore</b>, <b>👍 d'accord</b>, <b>👎 pas d'accord</b> et <b>💔 ça me fend le cœur</b>.</p>
             <p style={{ margin: "0 0 8px" }}>Une seule réaction par personne et par commentaire : en choisir une autre remplace la précédente, et recliquer sur la même la retire. Le compteur à côté de chaque symbole indique combien de membres l'ont choisi.</p>
             <p style={{ margin: 0 }}>Le lien <b>« qui ? »</b> déplie la liste des personnes ayant réagi, classées par symbole. Rien n'est anonyme ici, contrairement aux votes de l'espace décisionnaire : c'est une conversation, pas un scrutin.</p>
           </>,
@@ -7897,6 +7902,8 @@ function GuidePage() {
           q: "Commenter un article",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Tout en bas de l'article, la zone <b>« Commentaires »</b> accueille la conversation : une question à l'auteur, un merci, un désaccord. Le commentaire paraît tout de suite, à votre nom ; vous pouvez le <b>corriger</b> ou le <b>supprimer</b>. Les administrateurs peuvent aussi supprimer un commentaire.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Sans compte, on peut aussi commenter</b> : il suffit d'indiquer un <b>nom</b> (2 à 40 caractères, différent du nom d'un membre). Le commentaire porte alors l'étiquette <b>« Visiteur »</b>. Le navigateur s'en souvient : au retour sur le Mag, le nom est déjà rempli, les commentaires du visiteur sont marqués « (vous) » et il peut les corriger ou les supprimer — depuis ce même appareil seulement. Pour éviter les abus, un visiteur publie au plus trois commentaires en dix minutes.</p>
+            <p style={{ margin: "0 0 8px" }}>Sous chaque commentaire, les quatre <b>réactions</b> du site : <b>❤️ j'adore</b>, <b>👍 d'accord</b>, <b>👎 pas d'accord</b> et <b>💔 ça me fend le cœur</b>. Une seule par personne, un second clic la retire, et le lien <b>« qui ? »</b> montre qui a réagi.</p>
             <p style={{ margin: "0 0 8px" }}>À chaque nouveau commentaire, <b>l'auteur de l'article, ses co-auteurs et tous ceux qui ont déjà commenté</b> reçoivent une notification. Un clic dessus ouvre l'article <b>directement à ses commentaires</b>. On n'est jamais prévenu de son propre commentaire.</p>
             <p style={{ margin: 0 }}><b>Commentaire ou encart ?</b> L'encart enrichit l'article lui-même : il se pose sous un passage précis et le complète (un autre avis, une variante, une anecdote). Le commentaire, lui, est la discussion qui suit l'article.</p>
           </>,
@@ -11286,9 +11293,61 @@ function MagRatingBox({ stats, myStars, canRate, busy, onRate, onAuth }) {
   );
 }
 
+/* (lot AL) Le visiteur sans compte : son nom et une cle secrete aleatoire,
+   gardes dans son navigateur. La base n'en connait que l'empreinte (sha256) :
+   c'est elle qui le reconnait quand il revient. */
+const MAG_GUEST_STORE = "aladj.mag.guest";
+function magGuestLoad() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(MAG_GUEST_STORE) || "null");
+    if (v && typeof v.key === "string" && v.key.length >= 24) return { key: v.key, name: typeof v.name === "string" ? v.name : "" };
+  } catch (e) { /* stockage indisponible : le visiteur repart de zero */ }
+  return null;
+}
+function magGuestSave(g) {
+  try { window.localStorage.setItem(MAG_GUEST_STORE, JSON.stringify(g)); } catch (e) { /* sans gravite */ }
+}
+function magGuestNewKey() {
+  const a = new Uint8Array(24);
+  try { window.crypto.getRandomValues(a); } catch (e) { for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function magGuestHash(key) {
+  try {
+    const buf = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return null; }
+}
+function magGuestError(error) {
+  const m = (error && error.message) || "";
+  if (/ALADJ_MAG_GUEST_NAME_TAKEN/.test(m)) return "Ce nom est déjà celui d'un membre de l'association. Ajoutez par exemple l'initiale de votre nom de famille.";
+  if (/ALADJ_MAG_GUEST_NAME/.test(m)) return "Indiquez un nom de 2 à 40 caractères.";
+  if (/ALADJ_MAG_GUEST_CONTENT/.test(m)) return "Le commentaire doit faire entre 2 et 3 000 caractères.";
+  if (/ALADJ_TOO_MANY_MESSAGES/.test(m)) return "Trop de commentaires d'affilée. Patientez quelques minutes — ou connectez-vous, la limite ne s'applique qu'aux visiteurs.";
+  if (/ALADJ_MAG_NOT_PUBLISHED/.test(m)) return "Cet article n'est pas publié.";
+  if (/ALADJ_MAG_USE_ACCOUNT/.test(m)) return "Vous êtes connecté : votre commentaire sera signé de votre profil.";
+  if (/aladj_mag_guest|function|schema cache/i.test(m)) return "Les commentaires des visiteurs ne sont pas encore ouverts. Connectez-vous pour commenter.";
+  return m || "erreur inconnue";
+}
+
 /* La zone de commentaires, sous l'article. */
 function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAuth, onChanged, setToast }) {
   const { askConfirm } = useApp();
+  // (lot AL) Les memes quatre reactions que sous les autres commentaires du site.
+  const reacts = useReactions("mag", comments.map((c) => c.id));
+  // (lot AL) Le visiteur sans compte, reconnu d'une visite a l'autre.
+  const [guest, setGuest] = useState(() => (me ? null : magGuestLoad()));
+  const [guestName, setGuestName] = useState(() => (guest && guest.name) || "");
+  const [guestHash, setGuestHash] = useState(null);
+  const [guestErr, setGuestErr] = useState("");
+  const [trap, setTrap] = useState(""); // champ piege, invisible : seuls les robots le remplissent
+  useEffect(() => {
+    let off = false;
+    if (me || !guest) { setGuestHash(null); return undefined; }
+    magGuestHash(guest.key).then((h) => { if (!off) setGuestHash(h); });
+    return () => { off = true; };
+  }, [me, guest]);
+  const isMine = (c) => (me ? c.authorId === me : !c.authorId && !!guestHash && c.guestHash === guestHash);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -11296,7 +11355,25 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
 
   const post = async () => {
     const content = text.trim();
-    if (!content || !me) return;
+    if (!content) return;
+    if (!me) {
+      setGuestErr("");
+      const name = guestName.replace(/\s+/g, " ").trim();
+      if (name.length < 2) { setGuestErr("Indiquez votre nom (2 caractères au moins) : il apparaîtra sous votre commentaire."); return; }
+      if (content.length < 2) { setGuestErr("Écrivez d'abord votre commentaire."); return; }
+      if (trap) { setText(""); return; }
+      const g = { key: (guest && guest.key) || magGuestNewKey(), name };
+      setBusy(true);
+      const { error } = await supabase.rpc("aladj_mag_guest_comment", { p_article: article.id, p_name: name, p_content: content, p_key: g.key });
+      setBusy(false);
+      if (error) { setGuestErr(magGuestError(error)); return; }
+      magGuestSave(g);
+      setGuest(g);
+      setText("");
+      await onChanged();
+      setToast("Commentaire publié. Ce navigateur se souviendra de vous.");
+      return;
+    }
     setBusy(true);
     const { error } = await supabase.from("mag_comments").insert({ article_id: article.id, author_id: me, content });
     setBusy(false);
@@ -11309,6 +11386,14 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
     const content = editText.trim();
     if (!content) return;
     setBusy(true);
+    if (!me) {
+      const { data: okG, error: errG } = await supabase.rpc("aladj_mag_guest_update", { p_id: c.id, p_key: guest ? guest.key : "", p_content: content });
+      setBusy(false);
+      if (errG || okG !== true) { setToast("Modification impossible : " + (errG ? magGuestError(errG) : "ce commentaire n'a pas été écrit depuis ce navigateur")); return; }
+      setEditId(null); setEditText("");
+      await onChanged();
+      return;
+    }
     const { data, error } = await supabase.from("mag_comments").update({ content }).eq("id", c.id).select("id");
     setBusy(false);
     if (error || !data || !data.length) { setToast("Modification impossible : " + ((error && error.message) || "droits insuffisants")); return; }
@@ -11316,13 +11401,20 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
     await onChanged();
   };
   const remove = async (c) => {
-    const mine = c.authorId === me;
+    const mine = isMine(c);
     const ok = await askConfirm({
       title: "Supprimer ce commentaire ?",
       message: mine ? "Votre commentaire sera supprimé définitivement." : "Ce commentaire sera supprimé définitivement (action d'administrateur).",
       confirmLabel: "Supprimer",
     });
     if (!ok) return;
+    if (!me) {
+      const { data: okG, error: errG } = await supabase.rpc("aladj_mag_guest_delete", { p_id: c.id, p_key: guest ? guest.key : "" });
+      if (errG || okG !== true) { setToast("Suppression impossible : " + (errG ? magGuestError(errG) : "ce commentaire n'a pas été écrit depuis ce navigateur")); return; }
+      await onChanged();
+      setToast("Commentaire supprimé.");
+      return;
+    }
     const { error } = await supabase.from("mag_comments").delete().eq("id", c.id);
     if (error) { setToast("Suppression impossible : " + error.message); return; }
     await onChanged();
@@ -11340,14 +11432,16 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12, marginBottom: 18 }}>
         {comments.map((c) => {
           const u = c.authorId ? userById[c.authorId] : null;
-          const mine = !!me && c.authorId === me;
+          const mine = isMine(c);
           const isWriter = !!c.authorId && writerIds.includes(c.authorId);
+          const isGuest = !c.authorId && !!c.authorName;
           return (
             <div key={c.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", background: mine ? "rgba(30,138,138,.06)" : "rgba(26,58,92,.04)", borderRadius: 16, padding: "12px 14px" }}>
-              <MagAvatar user={u} size={34} />
+              <MagAvatar user={u || (isGuest ? { name: c.authorName } : null)} size={34} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>{u ? u.name : "Ancien membre"}{mine ? " (vous)" : ""}</span>
+                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 14.5 }}>{u ? u.name : isGuest ? c.authorName : "Ancien membre"}{mine ? " (vous)" : ""}</span>
+                  {isGuest && <span title="Lecteur sans compte : son nom n'est pas vérifié" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(107,58,122,.12)", color: C.purple }}>Visiteur</span>}
                   {isWriter && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 999, background: C.teal, color: "#fff" }}>Auteur</span>}
                   <span style={{ fontSize: 12.5, color: "#a89a86" }}>{timeAgoFr(c.createdAt)}{c.updatedAt ? " · modifié" : ""}</span>
                   {(mine || isAdmin) && editId !== c.id && (
@@ -11366,7 +11460,10 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
                     </div>
                   </div>
                 ) : (
-                  <div style={{ fontSize: 15, color: "#4d443a", lineHeight: 1.6, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{c.content}</div>
+                  <>
+                    <div style={{ fontSize: 15, color: "#4d443a", lineHeight: 1.6, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{c.content}</div>
+                    <CommentReactions commentId={c.id} rows={reacts.rows} onReact={reacts.react} />
+                  </>
                 )}
               </div>
             </div>
@@ -11387,7 +11484,27 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
           </div>
         </div>
       ) : (
-        <Btn variant="soft" onClick={() => onAuth("login")}><LogIn size={15} /> Se connecter pour commenter</Btn>
+        <div style={{ background: "rgba(26,58,92,.04)", borderRadius: 16, padding: 14 }}>
+          <Field label="Votre nom" hint={guest && guest.name
+            ? <>Ce navigateur vous reconnaît : vous pouvez corriger ou supprimer vos commentaires d'ici.</>
+            : <>Il apparaîtra sous votre commentaire. Ce navigateur s'en souviendra : vous pourrez ensuite corriger ou supprimer vos commentaires depuis cet appareil.</>}>
+            <TextInput value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Prénom, pseudo…" maxLength={40} autoComplete="name" />
+          </Field>
+          <input type="text" value={trap} onChange={(e) => setTrap(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true"
+            name="website" style={{ position: "absolute", left: -9999, width: 1, height: 1, opacity: 0 }} />
+          <textarea value={text} maxLength={MAG_COMMENT_MAX} onChange={(e) => setText(e.target.value)} rows={3}
+            placeholder="Votre commentaire…" aria-label="Votre commentaire" style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }} />
+          {guestErr && <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "9px 13px", borderRadius: 10, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{guestErr}</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn variant="teal" onClick={post} disabled={busy || !text.trim() || guestName.trim().length < 2}>
+              {busy ? <Loader2 size={16} className="aladj-spin" /> : <Send size={16} />} Publier le commentaire
+            </Btn>
+            <button type="button" onClick={() => onAuth("login")}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.teal, fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 13, padding: 0 }}>
+              …ou connectez-vous pour signer de votre profil
+            </button>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -11396,6 +11513,7 @@ function MagComments({ article, comments, userById, writerIds, me, isAdmin, onAu
 function mapMagComment(r) {
   return {
     id: r.id, articleId: r.article_id, authorId: r.author_id || null, content: r.content || "",
+    authorName: r.author_name || null, guestHash: r.guest_key_hash || null,
     createdAt: r.created_at || null, updatedAt: r.updated_at || null,
   };
 }
@@ -19108,17 +19226,6 @@ function UpcomingPage({ onAuth, setToast }) {
         <div className="aladj-cat-main" style={{ minWidth: 0 }}>
           <RecentReleasesPanel items={recentReleases} currentUserId={uid} onOpen={(id) => setSelected(id)} openTick={recentTick} />
           <div id="upc-list" className="aladj-cat-tools" style={catPanel}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu ou une extension…" />
-              {allMechanics.length > 0 && (
-                <select value={mech} onChange={(e) => setMech(e.target.value)} aria-label="Mécanique"
-                  style={{ ...inputStyle, width: "auto", maxWidth: 220, minHeight: 50, borderRadius: 14, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: mech ? C.teal : "#e6dcc9" }}>
-                  <option value="">Toutes mécaniques</option>
-                  {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              )}
-              <CatView value={view} onChange={setView} />
-            </div>
             <CatChips label="Quand ?" icon={Calendar} value={when} onChange={setWhen} tone={C.amber} options={UPC_WHEN} />
             <div style={{ display: "flex", gap: "12px 26px", flexWrap: "wrap" }}>
               <CatChips label="Quoi ?" icon={Puzzle} value={kind} onChange={setKind} tone={C.purple}
@@ -19132,6 +19239,19 @@ function UpcomingPage({ onAuth, setToast }) {
             <div style={{ display: "flex", alignItems: "center", gap: "8px 12px", flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 12 }}>
               <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a" }}>Trier</span>
               <CatSort options={sorts} value={sort} onChange={setSort} />
+            </div>
+            {/* La recherche, en bas du cadre : les fiches qui correspondent
+                apparaissent juste dessous, au fil des lettres tapées. */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu ou une extension…" />
+              {allMechanics.length > 0 && (
+                <select value={mech} onChange={(e) => setMech(e.target.value)} aria-label="Mécanique"
+                  style={{ ...inputStyle, width: "auto", maxWidth: 220, minHeight: 50, borderRadius: 14, cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, borderColor: mech ? C.teal : "#e6dcc9" }}>
+                  <option value="">Toutes mécaniques</option>
+                  {allMechanics.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              )}
+              <CatView value={view} onChange={setView} />
             </div>
           </div>
 
@@ -19204,7 +19324,7 @@ function UpcomingPage({ onAuth, setToast }) {
           )}
         </div>
 
-        <aside className="aladj-cat-aside" style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
+        <aside className={"aladj-cat-aside" + (active.length ? " aladj-cat-aside-busy" : "")} style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
           <RankBoard title="Les classements" icon={Flame} tone="hype" onOpen={(id) => setSelected(id)} tabs={[
             { key: "hype", label: "Top 20 hype", items: top.map(hypeRank), note: "Dès qu'un jeu reçoit un vote, il entre dans ce classement.", empty: "Pas encore de vote." },
             { key: "buy", label: "Achats prévus", items: topBuy.map(buyRank), note: "Les fiches qui réunissent le plus d'acheteurs potentiels.", empty: "Personne n'a encore déclaré d'intention d'achat." },
@@ -19851,6 +19971,110 @@ function EditUpcomingModal({ u, onClose, setToast }) {
   );
 }
 
+/* =============================================================================
+   (lot AL) MES LOCATIONS : LES DEUX RACCOURCIS DU HAUT DE PAGE
+   « Louer un de mes jeux » et « Demander une location » : on choisit d'abord
+   le jeu dans une liste avec recherche, puis s'ouvre la fenetre habituelle de
+   la fiche du jeu (« Preter ce jeu » ou « Demander la location »). Les jeux
+   deja pretes, deja empruntes ou deja demandes restent visibles mais grises,
+   avec la raison.
+   ============================================================================= */
+function LoanGamePicker({ mode, onClose, setToast }) {
+  const { games, users, currentUser, loans, loanRequests, myWeights } = useApp();
+  const [q, setQ] = useState("");
+  const [picked, setPicked] = useState(null);
+  const uid = currentUser ? currentUser.id : null;
+  const lend = mode === "lend";
+
+  // Les proprietaires a qui demander : ceux qui partagent leur ludotheque.
+  const sharesById = useMemo(() => {
+    const m = {};
+    (users || []).forEach((u) => { m[u.id] = u.shareLibrary !== false; });
+    return m;
+  }, [users]);
+  const askable = useCallback((g) => (g.owners || []).filter((o) => o.id !== uid && sharesById[o.id] !== false), [uid, sharesById]);
+
+  const rows = useMemo(() => {
+    const base = (games || []).filter((g) => {
+      if (g.unowned) return false;
+      const mine = (g.ownerIds || []).includes(uid);
+      if (lend) return mine;
+      return !mine && g.shared !== false && askable(g).length > 0;
+    });
+    return base.map((g) => {
+      let busy = "";
+      if (lend) {
+        const l = (loans || []).find((x) => x.gameId === g.id && x.lenderId === uid && !x.returned);
+        if (l) busy = `Déjà prêté à ${l.borrowerName || "un membre"}`;
+      } else {
+        const b = (loans || []).find((x) => x.gameId === g.id && x.borrowerId === uid && !x.returned);
+        const r = (loanRequests || []).find((x) => x.gameId === g.id && x.requesterId === uid && (x.status === "pending" || x.status === "accepted"));
+        if (b) busy = "Déjà chez vous";
+        else if (r) busy = r.status === "accepted" ? "Location acceptée, à récupérer" : "Demande en cours";
+      }
+      return { g, busy };
+    }).sort((a, b) => (a.busy ? 1 : 0) - (b.busy ? 1 : 0) || a.g.name.localeCompare(b.g.name, "fr"));
+  }, [games, loans, loanRequests, uid, lend, askable]);
+
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? rows.filter(({ g }) => g.name.toLowerCase().includes(needle) || (!lend && askable(g).some((o) => (o.name || "").toLowerCase().includes(needle))))
+    : rows;
+
+  if (picked) {
+    return lend
+      ? <LoanModal g={picked} onClose={onClose} setToast={setToast} defaultWeight={(myWeights || {})[picked.id]} />
+      : <LoanRequestModal g={picked} owners={askable(picked)} onClose={onClose} setToast={setToast} />;
+  }
+
+  return (
+    <Modal open onClose={onClose} title={lend ? "Louer un de mes jeux" : "Demander une location"} width={580}>
+      <p style={{ margin: "0 0 14px", fontSize: 14, color: "#6e6256", lineHeight: 1.6 }}>
+        {lend
+          ? <>Choisissez le jeu que vous prêtez : vous indiquerez ensuite à qui, le tarif convenu et le poids relevé. Le retour est prévu <b>deux semaines</b> plus tard.</>
+          : <>Choisissez le jeu que vous aimeriez emprunter : vous choisirez ensuite à quel(s) propriétaire(s) envoyer la demande. Le premier qui accepte vous le loue.</>}
+      </p>
+      <div style={{ display: "flex", marginBottom: 12 }}>
+        <CatSearch value={q} onChange={setQ} placeholder={lend ? "Rechercher un de mes jeux…" : "Rechercher un jeu ou un propriétaire…"} />
+      </div>
+      {rows.length === 0 ? (
+        <p style={{ fontSize: 14, color: "#8a7c6a", lineHeight: 1.6, margin: "8px 0 4px" }}>
+          {lend
+            ? "Vous n'avez encore aucun jeu dans votre ludothèque. Ajoutez-en depuis Mon espace pour pouvoir les louer."
+            : "Aucun jeu à emprunter pour le moment : les propriétaires n'ont rien partagé que vous ne possédiez déjà."}
+        </p>
+      ) : shown.length === 0 ? (
+        <p style={{ fontSize: 14, color: "#8a7c6a", margin: "8px 0 4px" }}>Aucun jeu ne correspond à « {q.trim()} ».</p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, maxHeight: "min(52vh, 460px)", overflowY: "auto", paddingRight: 4 }}>
+          {shown.map(({ g, busy }) => {
+            const price = rentalPrice(g.newPrice);
+            const owners = lend ? [] : askable(g);
+            return (
+              <button key={g.id} type="button" disabled={!!busy} onClick={() => setPicked(g)} className="aladj-cat-row"
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: 14, border: "1px solid #efe6d6", background: "#fff",
+                  cursor: busy ? "default" : "pointer", textAlign: "left", minWidth: 0, opacity: busy ? 0.55 : 1 }}>
+                <RankThumb g={g} size={42} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "#8a7c6a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {busy
+                      ? <b style={{ color: C.amber }}>{busy}</b>
+                      : lend
+                        ? (price != null ? <>Tarif indicatif : <b style={{ color: C.teal }}>{fmtEuro(price)}</b></> : "Tarif à convenir (prix neuf non renseigné)")
+                        : <>chez <b style={{ color: C.teal }}>{owners.map((o) => o.name).join(", ")}</b>{price != null ? <> · {fmtEuro(price)}</> : null}</>}
+                  </span>
+                </span>
+                {!busy && <ChevronRight size={18} color={C.teal} style={{ flexShrink: 0 }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function LocationsPage({ setToast }) {
   const { loans, games, myWeights, currentUser, closeLoan, loanAlerts,
           acceptLoanRequest, declineLoanRequest, cancelLoanRequest, askConfirm } = useApp();
@@ -19860,6 +20084,8 @@ function LocationsPage({ setToast }) {
   const alerts = loanAlerts || { pendingForMe: [], upcoming: [], mySent: [], lateBorrowed: [] };
   // Demande dont on est en train d'enregistrer la location (modale pré-remplie).
   const [fulfilling, setFulfilling] = useState(null);
+  // (lot AL) Raccourci du haut de page en cours : "lend" | "request" | null.
+  const [quick, setQuick] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const gameOf = (id) => (games || []).find((x) => x.id === id) || null;
 
@@ -19870,7 +20096,10 @@ function LocationsPage({ setToast }) {
       {/* (lot AL) Le bandeau de Mes locations, sur le modele du Mag et des Moments. */}
       <PageHero badge="Prêts entre membres" BadgeIcon={ArrowRightLeft} title="Mes" accent="locations" dice={[C.amber, C.teal]}
         text="Les jeux que vous prêtez, ceux que vous empruntez, et les demandes en cours. Chaque tuile mène à sa rubrique."
-        actions={<Btn variant="amber" size="lg" onClick={() => { try { window.dispatchEvent(new CustomEvent("aladj:goto", { detail: { page: "ludotheque" } })); } catch (e) { /* sans gravite */ } }}><Library size={18} /> Trouver un jeu à emprunter</Btn>}
+        actions={<>
+          <Btn variant="teal" size="lg" onClick={() => setQuick("lend")}><ArrowRightLeft size={18} /> Louer un de mes jeux</Btn>
+          <Btn variant="amber" size="lg" onClick={() => setQuick("request")}><Mail size={18} /> Demander une location</Btn>
+        </>}
         tiles={[
           ...(alerts.lateBorrowed.length ? [{ n: alerts.lateBorrowed.length, l: "en retard, à rendre", icon: AlertTriangle, c1: "#E25B6E", c2: C.red, onClick: () => scrollToId("loc-late") }] : []),
           { n: alerts.pendingForMe.length, l: alerts.pendingForMe.length > 1 ? "demandes reçues" : "demande reçue", icon: ArrowRightLeft, c1: "#2BB3AE", c2: C.teal, onClick: () => scrollToId(alerts.pendingForMe.length ? "loc-requests" : "loc-lent") },
@@ -20132,6 +20361,7 @@ function LocationsPage({ setToast }) {
         </section>
       )}
 
+      {quick && <LoanGamePicker mode={quick} onClose={() => setQuick(null)} setToast={setToast} />}
       {fulfilling && gameOf(fulfilling.gameId) && (
         <LoanModal
           g={gameOf(fulfilling.gameId)}
@@ -20485,17 +20715,6 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         {/* COLONNE PRINCIPALE */}
         <div className="aladj-cat-main" style={{ minWidth: 0 }}>
           <div id="ludo-list" className="aladj-cat-tools" style={catPanel}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu, un propriétaire…" />
-              <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
-                style={{ minHeight: 50, padding: "0 16px", borderRadius: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8,
-                  border: `2px solid ${moreOpen || nMore ? C.teal : "#e6dcc9"}`, background: moreOpen ? "rgba(30,138,138,.1)" : "#fff",
-                  color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5 }}>
-                <SlidersHorizontal size={18} color={C.teal} /> Plus de filtres
-                {nMore > 0 && <span style={{ minWidth: 22, height: 22, borderRadius: 999, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontSize: 12.5, padding: "0 6px" }}>{nMore}</span>}
-              </button>
-              <CatView value={view} onChange={setView} />
-            </div>
             <div style={{ display: "flex", gap: "12px 26px", flexWrap: "wrap" }}>
               <CatChips label="Joueurs" icon={Users} value={players} onChange={setPlayers}
                 options={[...["1", "2", "3", "4", "5", "6"].map((v) => ({ v, l: v })), { v: "7", l: "7 +" }]} />
@@ -20507,6 +20726,30 @@ function LudothequePage({ onAuth, setToast, setPage }) {
               {uid && <CatToggle on={myRated === "unrated"} tone={C.purple} onClick={() => setMyRated((r) => (r === "unrated" ? "" : "unrated"))}>⭐ Pas encore noté par moi</CatToggle>}
               <CatToggle on={ownFilter === "owned"} tone={C.navy} onClick={() => setOwnFilter((o) => (o === "owned" ? "" : "owned"))}
                 title="Sans les fiches de référence, que personne ne possède">📦 Seulement les jeux de l'asso</CatToggle>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px 12px", flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 12 }}>
+              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a" }}>Trier</span>
+              <CatSort options={sorts} value={sort} onChange={setSort} />
+              {uid && view === "grid" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 7, marginLeft: "auto", cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy }}
+                  title={bothAuto ? "Le tri « Mes notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
+                  <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 17, height: 17, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
+                  Voir les 2 notes
+                </label>
+              )}
+            </div>
+            {/* La recherche, en bas du cadre : les jeux qui correspondent apparaissent
+                juste dessous, au fil des lettres tapées. */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <CatSearch value={q} onChange={setQ} placeholder="Rechercher un jeu, un propriétaire…" />
+              <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
+                style={{ minHeight: 50, padding: "0 16px", borderRadius: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8,
+                  border: `2px solid ${moreOpen || nMore ? C.teal : "#e6dcc9"}`, background: moreOpen ? "rgba(30,138,138,.1)" : "#fff",
+                  color: C.navy, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14.5 }}>
+                <SlidersHorizontal size={18} color={C.teal} /> Plus de filtres
+                {nMore > 0 && <span style={{ minWidth: 22, height: 22, borderRadius: 999, background: C.teal, color: "#fff", display: "grid", placeItems: "center", fontSize: 12.5, padding: "0 6px" }}>{nMore}</span>}
+              </button>
+              <CatView value={view} onChange={setView} />
             </div>
             {moreOpen && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, padding: 14, borderRadius: 16, background: "rgba(26,58,92,.04)" }}>
@@ -20539,17 +20782,6 @@ function LudothequePage({ onAuth, setToast, setPage }) {
                 )}
               </div>
             )}
-            <div style={{ display: "flex", alignItems: "center", gap: "8px 12px", flexWrap: "wrap", borderTop: "1px solid rgba(26,58,92,.1)", paddingTop: 12 }}>
-              <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, color: "#8a7c6a" }}>Trier</span>
-              <CatSort options={sorts} value={sort} onChange={setSort} />
-              {uid && view === "grid" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 7, marginLeft: "auto", cursor: bothAuto ? "default" : "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, color: bothAuto ? "#9c8d79" : C.navy }}
-                  title={bothAuto ? "Le tri « Mes notes » affiche toujours les deux notes" : "Afficher la note moyenne et votre note en même temps"}>
-                  <input type="checkbox" checked={showBoth || bothAuto} disabled={bothAuto} onChange={(e) => setShowBoth(e.target.checked)} style={{ width: 17, height: 17, accentColor: C.teal, cursor: bothAuto ? "default" : "pointer" }} />
-                  Voir les 2 notes
-                </label>
-              )}
-            </div>
           </div>
 
           <CatActive count={filtered.length} noun={["jeu", "jeux"]} items={active} onClearAll={resetFilters} />
@@ -20609,7 +20841,7 @@ function LudothequePage({ onAuth, setToast, setPage }) {
         </div>
 
         {/* COLONNE LATÉRALE : les classements, puis le barème */}
-        <aside className="aladj-cat-aside" style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
+        <aside className={"aladj-cat-aside" + (active.length ? " aladj-cat-aside-busy" : "")} style={{ position: "sticky", top: 88, display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, maxHeight: "calc(100vh - 108px)", overflowY: "auto", paddingRight: 4 }}>
           <RankBoard title="Les classements" icon={Trophy} tone="navy" onOpen={(id) => setSelected(id)} tabs={[
             { key: "asso", label: "Top 20 de l'asso", items: top.map(toRank),
               note: "Les jeux les mieux notés par les membres, à partir de 4 votes.",
@@ -25611,6 +25843,9 @@ export default function App() {
           .aladj-cat-main > * { order: 3; }
           .aladj-cat-main > .aladj-cat-tools, .aladj-cat-main > #upc-recent { order: 1; }
           .aladj-cat-aside { order: 2; margin-bottom: 22px; position: static !important; max-height: none !important; overflow: visible !important; padding-right: 0 !important; width: 100%; box-sizing: border-box; }
+          /* Pendant une recherche ou un filtre, les classements s'effacent :
+             rien ne s'intercale entre la recherche et les resultats. */
+          .aladj-cat-aside-busy { display: none !important; }
           .aladj-rankboard[data-open="0"] .aladj-rank-rest { display: none !important; }
           .aladj-rank-more { display: flex !important; }
         }
