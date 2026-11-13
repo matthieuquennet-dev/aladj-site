@@ -7494,10 +7494,16 @@ function GuidePage() {
           </>,
         },
         {
-          q: "« Tour par tour » : le temps de chaque joueur",
+          q: "Le temps de chaque joueur : aucun, tour par tour, ou tous en même temps",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Mesurer le temps de réflexion de chacun reste possible, mais ce n'est plus affiché d'office : il suffit d'allumer l'interrupteur <b>« Tour par tour »</b>, à côté du titre des scores.</p>
-            <p style={{ margin: "0 0 8px" }}>Une fois allumé, on retrouve tout : le gros bouton <b>« C'est mon tour »</b> sur son téléphone, la carte du joueur qui s'allume quand c'est à lui, son temps de réflexion, les flèches <b>▲▼</b> qui changent l'ordre de jeu, la pause du tour et le mode <b>« Tous en même temps »</b>.</p>
+            <p style={{ margin: "0 0 8px" }}>Pendant la partie, le bouton <b>🕒 « Temps par joueur »</b> — une tuile en bas de l'écran en vue tablette, un bouton sous les joueurs sur téléphone — ouvre une fenêtre qui présente les trois façons de faire, chacune avec son explication :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>🚫 Pas de temps par joueur</b> : seulement les trois temps (mise en place, partie, rangement). C'est le réglage par défaut.</li>
+              <li><b>👆 Tour par tour</b> : chacun son tour. On touche la carte du joueur qui commence, son chrono tourne ; quand le suivant prend la main, on touche sa carte. Sur son téléphone, chacun peut aussi appuyer sur « C'est mon tour ».</li>
+              <li><b>⚡ Tous en même temps</b> : pour un <b>draft de cartes</b> ou les manches où tout le monde joue à la fois. Les chronos de tous démarrent ensemble ; chacun touche <b>sa</b> carte quand il a fini — par exemple quand il passe ses cartes à son voisin. Pour la manche suivante, <b>« Relancer tout le monde »</b> (dans la même fenêtre, et en tuile sur la tablette). Seul l'hôte lance ou arrête ce mode, une fois la partie lancée.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>L'interrupteur <b>« Tour par tour »</b>, à côté du titre des scores, reste un raccourci pour allumer ou éteindre le tour par tour.</p>
+            <p style={{ margin: "0 0 8px" }}>Une fois allumé, on retrouve tout : le gros bouton <b>« C'est mon tour »</b> sur son téléphone, la carte du joueur qui s'allume quand c'est à lui, son temps de réflexion, les flèches <b>▲▼</b> qui changent l'ordre de jeu et la pause du tour.</p>
             <p style={{ margin: 0 }}>Le choix vaut pour la partie en cours, sur l'appareil où on l'a fait. Si des temps individuels ont déjà été comptés dans cette partie, l'interrupteur est allumé d'office. L'éteindre en plein tour met ce tour en pause.</p>
           </>,
         },
