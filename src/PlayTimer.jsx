@@ -1368,6 +1368,8 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   const [error, setError] = useState(null);
   // Ecran maintenu allume pendant la partie (voir useKeepAwake plus haut).
   const [keepAwake, setKeepAwake] = useState(true);
+  // (lot AL) Fenetre « Temps par joueur » : aucun, tour par tour, tous en meme temps.
+  const [ptOpen, setPtOpen] = useState(false);
   // Points de regle du jeu en cours (voir RulesSheet plus haut).
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesCount, setRulesCount] = useState(null);
@@ -3718,6 +3720,75 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       setTurnPref(on);
     };
 
+    // (lot AL) Les modes de temps par joueur, reunis dans une seule fenetre
+    // ouverte par la tuile « Temps par joueur ».
+    const ptMode = simul ? 'simul' : (turnsOn ? 'turns' : 'none');
+    const ptLabel = { none: 'aucun', turns: 'tour par tour', simul: 'tous ensemble' }[ptMode];
+    const pickPtMode = async (m) => {
+      if (m === ptMode) { setPtOpen(false); return; }
+      if (m === 'simul') {
+        if (!isHost || gamePhase !== 'play') return;
+        setTurnPref(true);
+        await simulEnter();
+      } else {
+        if (simul) { if (!isHost) return; await simulExit(); }
+        if (m === 'none' && isHost && activeId && !neutral) toggleNeutral();
+        setTurnPref(m === 'turns');
+      }
+      setPtOpen(false);
+    };
+    const ptOption = (key, icon, title, text, blocked) => {
+      const on = ptMode === key;
+      const off = !on && !!blocked;
+      return (
+        <button key={key} type="button" disabled={off} onClick={() => pickPtMode(key)} aria-pressed={on}
+          style={{ display: 'flex', gap: 14, alignItems: 'flex-start', textAlign: 'left', width: '100%', boxSizing: 'border-box', padding: '14px 16px', borderRadius: 18,
+            cursor: off ? 'default' : 'pointer', border: on ? `3px solid ${C.teal}` : '2px solid #e6dcc9', background: on ? 'rgba(30,138,138,.08)' : '#fff',
+            color: C.navy, opacity: off ? 0.6 : 1, font: 'inherit' }}>
+          <span style={{ fontSize: 30, lineHeight: 1, flexShrink: 0 }}>{icon}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontFamily: TITLE, fontWeight: 700, fontSize: 18 }}>
+              {title}
+              {on && <span style={{ fontFamily: BODY, fontSize: 12, fontWeight: 800, color: '#fff', background: C.teal, borderRadius: 999, padding: '2px 9px' }}>en cours</span>}
+            </span>
+            <span style={{ display: 'block', fontSize: 14, lineHeight: 1.5, color: '#6e6256', marginTop: 4 }}>{text}</span>
+            {off && <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: C.red, marginTop: 6 }}>{blocked}</span>}
+          </span>
+        </button>
+      );
+    };
+    const simulBlocked = !isHost ? "Seul l'hôte de la partie peut lancer ce mode."
+      : (gamePhase !== 'play' ? "Lancez d'abord la partie : ce mode ne compte que pendant le jeu." : null);
+    const leaveSimulBlocked = simul && !isHost ? "Seul l'hôte peut arrêter le mode « tous en même temps »." : null;
+    const playerTimeSheet = ptOpen && (
+      <div onClick={() => setPtOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+        <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Temps par joueur"
+          style={{ background: C.cream, color: C.navy, width: '100%', maxWidth: 580, borderRadius: '24px 24px 0 0', padding: '18px 18px 22px', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 700, fontSize: 21 }}>🕒 Temps par joueur</div>
+            <button onClick={() => setPtOpen(false)} style={btnGhost}>Fermer</button>
+          </div>
+          <p style={{ margin: '0 0 14px', fontSize: 14, lineHeight: 1.55, color: '#6e6256' }}>
+            En plus des trois temps de la partie, le chrono peut mesurer le temps de réflexion de chaque joueur. Choisissez la façon dont on joue à cette table :
+          </p>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {ptOption('none', '🚫', 'Pas de temps par joueur',
+              'Seulement les trois temps : mise en place, partie, rangement. Le plus simple, pour la plupart des jeux.', leaveSimulBlocked)}
+            {ptOption('turns', '👆', 'Tour par tour',
+              <>Chacun son tour. Touchez la carte du joueur qui commence : son chrono tourne. Quand le joueur suivant prend la main, touchez sa carte — le chrono passe chez lui. Sur son téléphone, chacun peut aussi appuyer sur <b>« C'est mon tour »</b>.</>, leaveSimulBlocked)}
+            {ptOption('simul', '⚡', 'Tous en même temps',
+              <>Pour un <b>draft de cartes</b> ou les manches où tout le monde joue à la fois. Les chronos de tous les joueurs démarrent ensemble ; chacun touche <b>sa</b> carte quand il a fini — par exemple quand il passe ses cartes à son voisin. Pour la manche suivante : <b>« Relancer tout le monde »</b>.</>, simulBlocked)}
+          </div>
+          {simul && isHost && (
+            <button style={{ ...btnPrimary, width: '100%', marginTop: 14 }} onClick={() => { simulResumeAll(); setPtOpen(false); }}>▶ Relancer tout le monde</button>
+          )}
+          <p style={{ margin: '14px 0 0', fontSize: 12.5, color: '#9c8d79', lineHeight: 1.5 }}>
+            « Tour par tour » s'allume sur cet appareil (l'interrupteur à côté des scores fait la même chose). « Tous en même temps » vaut pour toute la table, et seul l'hôte le lance ou l'arrête.
+          </p>
+        </div>
+      </div>
+    );
+
     // Joueur(s) en tete, pour la couronne. Ni en cooperatif ni par equipes.
     const leaderIds = (() => {
       if (!scored || isCoop || structure === 'teams') return [];
@@ -4104,15 +4175,14 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
         {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
         {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
+        {tile('🕒', `Temps par joueur : ${ptLabel}`, ptMode !== 'none', () => setPtOpen(true), C.purple, true)}
         {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
         {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
         {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
         {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
         {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
         {turnsOn && isHost && gamePhase === 'play' && !simul && activePhase === 'play' && tile(neutral ? '▶' : '⏸', neutral ? 'Reprendre le tour' : 'Pause du tour', !!neutral, toggleNeutral, C.amber)}
-        {turnsOn && isHost && gamePhase === 'play' && !simul && tile('⚡', 'Tous en même temps', false, simulEnter, C.purple)}
         {turnsOn && isHost && gamePhase === 'play' && simul && tile('▶', 'Relancer tout le monde', true, simulResumeAll, C.purple)}
-        {turnsOn && isHost && gamePhase === 'play' && simul && tile('↩', 'Mode normal', false, simulExit, C.purple)}
         {isHost && tile('🏁', 'Terminer la partie', false, end, C.red)}
       </>
     );
@@ -4201,6 +4271,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {commandTiles}
           </div>
           {newGameModal}
+          {playerTimeSheet}
         </div>,
         true,
         true
@@ -4213,6 +4284,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       <div>
         {scorePadEl}
         {newGameModal}
+        {playerTimeSheet}
         <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
           {hero(false)}
           {phaseTiles(false)}
@@ -4260,18 +4332,22 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           </div>
         </section>
 
-        {/* Minuteur de table : replié par défaut, on ne l'affiche qu'à la demande. */}
-        {!timerOn && (
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
-            <button type="button" onClick={() => setTimerOn(true)}
-              title="Compte à rebours avec alarme, pour les jeux qui se jouent au sablier"
-              style={{ border: `1.5px solid ${dark ? 'rgba(255,255,255,.3)' : `${C.navy}33`}`, background: dark ? 'transparent' : '#fff', color: dark ? '#FFFFFF' : `${C.navy}aa`,
-                borderRadius: 999, padding: '10px 18px', minHeight: 44, fontFamily: TITLE, fontWeight: 600,
-                fontSize: 14.5, cursor: 'pointer' }}>
-              ⏳ Minuteur
+        {/* Minuteur de table (replié par défaut) et temps par joueur : deux
+            fonctions rares, rangées derrière deux boutons discrets. */}
+        <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>
+          {[
+            !timerOn && { k: 'timer', l: '⏳ Minuteur', t: 'Compte à rebours avec alarme, pour les jeux qui se jouent au sablier', on: false, go: () => setTimerOn(true) },
+            { k: 'pt', l: `🕒 Temps par joueur : ${ptLabel}`, t: 'Mesurer le temps de chaque joueur : tour par tour, ou tous en même temps', on: ptMode !== 'none', go: () => setPtOpen(true) },
+          ].filter(Boolean).map((b) => (
+            <button key={b.k} type="button" onClick={b.go} title={b.t}
+              style={{ border: `1.5px solid ${b.on ? C.purple : (dark ? 'rgba(255,255,255,.3)' : `${C.navy}33`)}`,
+                background: b.on ? (dark ? 'rgba(107,58,122,.35)' : 'rgba(107,58,122,.1)') : (dark ? 'transparent' : '#fff'),
+                color: dark ? '#FFFFFF' : (b.on ? C.purple : `${C.navy}aa`),
+                borderRadius: 999, padding: '10px 18px', minHeight: 44, fontFamily: TITLE, fontWeight: 600, fontSize: 14.5, cursor: 'pointer' }}>
+              {b.l}
             </button>
-          </div>
-        )}
+          ))}
+        </div>
         {/* Contrôles hôte */}
         {isHost && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
@@ -4293,9 +4369,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               </span>
             )}
             {turnsOn && gamePhase === 'play' && !simul && activePhase === 'play' && <button style={sec()} onClick={toggleNeutral}>{neutral ? 'Reprendre le tour' : 'Pause du tour'}</button>}
-            {turnsOn && gamePhase === 'play' && !simul && <button style={sec({ background: C.purple, color: C.white })} onClick={simulEnter}>Tous en même temps</button>}
             {turnsOn && gamePhase === 'play' && simul && <button style={sec({ background: C.teal, color: C.white })} onClick={simulResumeAll}>Relancer tout le monde</button>}
-            {turnsOn && gamePhase === 'play' && simul && <button style={sec()} onClick={simulExit}>Mode normal</button>}
             <button style={sec()} onClick={quitNoSave}>Quitter sans enregistrer</button>
             <button style={{ ...btnDanger, flex: 1 }} onClick={end}>Terminer</button>
           </div>
