@@ -7580,7 +7580,8 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>C'est la façon de faire quand une tablette reste posée au milieu de la table toute la soirée. À la fin d'une partie, l'hôte dispose de trois sorties : <b>Fermer sans enregistrer</b>, <b>Enregistrer et quitter</b>, ou <b>🎲 Enregistrer et enchaîner un autre jeu</b>.</p>
             <p style={{ margin: "0 0 8px" }}>La troisième enregistre le résultat, puis ouvre la liste des jeux — ceux du moment jeux d'abord, puis toute la ludothèque par recherche. Un clic, et un nouveau chrono démarre avec <b>les mêmes joueurs, les mêmes équipes et les mêmes couleurs</b>. Plus rien à ressaisir.</p>
             <p style={{ margin: "0 0 8px" }}>Et surtout : <b>tous les téléphones déjà connectés basculent tout seuls</b> sur le nouveau jeu. Personne n'a à rescanner un code ni à relancer quoi que ce soit — l'écran de chacun suit l'hôte. Vous repassez par l'écran de préparation, avec la tablée précédente déjà en place : c'est là qu'on retire celui qui rentre et qu'on ajoute celui qui arrive.</p>
-            <p style={{ margin: 0 }}><b>🔄 Changer de jeu en cours de route.</b> La boîte est ouverte, les règles expliquées, et finalement la tablée part sur autre chose ? Le bouton <b>« Changer de jeu »</b> remplace le jeu de la partie en cours sans rien perturber : mêmes joueurs, mêmes équipes, mêmes couleurs, et les chronos continuent de tourner — le temps de mise en place déjà passé reste compté. C'est possible tant qu'<b>aucune manche n'a été enregistrée</b> ; au-delà, utilisez plutôt « terminer et enchaîner », pour que chaque jeu garde sa propre partie et ses propres temps.</p>
+            <p style={{ margin: 0 }}><b>🔄 Changer de jeu en cours de route.</b> La boîte est ouverte, les règles expliquées, et finalement la tablée part sur autre chose ? Le bouton <b>« Changer de jeu »</b> remplace le jeu de la partie en cours sans rien perturber : mêmes joueurs, mêmes équipes, mêmes couleurs, et les chronos continuent de tourner — le temps de mise en place déjà passé reste compté. C'est possible tant qu'<b>aucune manche n'a été enregistrée</b> ; au-delà, utilisez plutôt « terminer et enchaîner », pour que chaque jeu garde sa propre partie et ses propres temps. Pendant un moment jeux, le jeu lancé par erreur est aussi <b>retiré des jeux joués</b> du moment (ou son compteur de parties redescend) : il ne garde aucune partie fantôme. En vue tablette, le bouton est à droite du nom du jeu.</p>
+            <p style={{ margin: "8px 0 0" }}><b>Fermer pour tout le monde.</b> Quand un appareil <b>enregistre la partie</b>, ou que l'hôte la <b>quitte</b> ou la <b>ferme sans l'enregistrer</b>, tous les autres téléphones et tablettes reliés à la partie l'apprennent aussitôt : un message dit qui l'a fermée, et le chrono se ferme tout seul quelques secondes plus tard. Un joueur qui n'est pas l'hôte et qui quitte sans enregistrer ne ferme que son propre appareil.</p>
           </>,
         },
         {
@@ -7635,8 +7636,10 @@ function GuidePage() {
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
               <li>À <b>gauche</b>, les temps : la phase en cours en très gros chiffres, les trois temps côte à côte, la pause et le bouton de l'étape suivante.</li>
               <li>À <b>droite</b>, les scores : une tuile par joueur, avec sa photo, son nom et son <b>score en très grand</b> — touchez-le pour ouvrir la calculatrice. En mode « Tour par tour », la tuile du joueur dont c'est le tour s'allume entièrement à sa couleur.</li>
-              <li>En bas, les <b>gros boutons</b> : écran allumé, points de règle, minuteur, type de partie, la tablée, et les commandes de l'hôte (corriger les temps, changer de jeu, nouvelle partie, terminer).</li>
+              <li>En haut, à droite du nom du jeu, le bouton <b>🔄 Changer de jeu</b> (pour l'hôte) ; tout en haut à droite, <b>☀️ Écran allumé</b>, juste à gauche du bouton jour / nuit.</li>
+              <li>En bas, une rangée de <b>boutons</b> : points de règle, minuteur, type de partie, la tablée, et les commandes de l'hôte (corriger les temps, nouvelle partie, terminer).</li>
             </ul>
+            <p style={{ margin: "0 0 8px" }}><b>Tout tient sur un seul écran</b>, sans défiler : le grand chrono, les cartes des joueurs et les boutons se partagent la hauteur de la tablette, quel que soit le nombre de joueurs.</p>
             <p style={{ margin: 0 }}>Un bouton <b>📱 Vue téléphone</b> / <b>🖥️ Vue tablette</b> en haut à droite permet de forcer l'une ou l'autre disposition si le choix automatique ne vous convient pas.</p>
           </>,
         },
@@ -7651,7 +7654,7 @@ function GuidePage() {
         {
           q: "Garder l'écran allumé pendant la partie",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>Pendant une partie, un bouton <b style={{ color: "#8a6a1f" }}>☀️ Écran allumé</b> apparaît en haut du chrono. Tant qu'il est actif, le téléphone <b>ne se met plus en veille tout seul</b> : le chrono reste sous les yeux de toute la tablée. Un second appui rend la main à la veille automatique (🌙).</p>
+            <p style={{ margin: "0 0 8px" }}>Pendant une partie, un bouton <b style={{ color: "#8a6a1f" }}>☀️ Écran allumé</b> apparaît en haut du chrono. Tant qu'il est actif, le téléphone <b>ne se met plus en veille tout seul</b> : le chrono reste sous les yeux de toute la tablée. Un second appui rend la main à la veille automatique (🌙). En vue tablette, ce bouton se trouve tout en haut à droite, juste à gauche du bouton jour / nuit.</p>
             <p style={{ margin: "0 0 8px" }}>C'est actif par défaut dès que la partie démarre, et relâché tout seul à la fin — inutile de vider la batterie sur l'écran de résultats.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : afficher le chrono <i>sur l'écran verrouillé</i> n'est pas possible depuis un site web — cela demanderait une vraie application installée. Empêcher la veille est l'équivalent le plus proche. La fonction demande un navigateur récent (Chrome Android, Safari iOS 16.4+) ; si votre appareil ne la propose pas, le bouton n'apparaît tout simplement pas.</p>
           </>,
@@ -11956,7 +11959,7 @@ function ChronoPage({ onAuth, setPage }) {
       teaser: "Une tablette posée au milieu de la table, lisible à un mètre.",
       steps: [
         <>Sur un <b>grand écran en paysage</b>, le chrono bascule tout seul sur une disposition dédiée.</>,
-        <>En haut, les <b>trois grands blocs</b> de phase avec leur compteur en très gros caractères.</>,
+        <>Tout tient sur <b>un seul écran</b>, sans défiler : à gauche le temps en très gros caractères, à droite les joueurs, en bas une rangée de boutons.</>,
         <>En dessous, les joueurs en tuiles : couleur, temps, score, et le trophée.</>,
         <>À <b>5 joueurs et plus</b>, les tuiles passent sur deux colonnes et le score s'ajuste à la place : trois chiffres restent lisibles en gros.</>,
         <>Le grand <b>QR de jonction</b> s'affiche d'un appui, pour les retardataires.</>,
