@@ -1611,6 +1611,47 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
 
   const sid = session?.id;
   const isHost = !!(session && myUid && session.host_profile_id === myUid);
+
+  // (lot AL) Fermer la partie pour tous. Celui qui ferme pose une marque sur la
+  // session ; les autres appareils la recoivent par le temps reel, affichent
+  // qui a ferme, et se ferment a leur tour.
+  const [closedInfo, setClosedInfo] = useState(null);
+  const closingSelfRef = useRef(false);
+  const closeEverywhere = async (kind) => {
+    if (!sid) return;
+    closingSelfRef.current = true;
+    try { await supabase.rpc('aladj_close_session', { p_session_id: sid, p_kind: kind }); }
+    catch (e) { /* migration absente : on ferme au moins cet appareil */ }
+  };
+  useEffect(() => {
+    if (!session || !session.closed_at || closingSelfRef.current) return;
+    setClosedInfo({ kind: session.closed_kind || 'closed', by: session.closed_by_name || '' });
+  }, [session?.closed_at]); // eslint-disable-line
+  useEffect(() => {
+    if (!closedInfo) return undefined;
+    const t = setTimeout(() => onExit(), 5000);
+    return () => clearTimeout(t);
+  }, [closedInfo]); // eslint-disable-line
+  // Un appareil en veille a pu manquer le signal : au retour au premier plan,
+  // et toutes les 30 secondes, on verifie que la partie existe encore.
+  useEffect(() => {
+    if (!sid) return undefined;
+    let off = false;
+    const check = async () => {
+      if (off || closingSelfRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      try {
+        const { data, error: e } = await supabase.from('play_sessions').select('*').eq('id', sid);
+        if (off || e || !Array.isArray(data) || closingSelfRef.current) return;
+        if (data.length === 0) { setClosedInfo((c) => c || { kind: 'abandoned', by: '' }); return; }
+        if (data[0].id === activeSidRef.current && data[0].closed_at) setSession(data[0]);
+      } catch (err) { /* reseau coupe : on reessaiera */ }
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVis);
+    const iv = setInterval(check, 30000);
+    return () => { off = true; document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
+  }, [sid, supabase]);
   const myPlayer = useMemo(
     () => players.find((p) => p.auth_user_id && p.auth_user_id === myUid) || null,
     [players, myUid]
@@ -2479,7 +2520,10 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   };
   const quitNoSave = async () => {
     if (typeof window !== 'undefined' && !window.confirm('Quitter le chrono sans rien enregistrer ? La partie sera supprimee (aucune duree, aucun resultat).')) return;
-    if (isHost && sid) { try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {} }
+    if (isHost && sid) {
+      await closeEverywhere('abandoned');
+      try { await supabase.rpc('abandon_session', { p_session_id: sid }); } catch (e) {}
+    }
     onExit();
   };
   const end = () => { if (window.confirm('Terminer la partie ?')) rpc('end_session', { p_session_id: sid }); };
@@ -2519,6 +2563,16 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     setSavingResult(false);
     if (e) { setError(e.message || String(e)); return; }
     await notifyPlayRecorded(game?.name, game?.id || session?.game_id, sid);
+    await closeEverywhere('saved');
+    onExit();
+  };
+  // (lot AL) Ecran de fin, « Fermer sans enregistrer » : l'hote ferme la partie
+  // pour tout le monde ; un autre joueur ne ferme que son propre appareil.
+  const closeDoneNoSave = async () => {
+    if (isHost) {
+      if (typeof window !== 'undefined' && !window.confirm('Fermer sans enregistrer ?\n\nLa partie se fermera aussi sur les autres appareils.')) return;
+      await closeEverywhere('closed');
+    }
     onExit();
   };
   // (4) Reprendre la main sur une autre session : on remet a zero tout ce qui
@@ -2663,7 +2717,13 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     if (switching) return;
     setSwitching(true); setError(null);
     try {
-      const { error: e } = await supabase.rpc('aladj_set_session_game', { p_session_id: sid, p_game_id: g.id });
+      // (lot AL) aladj_swap_session_game change le jeu ET retire des jeux joues
+      // du moment la partie que le jeu lance par erreur y avait inscrite.
+      // Tant que le SQL n'est pas joue, on retombe sur l'ancienne fonction.
+      let { error: e } = await supabase.rpc('aladj_swap_session_game', { p_session_id: sid, p_game_id: g.id });
+      if (e && /aladj_swap_session_game|Could not find the function|schema cache/i.test(e.message || '')) {
+        ({ error: e } = await supabase.rpc('aladj_set_session_game', { p_session_id: sid, p_game_id: g.id }));
+      }
       if (e) throw e;
       setGame(g);                      // affichage immediat, sans attendre l'aller-retour
       // (lot AH) Le type de partie regle pour l'ancien jeu ne le suit pas : le
@@ -2955,7 +3015,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // (lot AL) Le mode sombre ne vaut que pour l'ecran de partie : preparation,
   // salle d'attente et bilan restent clairs.
   const shellDark = chronoTheme === 'dark' && phase === 'running';
-  const shell = (children, wide) => (
+  const shell = (children, wide, fit) => (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000, color: shellDark ? '#FFFFFF' : C.navy,
       // Vue tablette : on reste dans les tons chaleureux du site par defaut.
@@ -2967,16 +3027,29 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           : C.cream),
       fontFamily: BODY, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
     }}>
-      <div style={{ maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      <div style={fit
+        ? { maxWidth: 1500, margin: '0 auto', padding: 'clamp(8px, 1.4vh, 14px) 20px clamp(10px, 1.6vh, 16px)', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }
+        : { maxWidth: wide ? 1500 : 560, margin: '0 auto', padding: wide ? '14px 20px 22px' : '18px 16px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: fit ? 'clamp(8px, 1.4vh, 14px)' : 14, flexShrink: 0 }}>
           {phase === 'running' && game?.name ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: wide ? 14 : 10, minWidth: 0, flex: '1 1 auto', marginRight: 10 }}>
               {game.image_url
                 ? <img src={game.image_url} alt="" style={{ width: wide ? 54 : 44, height: wide ? 54 : 44, borderRadius: 14, objectFit: 'cover', flex: '0 0 auto', boxShadow: '0 6px 14px rgba(18,41,63,.18)' }} />
                 : <span style={{ width: wide ? 54 : 44, height: wide ? 54 : 44, borderRadius: 14, flex: '0 0 auto', background: `linear-gradient(135deg, ${C.teal}, ${C.navy})` }} />}
               <div style={{ minWidth: 0 }}>
-                <div title={game.name} style={{ fontFamily: TITLE, fontWeight: 700, fontSize: wide ? 28 : 21, lineHeight: 1.1,
-                  color: shellDark ? '#FFFFFF' : C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <div title={game.name} style={{ fontFamily: TITLE, fontWeight: 700, fontSize: wide ? 28 : 21, lineHeight: 1.1, minWidth: 0,
+                    color: shellDark ? '#FFFFFF' : C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{game.name}</div>
+                  {/* (lot AL) Tablette : changer de jeu, juste a cote de son nom. */}
+                  {wide && isHost && (
+                    <button type="button" onClick={() => setSwapPicker(true)} title="Remplacer le jeu de cette partie"
+                      style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 36, padding: '0 12px', borderRadius: 999, cursor: 'pointer',
+                        border: `1.5px solid ${shellDark ? 'rgba(255,255,255,.3)' : '#d9cdb6'}`, background: shellDark ? 'rgba(255,255,255,.1)' : '#fff',
+                        color: shellDark ? '#FFFFFF' : C.navy, fontFamily: TITLE, fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap' }}>
+                      🔄 Changer de jeu
+                    </button>
+                  )}
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: wide ? 14.5 : 12.5, color: shellDark ? '#A9C0D6' : '#8a7a63' }}>
                   <span>Chrono <b style={{ color: shellDark ? '#7FE0DA' : C.teal }}>ALADJ</b> · {players.length} joueur{players.length > 1 ? 's' : ''}</span>
                   {session?.join_code && (
@@ -2995,6 +3068,17 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             </div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* (lot AL) Tablette : l'ecran allume se regle ici, a gauche du jour / nuit. */}
+            {wide && phase === 'running' && wake.supported && (
+              <button type="button" onClick={() => setKeepAwake((v) => !v)} aria-pressed={wake.active}
+                title={keepAwake ? "L'écran reste allumé pendant la partie — toucher pour laisser la tablette se mettre en veille" : 'Empêcher la mise en veille pendant la partie'}
+                style={{ minHeight: 40, padding: '0 14px', borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: TITLE, fontWeight: 600, fontSize: 14,
+                  border: `1.5px solid ${wake.active ? C.amber : (shellDark ? 'rgba(255,255,255,.3)' : '#d9cdb6')}`,
+                  background: wake.active ? (shellDark ? 'rgba(232,163,23,.18)' : '#FDF4E0') : (shellDark ? 'rgba(255,255,255,.1)' : '#fff'),
+                  color: wake.active ? (shellDark ? '#F6C24A' : '#8a6a1f') : (shellDark ? 'rgba(255,255,255,.82)' : `${C.navy}99`) }}>
+                {wake.active ? '\u2600\ufe0f Écran allumé' : '\ud83c\udf19 Veille normale'}
+              </button>
+            )}
             {phase === 'running' && (
               <button type="button" onClick={toggleChronoTheme}
                 aria-label={shellDark ? 'Passer en mode clair' : 'Passer en mode sombre'}
@@ -3048,8 +3132,27 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {error}
           </div>
         )}
-        {children}
+        {fit ? <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{children}</div> : children}
       </div>
+      {closedInfo && (
+        <div role="alertdialog" aria-live="assertive" style={{ position: 'fixed', inset: 0, zIndex: 1500, background: 'rgba(18,41,63,.74)', display: 'grid', placeItems: 'center', padding: 20 }}>
+          <div style={{ background: C.cream, color: C.navy, borderRadius: 24, padding: '26px 24px 20px', maxWidth: 420, width: '100%', textAlign: 'center', boxShadow: '0 24px 60px rgba(0,0,0,.35)' }}>
+            <div style={{ fontSize: 46, lineHeight: 1 }}>{closedInfo.kind === 'saved' ? '\u2705' : '\ud83d\udc4b'}</div>
+            <div style={{ fontFamily: TITLE, fontWeight: 700, fontSize: 23, margin: '10px 0 6px' }}>
+              {closedInfo.kind === 'saved' ? 'Partie enregistrée' : (closedInfo.kind === 'abandoned' ? 'Partie abandonnée' : 'Partie fermée')}
+            </div>
+            <div style={{ fontSize: 15.5, lineHeight: 1.5, color: '#6e6256' }}>
+              {closedInfo.kind === 'saved'
+                ? <>{closedInfo.by ? <b>{closedInfo.by}</b> : 'Un autre appareil'} a enregistré la partie : le chrono se ferme aussi ici.</>
+                : closedInfo.kind === 'abandoned'
+                  ? <>{closedInfo.by ? <><b>{closedInfo.by}</b> a quitté la partie sans l'enregistrer.</> : 'Cette partie a été fermée sur un autre appareil.'}</>
+                  : <>{closedInfo.by ? <b>{closedInfo.by}</b> : "L'hôte"} a fermé la partie sans l'enregistrer.</>}
+            </div>
+            <button style={{ ...btnPrimary, width: '100%', marginTop: 18 }} onClick={onExit}>Fermer le chrono</button>
+            <div style={{ fontSize: 12.5, marginTop: 8, color: '#9c8d79' }}>Fermeture automatique dans quelques secondes…</div>
+          </div>
+        </div>
+      )}
       {(nextPicker || swapPicker) && (
         <NextGameSheet
           eventGames={eventGames}
@@ -3645,7 +3748,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         <section aria-label="Temps de la phase en cours" style={{
           position: 'relative', overflow: 'hidden', boxSizing: 'border-box',
           display: 'flex', flexDirection: 'column', flex: big ? '1 1 auto' : undefined, minHeight: big ? 0 : undefined,
-          borderRadius: big ? 32 : 28, padding: big ? '20px 24px 20px' : '16px 18px 16px',
+          borderRadius: big ? 32 : 28, padding: big ? 'clamp(12px, 2vh, 20px) 24px' : '16px 18px 16px',
           background: onColor ? `linear-gradient(150deg, ${m.c1} 0%, ${m.c2} 100%)` : K.panel,
           color: ink,
           boxShadow: onColor ? `0 18px 36px -14px ${m.c2}, inset 0 2px 0 rgba(255,255,255,.4)` : K.shadow,
@@ -3670,7 +3773,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             </span>
           </div>
           <div style={{ position: 'relative', margin: big ? 'auto 0' : '8px 0 6px', fontFamily: TITLE, fontWeight: 700,
-            fontSize: big ? 'clamp(80px, 9.6vw, 150px)' : 'clamp(62px, 19vw, 92px)', lineHeight: 1,
+            fontSize: big ? 'clamp(60px, min(9.6vw, 14.5vh), 150px)' : 'clamp(62px, 19vw, 92px)', lineHeight: 1,
             letterSpacing: '-.035em', fontVariantNumeric: 'tabular-nums' }}>
             {fmt(curSec)}
           </div>
@@ -3718,7 +3821,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               title={locked ? `${m.label} : ${state}` : (run ? `Mettre ${m.label.toLowerCase()} en pause` : `Démarrer ou reprendre : ${m.label.toLowerCase()}`)}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, minWidth: 0,
-                minHeight: big ? 96 : 84, boxSizing: 'border-box', padding: big ? '12px 14px' : '10px 11px',
+                minHeight: big ? 'clamp(68px, 10.5vh, 96px)' : 84, boxSizing: 'border-box', padding: big ? 'clamp(7px, 1.2vh, 12px) 14px' : '10px 11px',
                 borderRadius: big ? 22 : 18, textAlign: 'left', font: 'inherit', color: K.ink,
                 cursor: locked ? 'default' : 'pointer',
                 background: run ? (dark ? `${m.c2}33` : `${m.c1}24`) : ((started || done) ? K.panel : 'transparent'),
@@ -3730,7 +3833,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 fontFamily: TITLE, fontWeight: 600, fontSize: big ? 'clamp(12px,1.15vw,14px)' : 12.5, color: m.tint }}>
                 {dot}<span style={{ lineHeight: 1.1, overflowWrap: 'break-word', minWidth: 0 }}>{m.label}</span>
               </span>
-              <span style={{ fontFamily: TITLE, fontWeight: 700, fontSize: big ? 30 : 24, lineHeight: 1.15,
+              <span style={{ fontFamily: TITLE, fontWeight: 700, fontSize: big ? 'clamp(22px, 3.6vh, 30px)' : 24, lineHeight: 1.15,
                 fontVariantNumeric: 'tabular-nums', color: (started || done) ? K.ink : K.faint }}>
                 {(started || done) ? fmt(phTotal[ph]) : '—:—'}
               </span>
@@ -3750,7 +3853,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           <div style={{ display: 'flex', gap: big ? 12 : 10 }}>
             {activePhase && (
               <button type="button" onClick={() => togglePhase(activePhase)} aria-label="Mettre en pause" title="Mettre en pause"
-                style={{ width: big ? 80 : 64, height: big ? 80 : 64, flexShrink: 0, borderRadius: big ? 24 : 20, padding: 0,
+                style={{ width: big ? 'clamp(58px, 9vh, 80px)' : 64, height: big ? 'clamp(58px, 9vh, 80px)' : 64, flexShrink: 0, borderRadius: big ? 24 : 20, padding: 0,
                   border: dark ? 'none' : `2px solid ${C.navy}`, background: dark ? 'rgba(255,255,255,.1)' : '#FFFFFF',
                   boxShadow: dark ? 'inset 0 0 0 2px rgba(255,255,255,.35)' : 'none',
                   color: K.ink, display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
@@ -3760,7 +3863,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             {a && (
               <button type="button" onClick={a.end ? end : () => togglePhase(a.ph)}
                 style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-                  minHeight: big ? 80 : 64, padding: '0 16px', borderRadius: big ? 24 : 20, border: 'none', cursor: 'pointer',
+                  minHeight: big ? 'clamp(58px, 9vh, 80px)' : 64, padding: '0 16px', borderRadius: big ? 24 : 20, border: 'none', cursor: 'pointer',
                   background: `linear-gradient(180deg, ${m.c1}, ${m.c2})`,
                   boxShadow: `0 6px 0 ${m.edge}, 0 16px 28px -10px ${m.c2}`,
                   color: m.ink, fontFamily: TITLE, fontWeight: 700, fontSize: big ? 'clamp(19px,2vw,24px)' : 19, lineHeight: 1.15 }}>
@@ -3768,7 +3871,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               </button>
             )}
             {!a && (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: big ? 80 : 64,
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: big ? 'clamp(58px, 9vh, 80px)' : 64,
                 borderRadius: big ? 24 : 20, background: K.soft, color: K.sub, fontWeight: 700, fontSize: 15, textAlign: 'center', padding: '0 14px' }}>
                 Rangement en cours : l'hôte terminera la partie.
               </div>
@@ -3938,7 +4041,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
             </div>
             {turnsOn && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', minWidth: 0 }}>
-                <span style={{ minWidth: 0, fontFamily: TITLE, fontWeight: 700, fontSize: cols >= 3 ? 20 : 'clamp(18px,1.9vw,28px)', color: ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', fontFamily: TITLE, fontWeight: 700, fontSize: cols >= 4 ? 'clamp(15px, 1.6vw, 20px)' : (cols >= 3 ? 20 : 'clamp(18px,1.9vw,28px)'), color: ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                   {fmt(shown(p.id))}
                   {(cols < 3 || active) && (
                     <span style={{ marginLeft: 8, fontFamily: BODY, fontSize: 12, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', opacity: .75 }}>
@@ -3984,26 +4087,25 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       return (
         <button type="button" onClick={onClick} style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5,
-          minHeight: 'clamp(70px,7vh,96px)', padding: '8px 10px', borderRadius: 18, cursor: 'pointer',
+          minHeight: 'clamp(52px, 7.6vh, 80px)', padding: '6px 8px', borderRadius: 16, cursor: 'pointer', minWidth: 0,
           border: `2px solid ${on ? tt : (highlight ? `${tt}99` : K.line)}`,
           background: on ? `${tt}22` : (highlight ? `${tt}14` : K.panel),
           color: on || highlight ? (dark ? '#FFFFFF' : tt) : K.ink,
           boxShadow: dark ? 'none' : '0 2px 8px rgba(90,70,40,.07)', textAlign: 'center',
         }}>
-          <span style={{ fontSize: 'clamp(20px,1.9vw,26px)', lineHeight: 1 }}>{icon}</span>
-          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(12px,1.05vw,15px)', lineHeight: 1.2 }}>{label}</span>
+          <span style={{ fontSize: 'clamp(17px, 2.5vh, 24px)', lineHeight: 1 }}>{icon}</span>
+          <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 'clamp(11px, 1vw, 14px)', lineHeight: 1.15, overflowWrap: 'anywhere' }}>{label}</span>
         </button>
       );
     };
     const commandTiles = (
       <>
-        {wake.supported && tile(wake.active ? '☀️' : '🌙', wake.active ? 'Écran allumé' : 'Veille normale', wake.active, () => setKeepAwake((v) => !v), C.amber)}
+        {/* (lot AL) « Écran allumé » et « Changer de jeu » sont montés dans l'en-tête. */}
         {(game?.id || session?.game_id) && tile('📖', `Points de règle${rulesCount ? ` (${rulesCount})` : ''}`, false, () => setRulesOpen(true))}
         {tile('⏳', 'Minuteur', timerOn, () => (timerOn ? timerHide() : setTimerOn(true)), C.navy)}
         {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
         {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
         {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
-        {isHost && tile('🔄', 'Changer de jeu', false, () => setSwapPicker(true))}
         {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
         {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
         {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
@@ -4071,32 +4173,36 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       const n = players.length || 1;
       const cols = n <= 1 ? 1 : (n <= 4 ? 2 : (n <= 6 ? 3 : 4));
       const rows = Math.ceil(n / cols);
+      // (lot AL) Tout tient sur un seul écran, sans défiler : l'en-tête, le
+      // temps et les joueurs se partagent la hauteur, les commandes forment
+      // une rangée compacte en bas.
       return shell(
-        <div>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.4vh, 14px)' }}>
           {scorePadEl}
-          {timerOn && <div style={{ marginBottom: 12 }}><TimerBar t={timerApi} big /></div>}
-          <div style={{ display: 'flex', gap: 18, alignItems: 'stretch', minHeight: `clamp(520px, calc(100vh - ${timerOn ? 280 : 130}px), 880px)` }}>
-            <div style={{ width: 'clamp(330px, 40%, 500px)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {timerOn && <div style={{ flexShrink: 0 }}><TimerBar t={timerApi} big /></div>}
+          <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', gap: 18, alignItems: 'stretch' }}>
+            <div style={{ width: cols >= 4 ? 'clamp(290px, 33%, 460px)' : 'clamp(330px, 40%, 500px)', flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.3vh, 12px)' }}>
               {hero(true)}
               {phaseTiles(true)}
               {actions(true)}
             </div>
-            <section aria-label={scored ? 'Scores' : 'La tablée'} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12,
-              background: K.panel, borderRadius: 32, padding: '16px 18px 18px',
+            <section aria-label={scored ? 'Scores' : 'La tablée'} style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'clamp(8px, 1.3vh, 12px)',
+              background: K.panel, borderRadius: 32, padding: 'clamp(10px, 1.8vh, 16px) 18px clamp(12px, 2vh, 18px)',
               boxShadow: dark ? 'inset 0 0 0 1px rgba(255,255,255,.12)' : K.shadow }}>
               {scoresHead(true)}
-              <div style={{ flex: 1, minHeight: 0, display: 'grid', gap: 12,
+              <div style={{ flex: 1, minHeight: 0, display: 'grid', gap: 'clamp(8px, 1.3vh, 12px)',
                 gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                gridTemplateRows: `repeat(${rows}, minmax(${scored ? (turnsOn ? 190 : 150) : (turnsOn ? 130 : 96)}px, 1fr))` }}>
+                gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
                 {players.map((p, i) => playerTile(p, i, true, cols))}
               </div>
             </section>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(112px,11vw,160px), 1fr))', gap: 'clamp(8px,.9vw,12px)', marginTop: 16 }}>
+          <div style={{ flexShrink: 0, display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(0, 1fr)', gap: 'clamp(6px, .8vw, 10px)' }}>
             {commandTiles}
           </div>
           {newGameModal}
         </div>,
+        true,
         true
       );
     }
@@ -4363,7 +4469,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           })}
         </Card>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button style={{ ...btnGhost, flex: '1 1 140px' }} onClick={onExit}>Fermer sans enregistrer</button>
+          <button style={{ ...btnGhost, flex: '1 1 140px' }} onClick={closeDoneNoSave}>Fermer sans enregistrer</button>
           <button style={{ ...btnPrimary, flex: '1 1 180px' }} onClick={saveResultAndExit} disabled={savingResult || switching}>{savingResult ? 'Enregistrement…' : 'Enregistrer et quitter'}</button>
         </div>
         {isHost && (
