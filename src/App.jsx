@@ -7645,7 +7645,7 @@ function GuidePage() {
               <li>À <b>gauche</b>, les temps : la phase en cours en très gros chiffres, les trois temps côte à côte, la pause et le bouton de l'étape suivante.</li>
               <li>À <b>droite</b>, les scores : une tuile par joueur, avec sa photo, son nom et son <b>score en très grand</b> — touchez-le pour ouvrir la calculatrice. En mode « Tour par tour », la tuile du joueur dont c'est le tour s'allume entièrement à sa couleur.</li>
               <li>En haut, à droite du nom du jeu, le bouton <b>🔄 Changer de jeu</b> (pour l'hôte) ; tout en haut à droite, <b>☀️ Écran allumé</b>, juste à gauche du bouton jour / nuit.</li>
-              <li>En bas, une rangée de <b>boutons</b> : points de règle, minuteur, type de partie, la tablée, et les commandes de l'hôte (corriger les temps, nouvelle partie, terminer).</li>
+              <li>En bas, une rangée de <b>boutons</b> : points de règle, minuteur, type de partie, la tablée, et les commandes de l'hôte (nouvelle partie, terminer).</li>
             </ul>
             <p style={{ margin: "0 0 8px" }}><b>Tout tient sur un seul écran</b>, sans défiler : le grand chrono, les cartes des joueurs et les boutons se partagent la hauteur de la tablette, quel que soit le nombre de joueurs.</p>
             <p style={{ margin: 0 }}>Un bouton <b>📱 Vue téléphone</b> / <b>🖥️ Vue tablette</b> en haut à droite permet de forcer l'une ou l'autre disposition si le choix automatique ne vous convient pas.</p>
@@ -7655,8 +7655,14 @@ function GuidePage() {
           q: "Retirer un joueur, corriger les temps",
           a: <>
             <p style={{ margin: "0 0 8px" }}><b>👥 La tablée.</b> Ce bouton rassemble tout ce qui touche aux joueurs : les équipes, mais aussi les <b>arrivées</b> et les <b>départs</b> en cours de partie. Quelqu'un s'installe ? Ajoutez-le depuis vos invités enregistrés, par son nom, ou choisissez un membre — il démarre à zéro point et sans temps de jeu, sans fausser les compteurs des autres. Quelqu'un s'en va, ou s'était ajouté par erreur ? La <b>croix rouge</b> le retire ; son temps de jeu et son score partent avec lui, puisqu'il n'a pas joué. Le dernier joueur ne peut pas être retiré, et si c'était son tour, la partie se met simplement en pause. La croix est aussi disponible directement sur les cartes des joueurs.</p>
-            <p style={{ margin: "0 0 8px" }}><b>⏱️ Corriger les temps.</b> L'oubli classique : on lance la partie sans arrêter le chrono de mise en place. Le bouton <b>« Corriger les temps »</b> ouvre les trois compteurs et permet de <b>reporter</b> du temps d'une phase vers une autre en un geste — « Mise en place → Partie », par exemple, avec le nombre de minutes de votre choix. Vous pouvez aussi saisir directement les valeurs.</p>
-            <p style={{ margin: 0 }}>La correction fonctionne même pendant qu'une phase tourne : elle s'applique au temps déjà compté, et les secondes qui défilent viennent s'y ajouter normalement.</p>
+            <p style={{ margin: "0 0 8px" }}><b>✏️ Corriger les temps.</b> L'oubli classique : la partie a commencé, mais le chrono compte toujours la mise en place. Le bouton <b>« ✏️ Corriger »</b> se trouve <b>sur le grand chrono lui-même</b>, en haut à droite du bloc de couleur ; il est réservé à l'hôte de la partie.</p>
+            <p style={{ margin: "0 0 8px" }}>La fenêtre montre les trois temps tels qu'ils s'affichent, phase en cours comprise, puis deux choix :</p>
+            <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
+              <li><b>le sens</b> : « Mise en place → Partie », « Partie → Mise en place », « Partie → Rangement » ou « Rangement → Partie ». Le plus probable est déjà choisi ;</li>
+              <li><b>la durée</b> : une pastille (1, 2, 5, 10, 15, 20, 30 minutes ou « Tout ») ou les boutons − et +.</li>
+            </ul>
+            <p style={{ margin: "0 0 8px" }}>Un aperçu montre ce que deviendront les deux temps, et le gros bouton applique. Si la mise en place tourne encore, la question devient <b>« La partie a en fait commencé il y a… »</b> : le bouton déplace le temps <b>et lance la partie</b> dans le même geste. Même chose pour un rangement commencé sans le dire au chrono.</p>
+            <p style={{ margin: 0 }}>Pour un cas particulier, <b>« Saisir plutôt les valeurs exactes »</b> permet de taper minutes et secondes : seuls les temps modifiés changent, et la phase en cours repart de la valeur saisie. La correction est partagée avec tous les appareils de la table.</p>
           </>,
         },
         {
@@ -12009,14 +12015,14 @@ function ChronoPage({ onAuth, setPage }) {
     },
     {
       emoji: "🛠️", color: C.red, title: "Corriger les temps",
-      teaser: "L'oubli classique : on lance la partie sans arrêter la mise en place.",
+      teaser: "L'oubli classique : la partie a commencé, le chrono compte encore la mise en place.",
       steps: [
-        <>Le bouton <b>Corriger les temps</b> ouvre les trois compteurs.</>,
-        <>Un geste suffit pour <b>reporter</b> du temps d'une phase à l'autre — « Mise en place → Partie », avec le nombre de minutes de votre choix.</>,
-        <>Vous pouvez aussi saisir directement les valeurs, minutes et secondes.</>,
+        <>Le bouton <b>✏️ Corriger</b> est sur le grand chrono, en haut à droite du bloc de couleur.</>,
+        <>Choisissez la durée — « La partie a en fait commencé il y a… <b>5 min</b> » — puis le gros bouton : le temps est déplacé et la partie lancée.</>,
+        <>Les autres sens existent aussi (« Partie → Rangement »…), ainsi que la saisie des valeurs exactes.</>,
         <>La correction est partagée avec tous les téléphones de la table.</>,
       ],
-      illu: <Illu caption="Ce qui manque ici est toujours en trop là."><MockBtn color={C.red} soft>Corriger les temps</MockBtn><MockBtn color={C.navy} soft>Mise en place → Partie</MockBtn></Illu>,
+      illu: <Illu caption="Ce qui manque ici est toujours en trop là."><MockBtn color={C.red} soft>✏️ Corriger</MockBtn><MockBtn color={C.navy} soft>5 min · Mise en place → Partie</MockBtn></Illu>,
     },
     {
       emoji: "📅", color: C.red, title: "Rattaché au moment jeux",
