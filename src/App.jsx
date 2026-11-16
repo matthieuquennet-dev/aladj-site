@@ -6967,12 +6967,14 @@ function GuidePage() {
           </>,
         },
         {
-          q: "Les deux classements de la ludothèque : « de l'asso » et « du moment »",
+          q: "Les classements de la ludothèque : « de l'asso », « du moment » et « par membre »",
           a: <>
-            <p style={{ margin: "0 0 8px" }}>La colonne de droite de la <b>Ludothèque</b> réunit <b>deux</b> classements dans un même cadre, avec un onglet pour passer de l'un à l'autre. Les trois premiers montent sur un <b>podium</b> (vignette, note, marche or, argent, bronze) ; la suite s'affiche en liste. Un clic ouvre la fiche du jeu.</p>
+            <p style={{ margin: "0 0 8px" }}>La colonne de droite de la <b>Ludothèque</b> réunit <b>trois</b> classements dans un même cadre, avec un onglet pour passer de l'un à l'autre. Les trois premiers montent sur un <b>podium</b> (vignette, note, marche or, argent, bronze) ; la suite s'affiche en liste. Un clic ouvre la fiche du jeu.</p>
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.amber }}>🏆 Top 20 de l'asso</b> — le palmarès de fond. Tous les jeux partagés y concourent, à condition d'avoir réuni <b>au moins 4 votes</b> : ce seuil évite qu'un ou deux avis isolés propulsent un jeu en tête. Classement par note moyenne, départagé par le nombre de votants.</p>
             <p style={{ margin: "0 0 8px" }}><b style={{ color: C.purple }}>✨ Top 20 du moment</b> — l'actualité de l'association. Deux conditions <b>cumulées</b> : le jeu est <b>paru cette année ou l'an dernier</b>, et il est <b>entré dans la ludothèque du site depuis moins de {MOMENT_MONTHS} mois</b>. Une vieille boîte ressortie d'un placard n'y figure donc pas, et une nouveauté ajoutée il y a un an non plus.</p>
             <p style={{ margin: "0 0 8px" }}>Ce second classement sert d'abord les jeux à <b>4 votes et plus</b>, comme le Top 20 de l'asso. S'il n'est pas plein, il se complète par les <b>mieux notés d'entre les autres nouveautés</b> — celles-ci portent alors la mention <b>« peu de votes »</b>, pour que la lecture reste honnête. Un jeu récent que personne n'a encore noté n'y apparaît pas.</p>
+            <p style={{ margin: "0 0 8px" }}><b style={{ color: C.teal }}>💛 Par membre</b> — le top de chacun. Touchez un portrait dans la grille (une recherche apparaît dès que les membres sont nombreux ; le chiffre sous chaque portrait est son nombre de coups de cœur) : vous voyez <b>tous les jeux que ce membre a notés 5 ou 4,5</b>, les trois premiers sur le podium. À note égale, passent devant les jeux auxquels il a <b>le plus joué</b> (ses parties enregistrées), puis ceux qui réunissent le plus de ses <b>mécaniques préférées</b>, puis l'ordre alphabétique. Si vous êtes connecté et que vous avez déjà noté des jeux, c'est <b>votre</b> top qui s'ouvre d'abord ; « Changer » rouvre la grille.</p>
+            <p style={{ margin: "0 0 8px" }}>Sous le nom du membre, <b>« Toutes ses notes »</b> déroule l'ensemble de ses notes, regroupées note par note avec le rappel du barème. Deux boutons en choisissent le sens : <b>Décroissant</b> (de 5 à 0,5) ou <b>Croissant</b> (de 0,5 à 5). Un clic sur un jeu ouvre sa fiche. Seuls les membres qui ont noté au moins un jeu figurent dans la grille, et seuls les jeux de la ludothèque commune sont comptés.</p>
             <p style={{ margin: "0 0 8px" }}><b>Sur tablette et téléphone</b>, les classements ne restent pas dans une colonne étroite : ils se placent <b>juste après la recherche</b>, sur toute la largeur, et n'affichent d'abord que le <b>podium</b> — le bouton « Voir la suite du classement » déplie le reste. C'est aussi le cas de toute tablette tenue <b>en portrait</b>.</p>
             <p style={{ margin: 0, fontSize: 13, color: "#8a7c6a" }}>À savoir : une fiche dont l'<b>année de sortie n'est pas renseignée</b> ne peut pas être datée — elle reste hors du Top du moment, mais concourt normalement au Top 20 de l'asso. Complétez l'année sur la fiche pour l'y faire entrer.</p>
           </>,
@@ -18665,15 +18667,31 @@ const RANK_TONES = {
   hype: { bg: `linear-gradient(160deg, ${C.red}, ${C.purple})`, accent: "#FFD9A3", row: "rgba(255,255,255,.1)", sub: "rgba(255,255,255,.72)" },
 };
 const RANK_MEDALS = ["#F6C24A", "#D9DEE4", "#D99A62"];
+const RANK_PAGE = 40; // (lot AM) lignes deployees d'un coup dans une longue liste
 function RankBoard({ title, icon: Icon, tone = "navy", tabs, onOpen }) {
   const T = RANK_TONES[tone] || RANK_TONES.navy;
   const [tab, setTab] = useState(tabs[0].key);
   const [open, setOpen] = useState(false);
+  const [limit, setLimit] = useState(RANK_PAGE);
+  const listRef = useRef(null);
   const cur = tabs.find((t) => t.key === tab) || tabs[0];
   const items = cur.items || [];
-  const podium = items.slice(0, 3);
-  const rest = items.slice(3);
+  /* (lot AM) Un onglet peut porter un en-tete (head : le choix du membre),
+     renoncer au podium (podium: false : toutes les lignes en liste), masquer
+     les rangs (numbered: false) et grouper ses lignes (group / groupHead sur
+     chaque ligne). Les longues listes se deploient par tranches. */
+  const withPodium = cur.podium !== false;
+  const numbered = cur.numbered !== false;
+  const podium = withPodium ? items.slice(0, 3) : [];
+  const rest = withPodium ? items.slice(3) : items;
+  const shown = rest.slice(0, limit);
+  const resetKey = tab + "|" + (cur.resetKey || "");
+  useEffect(() => {
+    setLimit(RANK_PAGE);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [resetKey]);
   const steps = [70, 50, 38];
+  const many = tabs.length > 2;
   return (
     <div className="aladj-rankboard" data-open={open ? "1" : "0"}
       style={{ position: "relative", overflow: "hidden", background: T.bg, borderRadius: 24, padding: 20, color: "#fff", boxShadow: "0 14px 30px rgba(18,41,63,.18)" }}>
@@ -18687,65 +18705,295 @@ function RankBoard({ title, icon: Icon, tone = "navy", tabs, onOpen }) {
         <h3 style={{ fontFamily: "'Fredoka',sans-serif", fontSize: 19, margin: 0 }}>{title}</h3>
       </div>
       {tabs.length > 1 && (
-        <div role="tablist" style={{ position: "relative", display: "flex", gap: 4, padding: 4, borderRadius: 12, background: "rgba(0,0,0,.2)", marginBottom: 10 }}>
+        <div role="tablist" style={{ position: "relative", display: "flex", gap: many ? 2 : 4, padding: 4, borderRadius: 12, background: "rgba(0,0,0,.2)", marginBottom: 10 }}>
           {tabs.map((t) => {
             const on = t.key === tab;
             return (
               <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.key)}
-                style={{ flex: 1, padding: "8px 6px", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5,
-                  background: on ? "rgba(255,255,255,.95)" : "transparent", color: on ? "#12293F" : "rgba(255,255,255,.78)" }}>
+                style={{ flex: many ? "1 1 auto" : 1, padding: many ? "8px 5px" : "8px 6px", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: many ? 12.5 : 13.5,
+                  whiteSpace: many ? "nowrap" : "normal", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", background: on ? "rgba(255,255,255,.95)" : "transparent", color: on ? "#12293F" : "rgba(255,255,255,.78)" }}>
                 {t.label}
               </button>
             );
           })}
         </div>
       )}
+      {cur.head || null}
       {cur.note && <p style={{ position: "relative", fontSize: 12.5, color: T.sub, lineHeight: 1.5, margin: "0 0 10px" }}>{cur.note}</p>}
       {items.length === 0 ? (
-        <p style={{ position: "relative", fontSize: 13.5, color: T.sub, lineHeight: 1.55, margin: "4px 0 0" }}>{cur.empty}</p>
+        cur.empty ? <p style={{ position: "relative", fontSize: 13.5, color: T.sub, lineHeight: 1.55, margin: "4px 0 0" }}>{cur.empty}</p> : null
       ) : (
         <>
-          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", alignItems: "end", gap: 8, marginTop: 8 }}>
-            {[1, 0, 2].map((idx) => {
-              const it = podium[idx];
-              if (!it) return <span key={"vide" + idx} />;
-              return (
-                <button key={it.id} type="button" onClick={() => onOpen(it.id)} title={it.sub ? `${it.name} — ${it.sub}` : it.name}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0, color: "#fff", minWidth: 0 }}>
-                  <RankThumb g={it} size={idx === 0 ? 62 : 50} ring={RANK_MEDALS[idx]} />
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, lineHeight: 1.2, textAlign: "center", width: "100%",
-                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 30 }}>{it.name}</span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: T.accent }}>{it.scoreIcon}{it.score}</span>
-                  <span style={{ width: "100%", height: steps[idx], borderRadius: "12px 12px 4px 4px", display: "grid", placeItems: "center",
-                    background: `linear-gradient(180deg, ${RANK_MEDALS[idx]}, ${RANK_MEDALS[idx]}99)`,
-                    fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: idx === 0 ? 28 : 22, color: "rgba(18,41,63,.82)" }}>{idx + 1}</span>
-                </button>
-              );
-            })}
-          </div>
-          {rest.length > 0 && (
-            <div className="aladj-rank-rest" style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginTop: 12, maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>
-              {rest.map((it, i) => (
-                <button key={it.id} type="button" onClick={() => onOpen(it.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, background: T.row, border: "none", borderRadius: 12, padding: "7px 10px", cursor: "pointer", textAlign: "left", minWidth: 0, color: "#fff" }}>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, width: 22, textAlign: "center", flexShrink: 0, color: T.sub }}>{i + 4}</span>
-                  <RankThumb g={it} size={34} />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
-                    {it.sub && <span style={{ display: "block", fontSize: 11.5, color: T.sub }}>{it.sub}</span>}
-                  </span>
-                  <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: T.accent, fontSize: 13.5, display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0 }}>{it.scoreIcon}{it.score}</span>
-                </button>
-              ))}
+          {withPodium && (
+            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", alignItems: "end", gap: 8, marginTop: 8 }}>
+              {[1, 0, 2].map((idx) => {
+                const it = podium[idx];
+                if (!it) return <span key={"vide" + idx} />;
+                return (
+                  <button key={it.id} type="button" onClick={() => onOpen(it.id)} title={it.sub ? `${it.name} — ${it.sub}` : it.name}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", padding: 0, color: "#fff", minWidth: 0 }}>
+                    <RankThumb g={it} size={idx === 0 ? 62 : 50} ring={RANK_MEDALS[idx]} />
+                    <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, lineHeight: 1.2, textAlign: "center", width: "100%",
+                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 30 }}>{it.name}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13.5, color: T.accent }}>{it.scoreIcon}{it.score}</span>
+                    <span style={{ width: "100%", height: steps[idx], borderRadius: "12px 12px 4px 4px", display: "grid", placeItems: "center",
+                      background: `linear-gradient(180deg, ${RANK_MEDALS[idx]}, ${RANK_MEDALS[idx]}99)`,
+                      fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: idx === 0 ? 28 : 22, color: "rgba(18,41,63,.82)" }}>{idx + 1}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
           {rest.length > 0 && (
+            <div ref={listRef} className={withPodium ? "aladj-rank-rest" : "aladj-rank-list"} style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 6, marginTop: withPodium ? 12 : 4, maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>
+              {shown.map((it, i) => {
+                const newGroup = it.group != null && (i === 0 || shown[i - 1].group !== it.group);
+                return (
+                  <React.Fragment key={it.id}>
+                    {newGroup && (
+                      <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginTop: i === 0 ? 0 : 6, borderRadius: 10,
+                        background: "#0f2438", boxShadow: "0 4px 10px rgba(0,0,0,.22)", fontFamily: "'Fredoka',sans-serif", fontSize: 12.5, minWidth: 0 }}>
+                        {it.groupHead}
+                      </div>
+                    )}
+                    <button type="button" onClick={() => onOpen(it.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, background: T.row, border: "none", borderRadius: 12, padding: "7px 10px", cursor: "pointer", textAlign: "left", minWidth: 0, color: "#fff" }}>
+                      {numbered && <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 14, width: 22, textAlign: "center", flexShrink: 0, color: T.sub }}>{i + 1 + podium.length}</span>}
+                      <RankThumb g={it} size={34} />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                        {it.sub && <span style={{ display: "block", fontSize: 11.5, color: T.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</span>}
+                      </span>
+                      <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: T.accent, fontSize: 13.5, display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0 }}>{it.scoreIcon}{it.score}</span>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+              {rest.length > limit && (
+                <button type="button" onClick={() => setLimit((l) => l + RANK_PAGE)}
+                  style={{ minHeight: 38, borderRadius: 12, border: "1px dashed rgba(255,255,255,.35)", background: "transparent", color: "#fff", cursor: "pointer", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13 }}>
+                  Afficher la suite ({rest.length - limit} jeu{rest.length - limit > 1 ? "x" : ""})
+                </button>
+              )}
+            </div>
+          )}
+          {withPodium && rest.length > 0 && (
             <button type="button" className="aladj-rank-more" onClick={() => setOpen((o) => !o)}
               style={{ position: "relative", display: "none", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 12, minHeight: 42, borderRadius: 12,
                 border: "none", cursor: "pointer", background: "rgba(255,255,255,.12)", color: "#fff", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14 }}>
               {open ? "Replier le classement" : `Voir la suite du classement (${rest.length})`}
               <ChevronDown size={17} style={{ transform: open ? "rotate(180deg)" : "none" }} />
             </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* =============================================================================
+   (lot AM) LE TOP DE CHAQUE MEMBRE
+   Troisieme onglet des classements de la ludotheque : on choisit un membre et
+   l'on voit ses coups de coeur -- tous les jeux qu'il a notes 5 ou 4,5 --
+   classes par note, puis par nombre de parties qu'il y a jouees, puis par
+   nombre de ses mecaniques preferees que le jeu reunit, puis par ordre
+   alphabetique. Un second affichage deroule toutes ses notes, de la meilleure
+   a la moins bonne ou l'inverse. Aucune donnee nouvelle : tout se calcule
+   depuis les notes, les parties enregistrees et les profils deja charges.
+   ============================================================================= */
+const MEMBER_TOP_MIN = 4.5; // note a partir de laquelle un jeu entre dans le top d'un membre
+const fmtNote = (v) => String(v).replace(".", ",");
+
+/* Parties jouees par un membre, jeu par jeu : ses participations confirmees
+   aux parties enregistrees (la meme regle que « Ses jeux les plus joues »). */
+function memberPlayCounts(plays, memberId) {
+  const out = {};
+  (plays || []).forEach((pl) => {
+    if (!pl || pl.gameId == null) return;
+    if ((pl.participants || []).some((pt) => pt.userId === memberId && pt.confirmed !== false)) {
+      out[pl.gameId] = (out[pl.gameId] || 0) + 1;
+    }
+  });
+  return out;
+}
+
+/* Les membres qui ont note au moins un jeu, avec leur nombre de notes et de
+   coups de coeur. Le membre connecte passe en tete, les autres suivent par
+   ordre alphabetique. */
+function memberRankMembers(games, users, selfId) {
+  const stats = {};
+  (games || []).forEach((g) => {
+    const r = g.ratings || {};
+    Object.keys(r).forEach((id) => {
+      const n = Number(r[id]) || 0;
+      if (n <= 0) return;
+      const st = (stats[id] ||= { rated: 0, top: 0 });
+      st.rated++;
+      if (n >= MEMBER_TOP_MIN) st.top++;
+    });
+  });
+  return (users || [])
+    .filter((u) => u && !u.banned && stats[u.id])
+    .map((u) => ({ ...u, ratedCount: stats[u.id].rated, topCount: stats[u.id].top }))
+    .sort((a, b) => {
+      if ((a.id === selfId) !== (b.id === selfId)) return a.id === selfId ? -1 : 1;
+      return (a.name || "").localeCompare(b.name || "", "fr");
+    });
+}
+
+/* Une ligne par jeu note par le membre : sa note, ses parties, et celles de
+   ses mecaniques preferees que le jeu reunit. */
+function memberRatedRows(games, plays, member) {
+  if (!member) return [];
+  const counts = memberPlayCounts(plays, member.id);
+  const fav = new Set(member.favMechanics || []);
+  const rows = [];
+  (games || []).forEach((g) => {
+    const note = Number((g.ratings || {})[member.id]) || 0;
+    if (note <= 0) return;
+    const favMechs = [...new Set(g.mechanics || [])].filter((m) => fav.has(m));
+    rows.push({ g, note, plays: counts[g.id] || 0, favMechs });
+  });
+  return rows;
+}
+
+/* Le classement : la note d'abord (decroissante, ou croissante sur demande),
+   puis -- toujours dans ce sens -- le plus de parties jouees, le plus de
+   mecaniques preferees, et enfin l'alphabet. */
+function sortMemberRows(rows, order = "desc") {
+  const dir = order === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) =>
+    (a.note !== b.note ? (a.note - b.note) * dir : 0)
+    || (b.plays - a.plays)
+    || (b.favMechs.length - a.favMechs.length)
+    || (a.g.name || "").localeCompare(b.g.name || "", "fr"));
+}
+
+/* Une ligne de classement, au format attendu par RankBoard. */
+function memberRankItem(r) {
+  const bits = [];
+  if (r.plays > 0) bits.push(`${r.plays} partie${r.plays > 1 ? "s" : ""}`);
+  if (r.favMechs.length > 0) bits.push(`♥ ${r.favMechs[0]}${r.favMechs.length > 1 ? ` +${r.favMechs.length - 1}` : ""}`);
+  return {
+    id: r.g.id, name: r.g.name, img: r.g.img, unowned: r.g.unowned,
+    score: fmtNote(r.note), scoreIcon: <Star size={12} fill="currentColor" />,
+    sub: bits.join(" · ") || undefined,
+  };
+}
+
+/* L'intertitre d'un groupe de notes : la note, ce qu'elle veut dire dans le
+   bareme de l'association, et le nombre de jeux qui la portent. */
+function MemberNoteHead({ note, count }) {
+  const sc = RATING_SCALE.find((x) => x.v === note);
+  return (
+    <>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 700, fontSize: 13.5, color: "#F6C24A", flexShrink: 0 }}>
+        <Star size={12} fill="currentColor" /> {fmtNote(note)}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, fontFamily: "'Nunito',sans-serif", fontStyle: "italic", fontSize: 12, color: "rgba(255,255,255,.62)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {sc ? sc.t : ""}
+      </span>
+      <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 12, color: "rgba(255,255,255,.78)" }}>{count} jeu{count > 1 ? "x" : ""}</span>
+    </>
+  );
+}
+
+/* L'en-tete de l'onglet « Par membre » : le membre affiche, de quoi en
+   changer (une grille de portraits, avec recherche des qu'ils sont nombreux),
+   le choix entre son top et toutes ses notes, et le sens du tri. */
+function MemberRankHead({ members, member, selfId, onPick, view, onView, order, onOrder }) {
+  const [choosing, setChoosing] = useState(false);
+  const [mq, setMq] = useState("");
+  if (!members.length) return null;
+  const pickOpen = choosing || !member;
+  const isSelf = !!member && member.id === selfId;
+  const nq = normTitle(mq);
+  const list = nq ? members.filter((u) => normTitle(u.name).includes(nq)) : members;
+  const pick = (id) => { onPick(id); setChoosing(false); setMq(""); };
+  const pill = (on, small) => ({
+    flex: "1 1 auto", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, minWidth: 0,
+    padding: small ? "5px 6px" : "7px 6px", borderRadius: 999, cursor: "pointer", whiteSpace: "nowrap",
+    fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: small ? 12 : 13,
+    border: `1.5px solid ${on ? "#F6C24A" : "rgba(255,255,255,.22)"}`,
+    background: on ? (small ? "rgba(246,194,74,.16)" : "#F6C24A") : "transparent",
+    color: on ? (small ? "#F6C24A" : "#12293F") : "rgba(255,255,255,.82)",
+  });
+  return (
+    <div style={{ position: "relative", marginBottom: 12 }}>
+      {member && (
+        <button type="button" onClick={() => setChoosing((c) => !c)} aria-expanded={pickOpen} title="Voir le top d'un autre membre"
+          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", borderRadius: 14, cursor: "pointer", textAlign: "left", color: "#fff",
+            border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.08)", minWidth: 0 }}>
+          <span style={{ borderRadius: "50%", boxShadow: "0 0 0 2px #F6C24A", flexShrink: 0, display: "inline-flex" }}><MagAvatar user={member} size={40} /></span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 15.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {member.name}{isSelf ? " (moi)" : ""}
+            </span>
+            <span style={{ display: "block", fontSize: 11.5, color: "rgba(255,255,255,.62)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {member.topCount} coup{member.topCount > 1 ? "s" : ""} de cœur
+            </span>
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12.5, color: "#F6C24A" }}>
+            {pickOpen ? "Fermer" : "Changer"} <ChevronDown size={15} style={{ transform: pickOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+          </span>
+        </button>
+      )}
+      {pickOpen && (
+        <div style={{ marginTop: member ? 8 : 0, padding: 10, borderRadius: 14, background: "rgba(0,0,0,.22)" }}>
+          <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Le top de qui ?</div>
+          {members.length > 9 && (
+            <div style={{ position: "relative", marginBottom: 8 }}>
+              <Search size={14} color="#8a7c6a" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+              <input type="search" value={mq} onChange={(e) => setMq(e.target.value)} placeholder="Chercher un membre" aria-label="Chercher un membre"
+                style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px 7px 30px", borderRadius: 10, border: "none", outline: "none",
+                  background: "rgba(255,255,255,.95)", color: "#12293F", fontFamily: "'Nunito',sans-serif", fontSize: 14 }} />
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 6, maxHeight: 226, overflowY: "auto", paddingRight: 2 }}>
+            {list.map((u) => {
+              const on = !!member && u.id === member.id;
+              return (
+                <button key={u.id} type="button" onClick={() => pick(u.id)} aria-pressed={on}
+                  title={`${u.name} — ${u.topCount} coup${u.topCount > 1 ? "s" : ""} de cœur, ${u.ratedCount} jeu${u.ratedCount > 1 ? "x" : ""} noté${u.ratedCount > 1 ? "s" : ""}`}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 4px 6px", borderRadius: 12, cursor: "pointer", minWidth: 0, color: "#fff",
+                    border: `1.5px solid ${on ? "#F6C24A" : "transparent"}`, background: on ? "rgba(246,194,74,.16)" : "rgba(255,255,255,.07)" }}>
+                  <MagAvatar user={u} size={38} />
+                  <span style={{ width: "100%", textAlign: "center", fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 12, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {u.id === selfId ? "Moi" : u.name}
+                  </span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, color: u.topCount ? "#F6C24A" : "rgba(255,255,255,.45)" }}>
+                    <Heart size={10} fill="currentColor" /> {u.topCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {list.length === 0 && <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "rgba(255,255,255,.62)" }}>Aucun membre à ce nom parmi ceux qui ont noté des jeux.</p>}
+        </div>
+      )}
+      {member && !pickOpen && (
+        <>
+          <div role="group" aria-label="Ce qu'on affiche" style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button type="button" aria-pressed={view === "top"} onClick={() => onView("top")} style={pill(view === "top")}
+              title="Tous les jeux notés 5 et 4,5">
+              <Heart size={13} fill={view === "top" ? "currentColor" : "none"} /> {isSelf ? "Mon top" : "Son top"}
+            </button>
+            <button type="button" aria-pressed={view === "all"} onClick={() => onView("all")} style={pill(view === "all")}
+              title="Toutes les notes données, sans exception">
+              <Star size={13} fill={view === "all" ? "currentColor" : "none"} /> {isSelf ? "Toutes mes notes" : "Toutes ses notes"}
+            </button>
+          </div>
+          {view === "all" && (
+            <div role="group" aria-label="Sens du tri" style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <button type="button" aria-pressed={order === "desc"} onClick={() => onOrder("desc")} style={pill(order === "desc", true)}
+                title="De la meilleure note à la moins bonne">
+                <ArrowDown size={13} /> Décroissant
+              </button>
+              <button type="button" aria-pressed={order === "asc"} onClick={() => onOrder("asc")} style={pill(order === "asc", true)}
+                title="De la moins bonne note à la meilleure">
+                <ArrowUp size={13} /> Croissant
+              </button>
+            </div>
           )}
         </>
       )}
@@ -20508,14 +20756,15 @@ function rankGames(games, restrictUserIds = null, preferLessPlayed = false) {
    Le bandeau commun (chiffres cliquables, ajout, tablee sur-mesure, jeu au
    hasard), une barre de recherche unique et des pastilles a un clic pour les
    joueurs et la duree, les filtres plus rares repliés, le tri en onglets, et
-   les deux classements reunis en podium dans la colonne de droite.
+   les classements reunis en podium dans la colonne de droite -- depuis le
+   lot AM, le top de chaque membre s'y ajoute en troisieme onglet.
    ============================================================================= */
 const LUDO_DURATIONS = [
   { v: "30", l: "≤ 30 min" }, { v: "45", l: "≤ 45 min" }, { v: "60", l: "≤ 1 h" },
   { v: "90", l: "≤ 1 h 30" }, { v: "120", l: "≤ 2 h" }, { v: "121", l: "+ de 2 h" },
 ];
 function LudothequePage({ onAuth, setToast, setPage }) {
-  const { games, users, currentUser } = useApp();
+  const { games, users, currentUser, plays } = useApp();
   const [q, setQ] = useState("");
   const [mech, setMech] = useState("");
   const [players, setPlayers] = useState("");
@@ -20650,6 +20899,30 @@ function LudothequePage({ onAuth, setToast, setPage }) {
   // cours des MOMENT_MONTHS derniers mois (voir momentTopGames).
   const momentTop = useMemo(() => momentTopGames(communGames), [communGames]);
   const selectedGame = games.find((g) => g.id === selected);
+
+  // (lot AM) Le top de chaque membre : le membre choisi (soi-même par défaut,
+  // quand on a déjà noté des jeux), ce qu'on affiche de lui — son top ou
+  // toutes ses notes — et le sens du tri de ses notes.
+  const [topMemberId, setTopMemberId] = useState(null);
+  const [topView, setTopView] = useState("top"); // "top" | "all"
+  const [topOrder, setTopOrder] = useState("desc"); // "desc" | "asc"
+  const raters = useMemo(() => memberRankMembers(communGames, users, uid), [communGames, users, uid]);
+  const topMember = useMemo(
+    () => raters.find((u) => u.id === (topMemberId || uid)) || null,
+    [raters, topMemberId, uid]
+  );
+  const topRows = useMemo(() => memberRatedRows(communGames, plays, topMember), [communGames, plays, topMember]);
+  const topItems = useMemo(() => {
+    if (topView === "top") {
+      return sortMemberRows(topRows.filter((r) => r.note >= MEMBER_TOP_MIN), "desc").map(memberRankItem);
+    }
+    const perNote = {};
+    topRows.forEach((r) => { perNote[r.note] = (perNote[r.note] || 0) + 1; });
+    return sortMemberRows(topRows, topOrder).map((r) => ({
+      ...memberRankItem(r), group: r.note, groupHead: <MemberNoteHead note={r.note} count={perNote[r.note]} />,
+    }));
+  }, [topRows, topView, topOrder]);
+  const topIsMe = !!topMember && topMember.id === uid;
 
   // Les chiffres du bandeau.
   const totalPlays = useMemo(() => communGames.reduce((s, g) => s + (g.playCount || 0), 0), [communGames]);
@@ -20858,6 +21131,23 @@ function LudothequePage({ onAuth, setToast, setPage }) {
             { key: "moment", label: "Du moment", items: momentTop.map(toRank),
               note: <>Parus en <b>{thisYear - 1}</b> ou <b>{thisYear}</b>, et arrivés ici depuis moins de {MOMENT_MONTHS} mois.</>,
               empty: `Aucune nouveauté notée parmi les arrivées des ${MOMENT_MONTHS} derniers mois. Notez les jeux récents pour lancer ce classement !` },
+            /* (lot AM) Le top de chaque membre. */
+            { key: "member", label: "Par membre", items: topMember ? topItems : [],
+              podium: topView === "top", numbered: topView === "top",
+              resetKey: `${topMember ? topMember.id : ""}|${topView}|${topOrder}`,
+              head: <MemberRankHead members={raters} member={topMember} selfId={uid} onPick={setTopMemberId}
+                view={topView} onView={setTopView} order={topOrder} onOrder={setTopOrder} />,
+              note: topMember && topView === "top" && topItems.length > 0
+                ? <>{topIsMe ? "Mes" : "Ses"} jeux notés <b>5</b> et <b>4,5</b>. À note égale : le plus de parties jouées, puis de mécaniques préférées, puis l'alphabet.</>
+                : topMember && topView === "all" && topItems.length > 0
+                  ? <><b>{topItems.length}</b> jeu{topItems.length > 1 ? "x" : ""} noté{topItems.length > 1 ? "s" : ""}, {topOrder === "desc" ? "de la meilleure note à la moins bonne" : "de la moins bonne note à la meilleure"}.</>
+                  : null,
+              empty: raters.length === 0
+                ? "Personne n'a encore noté de jeu. Notez-en quelques-uns pour faire naître votre top !"
+                : !topMember ? null
+                : topView === "top"
+                  ? `Aucun jeu noté 5 ou 4,5 pour l'instant. ${topIsMe ? "Vos" : "Ses"} autres notes sont dans « Toutes ${topIsMe ? "mes" : "ses"} notes ».`
+                  : "Aucune note pour l'instant." },
           ]} />
           <RatingScaleNote />
         </aside>
@@ -25857,6 +26147,10 @@ export default function App() {
           .aladj-cat-aside-busy { display: none !important; }
           .aladj-rankboard[data-open="0"] .aladj-rank-rest { display: none !important; }
           .aladj-rank-more { display: flex !important; }
+        }
+        /* (lot AM) Trois onglets de classement sur un ecran tres etroit. */
+        @media (max-width: 380px) {
+          .aladj-rankboard [role="tablist"] button { font-size: 11px !important; padding: 8px 3px !important; }
         }
         @media (max-width: 520px) {
           .aladj-show-phone { display: inline !important; }
