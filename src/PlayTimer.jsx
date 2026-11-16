@@ -2777,15 +2777,62 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
     return {};
   };
 
-  // (2) Corriger les compteurs de phase.
-  const setPhaseSeconds = async (setup, play, teardown) => {
+  // (lot AN) Corriger les temps. Les deux fonctions renvoient null quand tout
+  // s'est bien passe, sinon le message a afficher DANS la fenetre (la banniere
+  // du chrono est cachee derriere elle).
+  const clockFnMissing = (e) => !!e && /aladj_shift_phase_time|aladj_set_phase_totals|Could not find the function|schema cache/i.test(e.message || '');
+  const clockErr = (e) => {
+    const m = (e && e.message) || String(e || '');
+    return /ALADJ_SESSION_DONE/.test(m) ? 'Cette partie est terminée.' : (m || 'erreur inconnue');
+  };
+  // Deplacer du temps d'une phase vers une autre -- temps en cours compris --
+  // et, si demande, passer dans la foulee sur la phase d'arrivee.
+  const shiftPhaseTime = async (from, to, seconds, doSwitch) => {
     setError(null);
-    const { error: e } = await supabase.rpc('aladj_set_phase_seconds', {
+    let { error: e } = await supabase.rpc('aladj_shift_phase_time', {
+      p_session_id: sid, p_from: from, p_to: to, p_seconds: seconds, p_switch: !!doSwitch,
+    });
+    if (clockFnMissing(e)) {
+      // Repli tant que lot_AN_migration.sql n'est pas joue : on change de phase
+      // (ce qui engrange le temps en cours), puis on corrige les compteurs.
+      e = null;
+      try {
+        const COL = { setup: 'setup_seconds', play: 'play_seconds', teardown: 'teardown_seconds' };
+        if (doSwitch) {
+          const r1 = await supabase.rpc('toggle_phase', { p_session_id: sid, p_phase: to });
+          if (r1.error) throw r1.error;
+        }
+        const { data, error: e2 } = await supabase.from('play_sessions').select('*').eq('id', sid);
+        if (e2 || !data || !data[0]) throw (e2 || new Error('Partie introuvable.'));
+        const row = data[0];
+        const take = Math.min(seconds, row[COL[from]] || 0);
+        const vals = { setup: row.setup_seconds || 0, play: row.play_seconds || 0, teardown: row.teardown_seconds || 0 };
+        vals[from] -= take; vals[to] += take;
+        const r3 = await supabase.rpc('aladj_set_phase_seconds', {
+          p_session_id: sid, p_setup: vals.setup, p_play: vals.play, p_teardown: vals.teardown,
+        });
+        if (r3.error) throw r3.error;
+        if (take < Math.min(seconds, 86399) - 5 && row.active_phase === from) {
+          e = { message: "Seule une partie du temps a pu être déplacée : pour corriger le temps de la phase en cours, la migration lot_AN_migration.sql doit être jouée sur le serveur." };
+        }
+      } catch (err) { e = err; }
+    }
+    await refetchSession(sid);
+    return e ? clockErr(e) : null;
+  };
+  // Fixer la valeur affichee d'une ou plusieurs phases (null = ne pas toucher).
+  const setPhaseTotals = async (setup, play, teardown) => {
+    setError(null);
+    let { error: e } = await supabase.rpc('aladj_set_phase_totals', {
       p_session_id: sid, p_setup: setup, p_play: play, p_teardown: teardown,
     });
-    if (e) { setError(e.message || String(e)); return false; }
+    if (clockFnMissing(e)) {
+      ({ error: e } = await supabase.rpc('aladj_set_phase_seconds', {
+        p_session_id: sid, p_setup: setup, p_play: play, p_teardown: teardown,
+      }));
+    }
     await refetchSession(sid);
-    return true;
+    return e ? clockErr(e) : null;
   };
 
   const movePlayer = (playerId, up) => rpc('move_player', { p_session_id: sid, p_player_id: playerId, p_up: up });
@@ -3179,11 +3226,9 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
       )}
       {clockEdit && (
         <ClockEditSheet
-          setup={session?.setup_seconds || 0}
-          play={session?.play_seconds || 0}
-          teardown={session?.teardown_seconds || 0}
-          running={session?.active_phase || null}
-          onSave={setPhaseSeconds}
+          session={session}
+          onShift={shiftPhaseTime}
+          onSaveTotals={setPhaseTotals}
           onClose={() => setClockEdit(false)}
         />
       )}
@@ -3832,16 +3877,28 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
               {[[32, 28], [32, 50], [32, 72], [68, 28], [68, 50], [68, 72]].map(([x, y]) => <circle key={`${x}-${y}`} cx={x} cy={y} r="7.5" fill={m.c2} />)}
             </svg>
           )}
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: TITLE, fontWeight: 600,
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 8px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: TITLE, fontWeight: 600, whiteSpace: 'nowrap',
               fontSize: big ? 15 : 13, letterSpacing: '.06em', textTransform: 'uppercase',
               background: '#12293F', color: '#FFFFFF', padding: big ? '6px 14px' : '5px 12px', borderRadius: 999 }}>
               <span style={{ width: 9, height: 9, borderRadius: '50%', background: activePhase ? (m ? m.c1 : C.teal) : '#9aa5b1' }} />
               {chip}
             </span>
-            <span style={{ marginLeft: 'auto', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 16 : 14 }}>
-              Partie n° {session?.current_game || 1}
-            </span>
+            {/* (lot AN) Corriger le temps : la, sur le chrono lui-meme. */}
+            {isHost && focusPh ? (
+              <button type="button" onClick={() => setClockEdit(true)}
+                title="Oublié de changer de phase ? Déplacer du temps de la mise en place vers la partie, de la partie vers le rangement…"
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
+                  minHeight: big ? 38 : 36, padding: big ? '0 14px' : '0 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                  background: '#FFFFFF', color: '#12293F', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 15 : 13.5,
+                  boxShadow: '0 3px 0 rgba(18,41,63,.2)', touchAction: 'manipulation' }}>
+                <span aria-hidden="true">✏️</span> Corriger
+              </button>
+            ) : (
+              <span style={{ marginLeft: 'auto', fontFamily: TITLE, fontWeight: 600, fontSize: big ? 16 : 14 }}>
+                Partie n° {session?.current_game || 1}
+              </span>
+            )}
           </div>
           <div style={{ position: 'relative', margin: big ? 'auto 0' : '8px 0 6px', fontFamily: TITLE, fontWeight: 700,
             fontSize: big ? 'clamp(60px, min(9.6vw, 14.5vh), 150px)' : 'clamp(62px, 19vw, 92px)', lineHeight: 1,
@@ -3861,7 +3918,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
           ) : null}
           <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px',
             marginTop: 10, paddingTop: 10, borderTop: `2px dashed ${onColor ? 'rgba(18,41,63,.22)' : K.line}`, fontSize: big ? 15 : 13.5 }}>
-            <span>Temps total <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(grandTotal)}</b></span>
+            <span>{isHost && focusPh ? <>Partie n° {session?.current_game || 1} · </> : null}Temps total <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(grandTotal)}</b></span>
             {launchedTxt && <span>Lancé à {launchedTxt}</span>}
           </div>
         </section>
@@ -4177,7 +4234,6 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         {tile(structureOf(structure).icon, `Type : ${structureOf(structure).label}`, false, () => setModeOpen(true), C.purple, true)}
         {tile('🕒', `Temps par joueur : ${ptLabel}`, ptMode !== 'none', () => setPtOpen(true), C.purple, true)}
         {tile('👥', teamsOn ? (oneTeamTable ? 'La tablée · ensemble' : 'La tablée · équipes') : 'La tablée', teamsOn, () => setTeamsOpen(true))}
-        {isHost && tile('⏱️', 'Corriger les temps', false, () => setClockEdit(true))}
         {isHost && gamePhase === 'play' && !simul && tile('🔁', 'Nouvelle partie', false, openNewGame, C.amber, true)}
         {canMakeEvent && tile('📅', 'Créer un moment jeux', false, () => setEventPrompt(true), C.teal)}
         {eventCreated && !canMakeEvent && tile('📅', 'Moment jeux créé', true, () => {}, C.teal)}
@@ -4359,7 +4415,6 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
                 🔁 Nouvelle partie
               </button>
             )}
-            <button style={sec()} onClick={() => setClockEdit(true)}>Corriger les temps</button>
             {canMakeEvent && <button style={sec()} onClick={() => setEventPrompt(true)}>📅 Créer un moment jeux</button>}
             {eventCreated && !canMakeEvent && (
               <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -4888,118 +4943,243 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
    Le report d'une phase a l'autre est propose en un geste, parce que c'est
    toujours ainsi que la correction se fait : ce qui manque ici est en trop la.
    --------------------------------------------------------------------- */
-function ClockEditSheet({ setup, play, teardown, running, onSave, onClose }) {
-  const toMin = (s) => Math.floor(s / 60);
-  const toSec = (s) => s % 60;
-  const [v, setV] = useState({
-    setupM: toMin(setup), setupS: toSec(setup),
-    playM: toMin(play), playS: toSec(play),
-    downM: toMin(teardown), downS: toSec(teardown),
-  });
-  const [busy, setBusy] = useState(false);
-  const [shift, setShift] = useState(5);      // minutes a reporter
+function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
+  /* (lot AN) Tout part de ce qu'on voit a l'ecran : les trois temps affiches
+     ici sont ceux du chrono, phase en cours comprise, et ils continuent de
+     tourner. Le geste principal est le report -- « la partie a commence il y a
+     5 minutes » -- en deux appuis : la duree, puis le gros bouton. La saisie des
+     valeurs exactes reste possible, repliee en bas. */
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
 
-  const tot = (m, s) => Math.max(0, (parseInt(m, 10) || 0) * 60 + (parseInt(s, 10) || 0));
-  const cur = { setup: tot(v.setupM, v.setupS), play: tot(v.playM, v.playS), teardown: tot(v.downM, v.downS) };
-
-  const put = (key, secs) => {
-    const s = Math.max(0, secs);
-    if (key === 'setup') setV((x) => ({ ...x, setupM: toMin(s), setupS: toSec(s) }));
-    if (key === 'play') setV((x) => ({ ...x, playM: toMin(s), playS: toSec(s) }));
-    if (key === 'teardown') setV((x) => ({ ...x, downM: toMin(s), downS: toSec(s) }));
+  const active = session?.active_phase || null;
+  const segMs = session?.seg_started_at ? new Date(session.seg_started_at).getTime() : null;
+  const liveSeg = (active && segMs) ? Math.max(0, Math.floor((Date.now() - segMs) / 1000)) : 0;
+  const tot = {
+    setup: (session?.setup_seconds || 0) + (active === 'setup' ? liveSeg : 0),
+    play: (session?.play_seconds || 0) + (active === 'play' ? liveSeg : 0),
+    teardown: (session?.teardown_seconds || 0) + (active === 'teardown' ? liveSeg : 0),
   };
-
-  // Deplacer N minutes d'une phase vers une autre, sans jamais passer sous zero.
-  const move = (from, to) => {
-    const n = Math.max(1, parseInt(shift, 10) || 1) * 60;
-    const take = Math.min(n, cur[from]);
-    if (!take) return;
-    put(from, cur[from] - take);
-    put(to, cur[to] + take);
+  const META = {
+    setup: { label: 'Mise en place', short: 'la mise en place', color: C.teal, order: 0 },
+    play: { label: 'Partie', short: 'la partie', color: C.amber, order: 1 },
+    teardown: { label: 'Rangement', short: 'le rangement', color: C.purple, order: 2 },
   };
-
-  const save = async () => {
-    setBusy(true);
-    const ok = await onSave(cur.setup, cur.play, cur.teardown);
-    setBusy(false);
-    if (ok) onClose();
-  };
-
-  const LIGNES = [
-    { key: 'setup', label: 'Mise en place', m: 'setupM', s: 'setupS', color: C.teal },
-    { key: 'play', label: 'Partie', m: 'playM', s: 'playS', color: C.amber },
-    { key: 'teardown', label: 'Rangement', m: 'downM', s: 'downS', color: C.purple },
+  const DIRS = [
+    { k: 'sp', from: 'setup', to: 'play' },
+    { k: 'ps', from: 'play', to: 'setup' },
+    { k: 'pt', from: 'play', to: 'teardown' },
+    { k: 'tp', from: 'teardown', to: 'play' },
   ];
+
+  // Le sens propose d'office est celui de l'oubli le plus probable.
+  const [dirKey, setDirKey] = useState(() => {
+    const wrapped = tot.teardown > 0 || active === 'teardown';
+    const played = tot.play > 0 || active === 'play';
+    if (wrapped) return 'pt';
+    if (played) return tot.setup >= 60 ? 'sp' : 'pt';
+    return 'sp';
+  });
+  const [mins, setMins] = useState(5);
+  const [all, setAll] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [exact, setExact] = useState(false);
+  const [v, setV] = useState(null);       // saisie exacte : valeurs en cours
+  const [v0, setV0] = useState(null);     // ... et valeurs a l'ouverture
+
+  const dir = DIRS.find((d) => d.k === dirKey) || DIRS[0];
+  const have = tot[dir.from];
+  const take = all ? have : Math.min(Math.max(1, mins) * 60, have);
+  // Report vers la phase suivante alors que la phase de depart tourne encore :
+  // le chrono change de phase dans le meme geste.
+  const willSwitch = active === dir.from && META[dir.to].order === META[dir.from].order + 1;
+  const short = !all && mins * 60 > have;
+
+  const question = willSwitch
+    ? (dir.to === 'play' ? 'La partie a en fait commencé il y a…' : 'Le rangement a en fait commencé il y a…')
+    : `Temps à passer de « ${META[dir.from].label} » vers « ${META[dir.to].label} » :`;
+  const amountTxt = all ? `tout (${fmt(take)})` : `${mins} min`;
+  const goLabel = willSwitch
+    ? (dir.to === 'play' ? `Déplacer ${amountTxt} et lancer la partie` : `Déplacer ${amountTxt} et passer au rangement`)
+    : `Déplacer ${amountTxt} vers ${META[dir.to].short}`;
+
+  const go = async () => {
+    if (busy || take < 1) return;
+    setBusy(true); setErr('');
+    const e = await onShift(dir.from, dir.to, all ? 86400 : Math.max(1, mins) * 60, willSwitch);
+    setBusy(false);
+    if (e) { setErr(e); return; }
+    onClose();
+  };
+
+  const openExact = () => {
+    const snap = {};
+    ['setup', 'play', 'teardown'].forEach((k) => { snap[k + 'M'] = Math.floor(tot[k] / 60); snap[k + 'S'] = tot[k] % 60; });
+    setV(snap); setV0(snap); setExact(true);
+  };
+  const secOf = (o, k) => Math.max(0, (parseInt(o[k + 'M'], 10) || 0) * 60 + (parseInt(o[k + 'S'], 10) || 0));
+  const changed = (k) => !!v && !!v0 && secOf(v, k) !== secOf(v0, k);
+  const anyChanged = changed('setup') || changed('play') || changed('teardown');
+  const saveExact = async () => {
+    if (busy || !anyChanged) return;
+    setBusy(true); setErr('');
+    const e = await onSaveTotals(
+      changed('setup') ? secOf(v, 'setup') : null,
+      changed('play') ? secOf(v, 'play') : null,
+      changed('teardown') ? secOf(v, 'teardown') : null,
+    );
+    setBusy(false);
+    if (e) { setErr(e); return; }
+    onClose();
+  };
+
+  const stepBtn = (off) => ({
+    width: 52, height: 52, borderRadius: 16, border: '2px solid #d9cdb6', background: '#fff', color: C.navy,
+    fontFamily: TITLE, fontWeight: 700, fontSize: 26, lineHeight: 1, cursor: off ? 'default' : 'pointer', opacity: off ? 0.4 : 1,
+    display: 'grid', placeItems: 'center', flexShrink: 0, touchAction: 'manipulation',
+  });
+  const pickMins = (n) => { setAll(false); setMins(Math.max(1, Math.min(600, n))); };
 
   return (
     <div onClick={busy ? undefined : onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(60,45,25,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ background: C.cream, color: C.navy, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 620,
-          maxHeight: '88vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 26px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 20 }}>⏱️ Corriger les temps</div>
+      style={{ position: 'fixed', inset: 0, zIndex: 1250, background: 'rgba(10,25,42,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Corriger les temps"
+        style={{ background: C.cream, color: C.navy, borderRadius: '24px 24px 0 0', width: '100%', maxWidth: 620, boxSizing: 'border-box',
+          maxHeight: '94vh', overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 16px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 700, fontSize: 21 }}>✏️ Corriger les temps</div>
           <button onClick={onClose} style={btnGhost} disabled={busy}>Fermer</button>
         </div>
-        <p style={{ fontSize: 13.5, color: `${C.navy}99`, margin: '4px 0 16px', lineHeight: 1.55 }}>
-          Un oubli d'arreter le chrono ? Reportez le temps d'une phase vers une autre,
-          ou saisissez directement les valeurs.
-          {running && <> La phase en cours continue de tourner : la correction s'applique
-            au temps deja compte, et les secondes qui defilent s'y ajoutent.</>}
-        </p>
 
-        <div style={{ display: 'grid', gap: 9, marginBottom: 16 }}>
-          {LIGNES.map((L) => (
-            <div key={L.key} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff',
-              border: `1.5px solid ${running === L.key ? L.color : '#e6dcc9'}`, borderRadius: 13, padding: '10px 12px', flexWrap: 'wrap' }}>
-              <span style={{ flex: 1, minWidth: 110, fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, color: L.color }}>
-                {L.label}{running === L.key && <span style={{ fontSize: 12, color: `${C.navy}88`, fontWeight: 400 }}> · en cours</span>}
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <input type="number" min="0" inputMode="numeric" value={v[L.m]}
-                  onChange={(e) => setV({ ...v, [L.m]: e.target.value })}
-                  style={{ ...input, width: 74, textAlign: 'right', padding: '8px 9px' }} />
-                <span style={{ fontSize: 13, color: `${C.navy}88` }}>min</span>
-                <input type="number" min="0" max="59" inputMode="numeric" value={v[L.s]}
-                  onChange={(e) => setV({ ...v, [L.s]: e.target.value })}
-                  style={{ ...input, width: 66, textAlign: 'right', padding: '8px 9px' }} />
-                <span style={{ fontSize: 13, color: `${C.navy}88` }}>s</span>
-              </span>
+        {/* Les trois temps, tels qu'ils s'affichent sur le chrono. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 16 }}>
+          {['setup', 'play', 'teardown'].map((k) => (
+            <div key={k} style={{ background: '#fff', borderRadius: 14, padding: '8px 10px', minWidth: 0,
+              border: active === k ? `2.5px solid ${META[k].color}` : '1.5px solid #e6dcc9' }}>
+              <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: META[k].color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{META[k].label}</div>
+              <div style={{ fontFamily: TITLE, fontWeight: 700, fontSize: 22, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>{fmt(tot[k])}</div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: active === k ? META[k].color : '#a89a86' }}>{active === k ? 'en cours' : (tot[k] > 0 ? '\u00a0' : 'à venir')}</div>
             </div>
           ))}
         </div>
 
-        <div style={{ background: 'rgba(30,138,138,.07)', border: `1px solid ${C.teal}33`, borderRadius: 13, padding: '12px 14px', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 14.5 }}>Reporter</span>
-            <input type="number" min="1" inputMode="numeric" value={shift}
-              onChange={(e) => setShift(e.target.value)}
-              style={{ ...input, width: 70, textAlign: 'right', padding: '7px 9px' }} />
-            <span style={{ fontSize: 14 }}>minutes :</span>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            {[
-              ['setup', 'play', 'Mise en place → Partie'],
-              ['play', 'setup', 'Partie → Mise en place'],
-              ['play', 'teardown', 'Partie → Rangement'],
-              ['teardown', 'play', 'Rangement → Partie'],
-            ].map(([a, b, lab]) => (
-              <button key={lab} onClick={() => move(a, b)} disabled={!cur[a]}
-                style={{ border: '1.5px solid #d9cdb6', background: cur[a] ? '#fff' : '#f3ede1',
-                  color: cur[a] ? C.navy : `${C.navy}55`, borderRadius: 999, padding: '7px 13px',
-                  fontFamily: BODY, fontSize: 13.5, fontWeight: 600, cursor: cur[a] ? 'pointer' : 'default' }}>
-                {lab}
+        {/* 1. Dans quel sens ? */}
+        <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, marginBottom: 8 }}>Déplacer du temps</div>
+        <div role="radiogroup" aria-label="Sens du report" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
+          {DIRS.map((d) => {
+            const on = d.k === dirKey;
+            const off = tot[d.from] < 1;
+            return (
+              <button key={d.k} type="button" role="radio" aria-checked={on} disabled={off} onClick={() => { setDirKey(d.k); setErr(''); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap', minHeight: 48, padding: '6px 8px', borderRadius: 14,
+                  cursor: off ? 'default' : 'pointer', opacity: off ? 0.45 : 1, font: 'inherit', fontFamily: TITLE, fontWeight: 600, fontSize: 14, color: C.navy,
+                  border: on ? `3px solid ${C.teal}` : '2px solid #e6dcc9', background: on ? 'rgba(30,138,138,.1)' : '#fff' }}>
+                <span style={{ color: META[d.from].color }}>{META[d.from].label}</span>
+                <span aria-hidden="true">→</span>
+                <span style={{ color: META[d.to].color }}>{META[d.to].label}</span>
               </button>
+            );
+          })}
+        </div>
+
+        {/* 2. Combien ? */}
+        <div style={{ background: '#fff', border: '1.5px solid #e6dcc9', borderRadius: 18, padding: '14px 14px 16px' }}>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 16, marginBottom: 10 }}>{question}</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 12 }}>
+            <button type="button" aria-label="Une minute de moins" style={stepBtn(all || mins <= 1)} disabled={all || mins <= 1} onClick={() => pickMins(mins - 1)}>−</button>
+            <div style={{ minWidth: 130, textAlign: 'center', fontFamily: TITLE, fontWeight: 700, fontSize: 34, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+              {all ? fmt(take) : <>{mins}<span style={{ fontSize: 18, fontWeight: 600 }}> min</span></>}
+            </div>
+            <button type="button" aria-label="Une minute de plus" style={stepBtn(false)} onClick={() => pickMins(all ? Math.floor(have / 60) + 1 : mins + 1)}>+</button>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 7 }}>
+            {[1, 2, 5, 10, 15, 20, 30].map((n) => {
+              const on = !all && mins === n;
+              return (
+                <button key={n} type="button" aria-pressed={on} onClick={() => pickMins(n)}
+                  style={{ minWidth: 50, minHeight: 42, padding: '0 10px', borderRadius: 999, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
+                    border: on ? `2px solid ${C.teal}` : '2px solid #e6dcc9', background: on ? C.teal : '#fff', color: on ? '#fff' : C.navy }}>
+                  {n}
+                </button>
+              );
+            })}
+            <button type="button" aria-pressed={all} onClick={() => setAll(true)} disabled={have < 1}
+              style={{ minHeight: 42, padding: '0 14px', borderRadius: 999, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
+                border: all ? `2px solid ${C.teal}` : '2px solid #e6dcc9', background: all ? C.teal : '#fff', color: all ? '#fff' : C.navy }}>
+              Tout
+            </button>
+          </div>
+
+          {/* Ce que ca donnera. */}
+          <div style={{ display: 'grid', gap: 4, marginTop: 14, padding: '10px 12px', borderRadius: 12, background: 'rgba(26,58,92,.05)', fontSize: 14.5 }}>
+            {[[dir.from, tot[dir.from] - take], [dir.to, tot[dir.to] + take]].map(([k, after]) => (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ flex: 1, minWidth: 0, fontWeight: 700, color: META[k].color }}>{META[k].label}</span>
+                <span style={{ color: '#8a7c6a' }}>{fmt(tot[k])}</span>
+                <span aria-hidden="true">→</span>
+                <b style={{ minWidth: 52, textAlign: 'right' }}>{fmt(Math.max(0, after))}</b>
+              </div>
             ))}
+            {willSwitch && (
+              <div style={{ fontSize: 13, color: '#6e6256', marginTop: 2 }}>
+                {dir.to === 'play' ? 'Le chrono passe aussitôt sur « Partie ».' : 'Le chrono passe aussitôt sur « Rangement ».'}
+              </div>
+            )}
+            {short && have >= 1 && (
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginTop: 2 }}>
+                Il n'y a que {fmt(have)} dans « {META[dir.from].label} » : tout sera déplacé.
+              </div>
+            )}
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 9 }}>
-          <button style={{ ...btnPrimary, flex: 1, opacity: busy ? 0.6 : 1 }} onClick={save} disabled={busy}>
-            {busy ? 'Enregistrement...' : 'Enregistrer les temps'}
+        {err && <div style={{ background: 'rgba(181,40,58,.1)', color: C.red, padding: '10px 13px', borderRadius: 12, fontSize: 14, fontWeight: 700, marginTop: 12 }}>{err}</div>}
+
+        <button type="button" onClick={go} disabled={busy || take < 1}
+          style={{ ...btnPrimary, width: '100%', marginTop: 14, minHeight: 58, fontSize: 18, opacity: (busy || take < 1) ? 0.55 : 1 }}>
+          {busy ? 'Un instant…' : (take < 1 ? `Rien à déplacer depuis ${META[dir.from].short}` : goLabel)}
+        </button>
+
+        {/* La saisie directe, pour les cas particuliers. */}
+        {!exact ? (
+          <button type="button" onClick={openExact}
+            style={{ ...btnGhost, display: 'block', margin: '14px auto 0', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+            Saisir plutôt les valeurs exactes
           </button>
-          <button style={btnGhost} onClick={onClose} disabled={busy}>Annuler</button>
-        </div>
+        ) : (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '2px dashed #e6dcc9' }}>
+            <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, marginBottom: 4 }}>Valeurs exactes</div>
+            <p style={{ fontSize: 13, color: '#8a7c6a', margin: '0 0 10px', lineHeight: 1.5 }}>
+              Seuls les temps que vous modifiez sont changés. La phase en cours repart de la valeur saisie.
+            </p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {['setup', 'play', 'teardown'].map((k) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#fff',
+                  border: `1.5px solid ${changed(k) ? META[k].color : '#e6dcc9'}`, borderRadius: 13, padding: '8px 12px' }}>
+                  <span style={{ flex: 1, minWidth: 110, fontFamily: TITLE, fontWeight: 600, fontSize: 15, color: META[k].color }}>{META[k].label}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <input type="number" min="0" inputMode="numeric" value={v[k + 'M']} aria-label={`${META[k].label} : minutes`}
+                      onChange={(e) => setV({ ...v, [k + 'M']: e.target.value })}
+                      style={{ ...input, width: 74, textAlign: 'right', padding: '8px 9px' }} />
+                    <span style={{ fontSize: 13, color: `${C.navy}88` }}>min</span>
+                    <input type="number" min="0" max="59" inputMode="numeric" value={v[k + 'S']} aria-label={`${META[k].label} : secondes`}
+                      onChange={(e) => setV({ ...v, [k + 'S']: e.target.value })}
+                      style={{ ...input, width: 66, textAlign: 'right', padding: '8px 9px' }} />
+                    <span style={{ fontSize: 13, color: `${C.navy}88` }}>s</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={saveExact} disabled={busy || !anyChanged}
+              style={{ ...btnSecondary, width: '100%', marginTop: 10, opacity: (busy || !anyChanged) ? 0.55 : 1 }}>
+              Enregistrer ces valeurs
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
