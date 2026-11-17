@@ -2780,7 +2780,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
   // (lot AN) Corriger les temps. Les deux fonctions renvoient null quand tout
   // s'est bien passe, sinon le message a afficher DANS la fenetre (la banniere
   // du chrono est cachee derriere elle).
-  const clockFnMissing = (e) => !!e && /aladj_shift_phase_time|aladj_set_phase_totals|Could not find the function|schema cache/i.test(e.message || '');
+  const clockFnMissing = (e) => !!e && /aladj_shift_phase_time|aladj_set_phase_totals|aladj_add_phase_time|Could not find the function|schema cache/i.test(e.message || '');
   const clockErr = (e) => {
     const m = (e && e.message) || String(e || '');
     return /ALADJ_SESSION_DONE/.test(m) ? 'Cette partie est terminée.' : (m || 'erreur inconnue');
@@ -2814,6 +2814,40 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         if (r3.error) throw r3.error;
         if (take < Math.min(seconds, 86399) - 5 && row.active_phase === from) {
           e = { message: "Seule une partie du temps a pu être déplacée : pour corriger le temps de la phase en cours, la migration lot_AN_migration.sql doit être jouée sur le serveur." };
+        }
+      } catch (err) { e = err; }
+    }
+    await refetchSession(sid);
+    return e ? clockErr(e) : null;
+  };
+  // (lot AO) Ajouter (delta > 0) ou retirer (delta < 0) du temps a une phase,
+  // temps en cours compris : « la mise en place a commence avant le chrono ».
+  const addPhaseTime = async (ph, delta) => {
+    setError(null);
+    let { error: e } = await supabase.rpc('aladj_add_phase_time', { p_session_id: sid, p_phase: ph, p_seconds: delta });
+    if (clockFnMissing(e)) {
+      // Repli tant que lot_AO_migration.sql n'est pas joue.
+      e = null;
+      try {
+        const COL = { setup: 'setup_seconds', play: 'play_seconds', teardown: 'teardown_seconds' };
+        const { data, error: e2 } = await supabase.from('play_sessions').select('*').eq('id', sid);
+        if (e2 || !data || !data[0]) throw (e2 || new Error('Partie introuvable.'));
+        const row = data[0];
+        const stored = row[COL[ph]] || 0;
+        const args = { p_session_id: sid, p_setup: null, p_play: null, p_teardown: null };
+        const key = { setup: 'p_setup', play: 'p_play', teardown: 'p_teardown' }[ph];
+        if (stored + delta >= 0 || row.active_phase !== ph || !row.seg_started_at) {
+          // Le temps deja engrange suffit : on corrige le compteur, le temps
+          // en cours continue de s'y ajouter.
+          args[key] = Math.max(0, stored + delta);
+          const r1 = await supabase.rpc('aladj_set_phase_seconds', args);
+          if (r1.error) throw r1.error;
+        } else {
+          // Retrait plus grand que le temps engrange d'une phase qui tourne.
+          const live = Math.max(0, Math.floor((Date.now() - new Date(row.seg_started_at).getTime()) / 1000));
+          args[key] = Math.max(0, stored + live + delta);
+          const r2 = await supabase.rpc('aladj_set_phase_totals', args);
+          if (r2.error) throw r2.error;
         }
       } catch (err) { e = err; }
     }
@@ -3228,6 +3262,7 @@ export default function PlayTimer({ supabase, currentUser, gameId, eventId, join
         <ClockEditSheet
           session={session}
           onShift={shiftPhaseTime}
+          onAdd={addPhaseTime}
           onSaveTotals={setPhaseTotals}
           onClose={() => setClockEdit(false)}
         />
@@ -4943,11 +4978,14 @@ function NextGameSheet({ eventGames, hits, query, onQuery, busy, onPick, onClose
    Le report d'une phase a l'autre est propose en un geste, parce que c'est
    toujours ainsi que la correction se fait : ce qui manque ici est en trop la.
    --------------------------------------------------------------------- */
-function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
-  /* (lot AN) Tout part de ce qu'on voit a l'ecran : les trois temps affiches
-     ici sont ceux du chrono, phase en cours comprise, et ils continuent de
-     tourner. Le geste principal est le report -- « la partie a commence il y a
-     5 minutes » -- en deux appuis : la duree, puis le gros bouton. La saisie des
+function ClockEditSheet({ session, onShift, onAdd, onSaveTotals, onClose }) {
+  /* (lots AN, AO) Tout part de ce qu'on voit a l'ecran : les trois temps
+     affiches ici sont ceux du chrono, phase en cours comprise, et ils
+     continuent de tourner. Trois gestes :
+       - Ajouter : « la mise en place a commence avant le chrono » ;
+       - Retirer : « on a laisse tourner pendant la pause » ;
+       - Deplacer : « la partie a commence il y a 5 minutes ».
+     Chacun en deux appuis : la duree, puis le gros bouton. La saisie des
      valeurs exactes reste possible, repliee en bas. */
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -4983,6 +5021,11 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
     if (played) return tot.setup >= 60 ? 'sp' : 'pt';
     return 'sp';
   });
+  // (lot AO) Ajouter / retirer / deplacer. Une phase toute jeune qui tourne :
+  // on a sans doute lance le chrono en retard -> « Ajouter ». Sinon, le plus
+  // probable est d'avoir oublie de changer de phase -> « Deplacer ».
+  const [mode, setMode] = useState(() => (active && tot[active] < 600 ? 'add' : 'move'));
+  const [phase, setPhase] = useState(() => active || (tot.teardown > 0 ? 'teardown' : (tot.play > 0 ? 'play' : 'setup')));
   const [mins, setMins] = useState(5);
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -4992,25 +5035,42 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
   const [v0, setV0] = useState(null);     // ... et valeurs a l'ouverture
 
   const dir = DIRS.find((d) => d.k === dirKey) || DIRS[0];
-  const have = tot[dir.from];
-  const take = all ? have : Math.min(Math.max(1, mins) * 60, have);
+  const isMove = mode === 'move';
+  const have = isMove ? tot[dir.from] : (mode === 'remove' ? tot[phase] : Infinity);
+  const take = (all && mode !== 'add') ? have : Math.min(Math.max(1, mins) * 60, have);
   // Report vers la phase suivante alors que la phase de depart tourne encore :
   // le chrono change de phase dans le meme geste.
   const willSwitch = active === dir.from && META[dir.to].order === META[dir.from].order + 1;
-  const short = !all && mins * 60 > have;
+  const short = mode !== 'add' && !all && mins * 60 > have;
 
   const question = willSwitch
     ? (dir.to === 'play' ? 'La partie a en fait commencé il y a…' : 'Le rangement a en fait commencé il y a…')
     : `Temps à passer de « ${META[dir.from].label} » vers « ${META[dir.to].label} » :`;
-  const amountTxt = all ? `tout (${fmt(take)})` : `${mins} min`;
-  const goLabel = willSwitch
-    ? (dir.to === 'play' ? `Déplacer ${amountTxt} et lancer la partie` : `Déplacer ${amountTxt} et passer au rangement`)
-    : `Déplacer ${amountTxt} vers ${META[dir.to].short}`;
+  const amountTxt = (all && mode !== 'add') ? `tout (${fmt(take)})` : `${mins} min`;
+  const P = META[phase];
+  const addQuestion = phase === active
+    ? (phase === 'setup' ? 'La mise en place a commencé avant le chrono ? Ajouter :'
+      : `« ${P.label} » a commencé plus tôt ? Ajouter :`)
+    : `Temps à ajouter à « ${P.label} » :`;
+  const removeQuestion = `Temps à retirer à « ${P.label} » :`;
+  const shownQuestion = mode === 'add' ? addQuestion : (mode === 'remove' ? removeQuestion : question);
+  const goLabel = mode === 'add' ? `Ajouter ${amountTxt} à ${P.short}`
+    : mode === 'remove' ? `Retirer ${amountTxt} à ${P.short}`
+    : willSwitch
+      ? (dir.to === 'play' ? `Déplacer ${amountTxt} et lancer la partie` : `Déplacer ${amountTxt} et passer au rangement`)
+      : `Déplacer ${amountTxt} vers ${META[dir.to].short}`;
+  const emptyLabel = mode === 'remove' ? `Rien à retirer à ${P.short}` : `Rien à déplacer depuis ${META[dir.from].short}`;
+  const preview = mode === 'add' ? [[phase, tot[phase] + take]]
+    : mode === 'remove' ? [[phase, tot[phase] - take]]
+    : [[dir.from, tot[dir.from] - take], [dir.to, tot[dir.to] + take]];
 
   const go = async () => {
     if (busy || take < 1) return;
     setBusy(true); setErr('');
-    const e = await onShift(dir.from, dir.to, all ? 86400 : Math.max(1, mins) * 60, willSwitch);
+    const amount = (all && mode !== 'add') ? 86400 : Math.max(1, mins) * 60;
+    const e = mode === 'move'
+      ? await onShift(dir.from, dir.to, amount, willSwitch)
+      : await onAdd(phase, mode === 'add' ? amount : -amount);
     setBusy(false);
     if (e) { setErr(e); return; }
     onClose();
@@ -5057,19 +5117,43 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
 
         {/* Les trois temps, tels qu'ils s'affichent sur le chrono. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 16 }}>
-          {['setup', 'play', 'teardown'].map((k) => (
-            <div key={k} style={{ background: '#fff', borderRadius: 14, padding: '8px 10px', minWidth: 0,
-              border: active === k ? `2.5px solid ${META[k].color}` : '1.5px solid #e6dcc9' }}>
+          {['setup', 'play', 'teardown'].map((k) => {
+            const pick = !isMove;
+            const sel = pick ? phase === k : active === k;
+            return (
+            <button key={k} type="button" disabled={!pick} aria-pressed={pick ? sel : undefined}
+              onClick={() => { if (pick) { setPhase(k); setErr(''); } }}
+              title={pick ? `Corriger « ${META[k].label} »` : undefined}
+              style={{ font: 'inherit', textAlign: 'left', color: C.navy, cursor: pick ? 'pointer' : 'default', borderRadius: 14, padding: '8px 10px', minWidth: 0,
+                background: pick && sel ? 'rgba(30,138,138,.08)' : '#fff',
+                border: sel ? `${pick ? 3 : 2.5}px solid ${pick ? C.teal : META[k].color}` : '1.5px solid #e6dcc9' }}>
               <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 13, color: META[k].color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{META[k].label}</div>
               <div style={{ fontFamily: TITLE, fontWeight: 700, fontSize: 22, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>{fmt(tot[k])}</div>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: active === k ? META[k].color : '#a89a86' }}>{active === k ? 'en cours' : (tot[k] > 0 ? '\u00a0' : 'à venir')}</div>
-            </div>
-          ))}
+            </button>
+            );
+          })}
         </div>
 
-        {/* 1. Dans quel sens ? */}
-        <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 15.5, marginBottom: 8 }}>Déplacer du temps</div>
-        <div role="radiogroup" aria-label="Sens du report" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
+        {/* (lot AO) Le geste : ajouter, retirer ou deplacer du temps. */}
+        <div role="tablist" aria-label="Type de correction" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 4, padding: 4, borderRadius: 16, background: 'rgba(26,58,92,.08)', marginBottom: 14 }}>
+          {[['add', '➕ Ajouter'], ['remove', '➖ Retirer'], ['move', '⇄ Déplacer']].map(([k, l]) => {
+            const on = mode === k;
+            return (
+              <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { setMode(k); setErr(''); }}
+                style={{ minHeight: 46, borderRadius: 12, border: 'none', cursor: 'pointer', fontFamily: TITLE, fontWeight: 700, fontSize: 15.5,
+                  background: on ? '#fff' : 'transparent', color: on ? C.navy : `${C.navy}99`, boxShadow: on ? '0 2px 8px rgba(18,41,63,.14)' : 'none' }}>
+                {l}
+              </button>
+            );
+          })}
+        </div>
+        {!isMove && (
+          <p style={{ margin: '-6px 0 12px', fontSize: 13, color: '#8a7c6a' }}>Touchez la phase à corriger ci-dessus.</p>
+        )}
+
+        {/* 1. Dans quel sens ? (deplacer seulement) */}
+        {isMove && <div role="radiogroup" aria-label="Sens du report" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
           {DIRS.map((d) => {
             const on = d.k === dirKey;
             const off = tot[d.from] < 1;
@@ -5084,21 +5168,21 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
               </button>
             );
           })}
-        </div>
+        </div>}
 
         {/* 2. Combien ? */}
         <div style={{ background: '#fff', border: '1.5px solid #e6dcc9', borderRadius: 18, padding: '14px 14px 16px' }}>
-          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 16, marginBottom: 10 }}>{question}</div>
+          <div style={{ fontFamily: TITLE, fontWeight: 600, fontSize: 16, marginBottom: 10 }}>{shownQuestion}</div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 12 }}>
-            <button type="button" aria-label="Une minute de moins" style={stepBtn(all || mins <= 1)} disabled={all || mins <= 1} onClick={() => pickMins(mins - 1)}>−</button>
+            <button type="button" aria-label="Une minute de moins" style={stepBtn((all && mode !== 'add') || mins <= 1)} disabled={(all && mode !== 'add') || mins <= 1} onClick={() => pickMins(mins - 1)}>−</button>
             <div style={{ minWidth: 130, textAlign: 'center', fontFamily: TITLE, fontWeight: 700, fontSize: 34, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-              {all ? fmt(take) : <>{mins}<span style={{ fontSize: 18, fontWeight: 600 }}> min</span></>}
+              {(all && mode !== 'add') ? fmt(take) : <>{mins}<span style={{ fontSize: 18, fontWeight: 600 }}> min</span></>}
             </div>
-            <button type="button" aria-label="Une minute de plus" style={stepBtn(false)} onClick={() => pickMins(all ? Math.floor(have / 60) + 1 : mins + 1)}>+</button>
+            <button type="button" aria-label="Une minute de plus" style={stepBtn(false)} onClick={() => pickMins((all && mode !== 'add') ? Math.floor(have / 60) + 1 : mins + 1)}>+</button>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 7 }}>
             {[1, 2, 5, 10, 15, 20, 30].map((n) => {
-              const on = !all && mins === n;
+              const on = (!all || mode === 'add') && mins === n;
               return (
                 <button key={n} type="button" aria-pressed={on} onClick={() => pickMins(n)}
                   style={{ minWidth: 50, minHeight: 42, padding: '0 10px', borderRadius: 999, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
@@ -5107,16 +5191,16 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
                 </button>
               );
             })}
-            <button type="button" aria-pressed={all} onClick={() => setAll(true)} disabled={have < 1}
+            {mode !== 'add' && <button type="button" aria-pressed={all} onClick={() => setAll(true)} disabled={have < 1}
               style={{ minHeight: 42, padding: '0 14px', borderRadius: 999, cursor: 'pointer', fontFamily: TITLE, fontWeight: 600, fontSize: 15,
                 border: all ? `2px solid ${C.teal}` : '2px solid #e6dcc9', background: all ? C.teal : '#fff', color: all ? '#fff' : C.navy }}>
               Tout
-            </button>
+            </button>}
           </div>
 
           {/* Ce que ca donnera. */}
           <div style={{ display: 'grid', gap: 4, marginTop: 14, padding: '10px 12px', borderRadius: 12, background: 'rgba(26,58,92,.05)', fontSize: 14.5 }}>
-            {[[dir.from, tot[dir.from] - take], [dir.to, tot[dir.to] + take]].map(([k, after]) => (
+            {preview.map(([k, after]) => (
               <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontVariantNumeric: 'tabular-nums' }}>
                 <span style={{ flex: 1, minWidth: 0, fontWeight: 700, color: META[k].color }}>{META[k].label}</span>
                 <span style={{ color: '#8a7c6a' }}>{fmt(tot[k])}</span>
@@ -5124,14 +5208,14 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
                 <b style={{ minWidth: 52, textAlign: 'right' }}>{fmt(Math.max(0, after))}</b>
               </div>
             ))}
-            {willSwitch && (
+            {isMove && willSwitch && (
               <div style={{ fontSize: 13, color: '#6e6256', marginTop: 2 }}>
                 {dir.to === 'play' ? 'Le chrono passe aussitôt sur « Partie ».' : 'Le chrono passe aussitôt sur « Rangement ».'}
               </div>
             )}
             {short && have >= 1 && (
               <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginTop: 2 }}>
-                Il n'y a que {fmt(have)} dans « {META[dir.from].label} » : tout sera déplacé.
+                Il n'y a que {fmt(have)} dans « {META[isMove ? dir.from : phase].label} » : tout sera {isMove ? 'déplacé' : 'retiré'}.
               </div>
             )}
           </div>
@@ -5141,7 +5225,7 @@ function ClockEditSheet({ session, onShift, onSaveTotals, onClose }) {
 
         <button type="button" onClick={go} disabled={busy || take < 1}
           style={{ ...btnPrimary, width: '100%', marginTop: 14, minHeight: 58, fontSize: 18, opacity: (busy || take < 1) ? 0.55 : 1 }}>
-          {busy ? 'Un instant…' : (take < 1 ? `Rien à déplacer depuis ${META[dir.from].short}` : goLabel)}
+          {busy ? 'Un instant…' : (take < 1 ? emptyLabel : goLabel)}
         </button>
 
         {/* La saisie directe, pour les cas particuliers. */}
