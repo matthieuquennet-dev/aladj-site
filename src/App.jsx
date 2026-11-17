@@ -7656,11 +7656,13 @@ function GuidePage() {
           a: <>
             <p style={{ margin: "0 0 8px" }}><b>👥 La tablée.</b> Ce bouton rassemble tout ce qui touche aux joueurs : les équipes, mais aussi les <b>arrivées</b> et les <b>départs</b> en cours de partie. Quelqu'un s'installe ? Ajoutez-le depuis vos invités enregistrés, par son nom, ou choisissez un membre — il démarre à zéro point et sans temps de jeu, sans fausser les compteurs des autres. Quelqu'un s'en va, ou s'était ajouté par erreur ? La <b>croix rouge</b> le retire ; son temps de jeu et son score partent avec lui, puisqu'il n'a pas joué. Le dernier joueur ne peut pas être retiré, et si c'était son tour, la partie se met simplement en pause. La croix est aussi disponible directement sur les cartes des joueurs.</p>
             <p style={{ margin: "0 0 8px" }}><b>✏️ Corriger les temps.</b> L'oubli classique : la partie a commencé, mais le chrono compte toujours la mise en place. Le bouton <b>« ✏️ Corriger »</b> se trouve <b>sur le grand chrono lui-même</b>, en haut à droite du bloc de couleur ; il est réservé à l'hôte de la partie.</p>
-            <p style={{ margin: "0 0 8px" }}>La fenêtre montre les trois temps tels qu'ils s'affichent, phase en cours comprise, puis deux choix :</p>
+            <p style={{ margin: "0 0 8px" }}>La fenêtre montre les trois temps tels qu'ils s'affichent, phase en cours comprise, puis trois gestes au choix :</p>
             <ul style={{ margin: "0 0 8px", paddingLeft: 20, lineHeight: 1.75 }}>
-              <li><b>le sens</b> : « Mise en place → Partie », « Partie → Mise en place », « Partie → Rangement » ou « Rangement → Partie ». Le plus probable est déjà choisi ;</li>
-              <li><b>la durée</b> : une pastille (1, 2, 5, 10, 15, 20, 30 minutes ou « Tout ») ou les boutons − et +.</li>
+              <li><b>➕ Ajouter</b> : la mise en place a commencé <b>avant</b> qu'on lance le chrono ? Touchez la phase, choisissez la durée, « Ajouter 5 min à la mise en place ». C'est le geste proposé d'office quand la phase en cours vient de démarrer ;</li>
+              <li><b>➖ Retirer</b> : on a laissé tourner pendant une pause, ou trop longtemps ;</li>
+              <li><b>⇄ Déplacer</b> : le temps est au mauvais endroit — « Mise en place → Partie », « Partie → Mise en place », « Partie → Rangement » ou « Rangement → Partie ». Le sens le plus probable est déjà choisi.</li>
             </ul>
+            <p style={{ margin: "0 0 8px" }}>La durée se choisit d'une pastille (1, 2, 5, 10, 15, 20, 30 minutes, ou « Tout » pour retirer ou déplacer) ou avec les boutons − et +.</p>
             <p style={{ margin: "0 0 8px" }}>Un aperçu montre ce que deviendront les deux temps, et le gros bouton applique. Si la mise en place tourne encore, la question devient <b>« La partie a en fait commencé il y a… »</b> : le bouton déplace le temps <b>et lance la partie</b> dans le même geste. Même chose pour un rangement commencé sans le dire au chrono.</p>
             <p style={{ margin: 0 }}>Pour un cas particulier, <b>« Saisir plutôt les valeurs exactes »</b> permet de taper minutes et secondes : seuls les temps modifiés changent, et la phase en cours repart de la valeur saisie. La correction est partagée avec tous les appareils de la table.</p>
           </>,
@@ -7936,6 +7938,7 @@ function GuidePage() {
           q: "Le compteur d'ouvertures",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Chaque article publié affiche, <b>en bas à droite de sa miniature</b>, le nombre de fois où il a été ouvert (l'œil <Eye size={13} style={{ verticalAlign: "-2px" }} />). On le retrouve aussi en tête de l'article, à côté du temps de lecture.</p>
+            <p style={{ margin: "0 0 8px" }}>Le <b>temps de lecture</b> ne compte que les mots réellement lus — chapo, paragraphes, intertitres, citations, légendes, listes, les + et les − — à 300 mots par minute, plus quelques secondes par image ou fiche de jeu. Il se met à jour à chaque enregistrement de l'article.</p>
             <p style={{ margin: 0 }}>Toutes les lectures comptent, <b>visiteurs sans compte compris</b>. Pour que le chiffre reste parlant, <b>l'auteur et ses co-auteurs</b> qui relisent leur article ne le font pas monter, et un même appareil ne compte <b>qu'une fois par heure</b> : recharger la page ou revenir à l'article juste après ne gonfle pas le compteur.</p>
           </>,
         },
@@ -12019,7 +12022,7 @@ function ChronoPage({ onAuth, setPage }) {
       steps: [
         <>Le bouton <b>✏️ Corriger</b> est sur le grand chrono, en haut à droite du bloc de couleur.</>,
         <>Choisissez la durée — « La partie a en fait commencé il y a… <b>5 min</b> » — puis le gros bouton : le temps est déplacé et la partie lancée.</>,
-        <>Les autres sens existent aussi (« Partie → Rangement »…), ainsi que la saisie des valeurs exactes.</>,
+        <>Mise en place commencée avant le chrono ? <b>➕ Ajouter</b> les minutes manquantes. Trop de temps compté ? <b>➖ Retirer</b>.</>,
         <>La correction est partagée avec tous les téléphones de la table.</>,
       ],
       illu: <Illu caption="Ce qui manque ici est toujours en trop là."><MockBtn color={C.red} soft>✏️ Corriger</MockBtn><MockBtn color={C.navy} soft>5 min · Mise en place → Partie</MockBtn></Illu>,
