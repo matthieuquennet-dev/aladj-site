@@ -7938,6 +7938,7 @@ function GuidePage() {
           q: "Le compteur d'ouvertures",
           a: <>
             <p style={{ margin: "0 0 8px" }}>Chaque article publié affiche, <b>en bas à droite de sa miniature</b>, le nombre de fois où il a été ouvert (l'œil <Eye size={13} style={{ verticalAlign: "-2px" }} />). On le retrouve aussi en tête de l'article, à côté du temps de lecture.</p>
+            <p style={{ margin: "0 0 8px" }}><b>Qui a lu mon article ?</b> L'auteur, ses co-auteurs et les administrateurs peuvent <b>cliquer</b> sur « ouvert N fois · qui ? », en tête de l'article. La fenêtre liste les <b>membres</b> qui l'ont ouvert et combien de fois, puis les <b>visiteurs sans compte</b> qui ont déjà signé un commentaire dans le Mag, sous le nom donné, et enfin le nombre de <b>lecteurs non inscrits</b>. Un visiteur est reconnu d'une visite à l'autre par son navigateur. Les ouvertures comptées avant la mise en place de ce suivi apparaissent à part, sans lecteur connu.</p>
             <p style={{ margin: "0 0 8px" }}>Le <b>temps de lecture</b> ne compte que les mots réellement lus — chapo, paragraphes, intertitres, citations, légendes, listes, les + et les − — à 300 mots par minute, plus quelques secondes par image ou fiche de jeu. Il se met à jour à chaque enregistrement de l'article.</p>
             <p style={{ margin: 0 }}>Toutes les lectures comptent, <b>visiteurs sans compte compris</b>. Pour que le chiffre reste parlant, <b>l'auteur et ses co-auteurs</b> qui relisent leur article ne le font pas monter, et un même appareil ne compte <b>qu'une fois par heure</b> : recharger la page ou revenir à l'article juste après ne gonfle pas le compteur.</p>
           </>,
@@ -9598,6 +9599,25 @@ async function magFetchOpens(ids) {
    heure et par article : un rechargement ou un aller-retour entre la liste et
    l'article ne gonfle pas le chiffre. Le serveur, lui, ne compte ni l'auteur
    ni ses co-auteurs, ni un article qui n'est pas publié. */
+/* (lot AL) Le visiteur sans compte : son nom et une cle secrete aleatoire,
+   gardes dans son navigateur. La base n'en connait que l'empreinte (sha256) :
+   c'est elle qui le reconnait quand il revient. */
+const MAG_GUEST_STORE = "aladj.mag.guest";
+function magGuestLoad() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(MAG_GUEST_STORE) || "null");
+    if (v && typeof v.key === "string" && v.key.length >= 24) return { key: v.key, name: typeof v.name === "string" ? v.name : "" };
+  } catch (e) { /* stockage indisponible : le visiteur repart de zero */ }
+  return null;
+}
+function magGuestSave(g) {
+  try { window.localStorage.setItem(MAG_GUEST_STORE, JSON.stringify(g)); } catch (e) { /* sans gravite */ }
+}
+function magGuestNewKey() {
+  const a = new Uint8Array(24);
+  try { window.crypto.getRandomValues(a); } catch (e) { for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 const MAG_OPEN_GAP_MS = 60 * 60 * 1000;
 async function magCountOpen(articleId) {
   if (!articleId) return null;
@@ -9609,7 +9629,22 @@ async function magCountOpen(articleId) {
   } catch (e) { /* stockage indisponible (navigation privée) : on compte */ }
   if (!recent) {
     try { window.localStorage.setItem(k, String(Date.now())); } catch (e) { /* sans gravité */ }
-    const { data, error } = await supabase.rpc("aladj_mag_count_open", { p_article: articleId });
+    // (lot AP) Le lecteur est retenu avec l'ouverture : un membre par son
+    // compte, un visiteur par la cle aleatoire de son navigateur (la meme que
+    // pour ses commentaires, creee ici s'il n'en a pas encore).
+    let readerKey = null;
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      if (!(sess && sess.session)) {
+        let g = magGuestLoad();
+        if (!g) { g = { key: magGuestNewKey(), name: "" }; magGuestSave(g); }
+        readerKey = g.key;
+      }
+    } catch (e) { /* sans gravite : on compte sans lecteur */ }
+    let { data, error } = await supabase.rpc("aladj_mag_track_open", { p_article: articleId, p_reader_key: readerKey });
+    if (error && /aladj_mag_track_open|Could not find the function|schema cache/i.test(error.message || "")) {
+      ({ data, error } = await supabase.rpc("aladj_mag_count_open", { p_article: articleId }));
+    }
     if (!error && data !== null && data !== undefined) return Number(data) || 0;
     // Échec (réseau, migration pas encore jouée) : on retentera à la prochaine ouverture.
     if (error) { try { window.localStorage.removeItem(k); } catch (e) { /* sans gravité */ } }
@@ -9797,7 +9832,8 @@ function MagCover({ a, height, radius = 0 }) {
 }
 
 // Ligne « auteur · date · temps de lecture · encarts ».
-function MagMeta({ a, author, coNames = [], count = 0, light, opens, rating, comments = 0 }) {
+function MagMeta({ a, author, coNames = [], count = 0, light, opens, rating, comments = 0, onOpens }) {
+  const opensTxt = typeof opens === "number" ? magFmtCount(opens) : "";
   const col = light ? "rgba(255,255,255,.78)" : "#8a7c6a";
   const strong = light ? "#fff" : C.navy;
   return (
@@ -9816,11 +9852,19 @@ function MagMeta({ a, author, coNames = [], count = 0, light, opens, rating, com
           · <Star size={12} fill={C.amber} color={C.amber} /> {magFmtRating(rating.avg)}/5 ({rating.count})
         </span>
       )}
-      {typeof opens === "number" && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Nombre de fois où l'article a été ouvert">
-          · <Eye size={12} /> ouvert {magFmtCount(opens)} fois
+      {typeof opens === "number" && (onOpens ? (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>·
+          <button type="button" onClick={onOpens} title="Voir qui a lu l'article"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, background: light ? "rgba(255,255,255,.14)" : "rgba(30,138,138,.1)", border: "none", borderRadius: 999,
+              padding: "3px 10px", cursor: "pointer", color: light ? "#fff" : C.teal, fontFamily: "'Nunito',sans-serif", fontWeight: 800, fontSize: 13 }}>
+            <Eye size={13} /> ouvert {opensTxt} fois · qui ? <ChevronRight size={13} />
+          </button>
         </span>
-      )}
+      ) : (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Nombre de fois où l'article a été ouvert">
+          · <Eye size={12} /> ouvert {opensTxt} fois
+        </span>
+      ))}
     </div>
   );
 }
@@ -10126,6 +10170,115 @@ function MagAddonForm({ initial, busy, onSubmit, onCancel }) {
 /* =============================================================================
    (lot AI) LE MAG — LECTURE D'UN ARTICLE
    ============================================================================= */
+/* (lot AP) Qui a lu cet article ? Reserve a l'auteur, ses co-auteurs et les
+   administrateurs (le serveur le verifie). Les membres d'abord, puis les
+   visiteurs qui ont signe un commentaire, puis le nombre de lecteurs non
+   inscrits. Les ouvertures comptees avant le suivi des lecteurs n'ont pas
+   de lecteur connu : elles sont signalees a part. */
+function MagReadersModal({ articleId, opens, userById, onClose }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let off = false;
+    supabase.rpc("aladj_mag_readers", { p_article: articleId }).then(({ data, error }) => {
+      if (off) return;
+      if (error) {
+        const m = error.message || "";
+        setErr(/ALADJ_NOT_ALLOWED/.test(m) ? "Seuls l'auteur de l'article, ses co-auteurs et les administrateurs voient ses lecteurs."
+          : /aladj_mag_readers|Could not find the function|schema cache/i.test(m) ? "La liste des lecteurs n'est pas encore installée sur le serveur (migration lot_AP_migration.sql à jouer)."
+          : m || "erreur inconnue");
+        setRows([]);
+        return;
+      }
+      setRows(data || []);
+    });
+    return () => { off = true; };
+  }, [articleId]);
+
+  const list = rows || [];
+  const members = list.filter((r) => r.user_id);
+  const named = list.filter((r) => !r.user_id && r.guest_name);
+  const anon = list.filter((r) => !r.user_id && !r.guest_name);
+  const anonOpens = anon.reduce((s, r) => s + (Number(r.open_count) || 0), 0);
+  const tracked = list.reduce((s, r) => s + (Number(r.open_count) || 0), 0);
+  const older = typeof opens === "number" ? Math.max(0, opens - tracked) : 0;
+  const times = (n) => `${n} fois`;
+  const when = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : `dernière visite le ${d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}`;
+  };
+  const row = (key, avatarUser, name, badge, r) => (
+    <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", borderRadius: 14, background: "#fff", border: "1px solid #efe6d6", minWidth: 0 }}>
+      <MagAvatar user={avatarUser} size={36} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <b style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 600, color: C.navy, fontSize: 15.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</b>
+          {badge}
+        </span>
+        <span style={{ display: "block", fontSize: 12, color: "#8a7c6a" }}>{when(r.last_opened_at)}</span>
+      </span>
+      <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, color: C.teal }}>
+        <Eye size={15} /> {times(Number(r.open_count) || 0)}
+      </span>
+    </div>
+  );
+  const head = (txt, n) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 8px", fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 15, color: C.navy }}>
+      {txt}
+      <span style={{ minWidth: 24, height: 24, padding: "0 7px", borderRadius: 999, background: "rgba(30,138,138,.12)", color: C.teal, display: "grid", placeItems: "center", fontSize: 13 }}>{n}</span>
+    </div>
+  );
+
+  return (
+    <Modal open onClose={onClose} title="Qui a lu cet article ?" width={560}>
+      {typeof opens === "number" && (
+        <p style={{ margin: "0 0 4px", fontSize: 14, color: "#6e6256", lineHeight: 1.55 }}>
+          Ouvert <b>{magFmtCount(opens)} fois</b> au total. Vos propres ouvertures et celles des co-auteurs ne comptent pas.
+        </p>
+      )}
+      {rows === null ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 24 }}><Loader2 size={22} className="aladj-spin" color={C.teal} /></div>
+      ) : err ? (
+        <div style={{ background: "rgba(181,40,58,.1)", color: C.red, padding: "10px 13px", borderRadius: 12, fontSize: 14, fontWeight: 600, marginTop: 10 }}>{err}</div>
+      ) : (
+        <>
+          {members.length > 0 && head("Membres", members.length)}
+          {members.length > 0 && (
+            <div style={{ display: "grid", gap: 6 }}>
+              {members.map((r) => { const u = userById[r.user_id]; return row(r.user_id, u, u ? u.name : "Ancien membre", null, r); })}
+            </div>
+          )}
+          {named.length > 0 && head("Visiteurs sans compte", named.length)}
+          {named.length > 0 && (
+            <div style={{ display: "grid", gap: 6 }}>
+              {named.map((r, i) => row("g" + i, { name: r.guest_name }, r.guest_name,
+                <span title="Lecteur sans compte : nom donné en commentant, non vérifié" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(107,58,122,.12)", color: C.purple }}>Visiteur</span>, r))}
+            </div>
+          )}
+          {anon.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, padding: "12px 14px", borderRadius: 14, background: "rgba(26,58,92,.05)" }}>
+              <span style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(26,58,92,.12)", display: "grid", placeItems: "center", flexShrink: 0 }}><Users size={18} color={C.navy} /></span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, color: C.navy, lineHeight: 1.45 }}>
+                <b>{anon.length} lecteur{anon.length > 1 ? "s" : ""} non inscrit{anon.length > 1 ? "s" : ""}</b>
+                <span style={{ display: "block", fontSize: 12.5, color: "#8a7c6a" }}>{anonOpens} ouverture{anonOpens > 1 ? "s" : ""} — sans compte, et sans commentaire signé</span>
+              </span>
+            </div>
+          )}
+          {list.length === 0 && (
+            <p style={{ fontSize: 14, color: "#8a7c6a", margin: "14px 0 4px", lineHeight: 1.55 }}>Personne n'a encore ouvert l'article depuis la mise en place du suivi des lecteurs.</p>
+          )}
+          {older > 0 && (
+            <p style={{ fontSize: 12.5, color: "#9c8d79", margin: "14px 0 0", lineHeight: 1.5 }}>
+              {older} ouverture{older > 1 ? "s" : ""} plus ancienne{older > 1 ? "s" : ""}, comptée{older > 1 ? "s" : ""} avant le suivi des lecteurs, sans lecteur connu.
+            </p>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusNonce }) {
   const { currentUser, users, games, askConfirm } = useApp();
   const [art, setArt] = useState(undefined);        // undefined = chargement · null = introuvable
@@ -10137,6 +10290,7 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
   const [busy, setBusy] = useState(false);
   const [openGameId, setOpenGameId] = useState(null);
   const [opens, setOpens] = useState(null);         // (lot AJ) null = inconnu
+  const [showReaders, setShowReaders] = useState(false); // (lot AP)
 
   const userById = useMemo(() => {
     const m = {}; (users || []).forEach((u) => { m[u.id] = u; }); return m;
@@ -10437,12 +10591,14 @@ function MagReader({ articleKey, onBack, onEdit, onAuth, setToast, focus, focusN
         </div>
       )}
 
+      {showReaders && art && <MagReadersModal articleId={art.id} opens={opens} userById={userById} onClose={() => setShowReaders(false)} />}
       {/* En-tête */}
       <header style={{ marginBottom: 30, maxWidth: 880 }}>
         <MagKindBadge kind={art.kind} solid />
         <h1 style={{ fontFamily: "'Fredoka',sans-serif", color: C.navy, fontSize: "clamp(30px,5.4vw,48px)", lineHeight: 1.08, letterSpacing: "-0.025em", margin: "14px 0 14px", overflowWrap: "anywhere" }}>{art.title}</h1>
         {art.chapo && <p style={{ fontSize: "clamp(17px,2.2vw,20px)", lineHeight: 1.55, color: "#5e5346", margin: "0 0 18px", fontWeight: 600, overflowWrap: "anywhere" }}>{art.chapo}</p>}
         <MagMeta a={art} author={author} coNames={coNames} count={visibleCount} opens={published && typeof opens === "number" ? opens : undefined}
+          onOpens={canEdit && published ? () => setShowReaders(true) : undefined}
           rating={published && artStats && artStats.ratingCount > 0 ? { avg: artStats.ratingAvg, count: artStats.ratingCount } : null}
           comments={published ? comments.length : 0} />
       </header>
@@ -11313,25 +11469,6 @@ function MagRatingBox({ stats, myStars, canRate, busy, onRate, onAuth }) {
   );
 }
 
-/* (lot AL) Le visiteur sans compte : son nom et une cle secrete aleatoire,
-   gardes dans son navigateur. La base n'en connait que l'empreinte (sha256) :
-   c'est elle qui le reconnait quand il revient. */
-const MAG_GUEST_STORE = "aladj.mag.guest";
-function magGuestLoad() {
-  try {
-    const v = JSON.parse(window.localStorage.getItem(MAG_GUEST_STORE) || "null");
-    if (v && typeof v.key === "string" && v.key.length >= 24) return { key: v.key, name: typeof v.name === "string" ? v.name : "" };
-  } catch (e) { /* stockage indisponible : le visiteur repart de zero */ }
-  return null;
-}
-function magGuestSave(g) {
-  try { window.localStorage.setItem(MAG_GUEST_STORE, JSON.stringify(g)); } catch (e) { /* sans gravite */ }
-}
-function magGuestNewKey() {
-  const a = new Uint8Array(24);
-  try { window.crypto.getRandomValues(a); } catch (e) { for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
-  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 async function magGuestHash(key) {
   try {
     const buf = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
@@ -22772,6 +22909,7 @@ const BACKUP_TABLES = [
   ["mag_coauthors", [["article_id", "user_id"]]],
   ["mag_addons", [["created_at", "id"], ["id"]]],
   ["mag_article_opens", [["article_id"]]],
+  ["mag_article_readers", [["id"]]],
   ["mag_comments", [["created_at", "id"], ["id"]]],
   ["mag_ratings", [["article_id", "user_id"]]],
   // NE PAS AJOUTER ICI : conversations, conversation_members, messages.
