@@ -4051,6 +4051,223 @@ function isEventExpired(e) {
   return total < e.min;
 }
 
+/* =============================================================================
+   (lot AQ) LE DELAI DE VALIDATION, EN IMAGE
+   Un moment jeux peut avoir une date limite : s'il n'a pas reuni son minimum
+   de joueurs (le quorum) a temps, il est annule. Plutot qu'une ligne de texte,
+   on montre la course entre le temps qui file et les places a remplir :
+     * sur la fiche du moment, une TABLE RONDE : le temps restant tourne autour
+       du plateau, les inscrits sont assis en meeples colores, les places
+       encore libres restent en pointilles ;
+     * sur les cartes et dans le calendrier, un DOUBLE ANNEAU miniature :
+       dehors le temps, dedans une case par joueur attendu.
+   Quatre etats, une couleur chacun : en cours (ambre), urgent a moins de 24 h
+   (rouge, qui pulse doucement), maintenu (vert) et annule (noir). La regle
+   d'annulation reste celle d'isEventExpired : rien ne change sur le fond.
+   ============================================================================= */
+const MEEPLE_PATH = "M12 2a3.5 3.5 0 0 1 3.4 4.4c2.9.8 6.6 2.3 6.6 4.1 0 1.2-1.6 1.6-3.8 1.6l3.3 7.4c.3.7-.2 1.5-1 1.5h-4.6L12 16.5 8.1 21h-4.6c-.8 0-1.3-.8-1-1.5l3.3-7.4C3.6 12.1 2 11.7 2 10.5c0-1.8 3.7-3.3 6.6-4.1A3.5 3.5 0 0 1 12 2z";
+const DEADLINE_URGENT_MS = 24 * 3600 * 1000;
+// Au-dela, les places de la table se regroupent (une place dessinee vaut
+// alors plusieurs joueurs) : une table de 8 reste lisible, une de 15 non.
+const DEADLINE_MAX_SEATS = 8;
+const DEADLINE_TONES = {
+  running: { arc: C.amber, ink: "#8a5a00", soft: "rgba(232,163,23,.13)", line: "rgba(232,163,23,.4)", table: "#FDF1DA", edge: "#B47A06" },
+  urgent:  { arc: C.red, ink: C.red, soft: "rgba(181,40,58,.09)", line: "rgba(181,40,58,.35)", table: "#FBE6E9", edge: C.red },
+  reached: { arc: C.teal, ink: "#12605F", soft: "rgba(30,138,138,.1)", line: "rgba(30,138,138,.35)", table: "#E0F3F1", edge: C.teal },
+  expired: { arc: "#2B2B2B", ink: "#2B2B2B", soft: "rgba(43,43,43,.08)", line: "rgba(43,43,43,.3)", table: "#E7E3DB", edge: "#2B2B2B" },
+};
+
+/* Ou en est le delai d'un moment ? null s'il n'en a pas. */
+function deadlineState(e, now) {
+  if (!e || !e.deadline) return null;
+  const end = new Date(e.deadline).getTime();
+  if (!Number.isFinite(end)) return null;
+  const filled = ((e.players || []).length) + ((e.guests || []).length);
+  const min = Math.max(1, Number(e.min) || 1);
+  const reached = filled >= min;
+  const left = end - now;
+  // Depart de l'anneau : la creation du moment. Faute de mieux (moment tres
+  // ancien, delai recule avant la creation...), une semaine avant la limite.
+  let start = e.createdAt ? new Date(e.createdAt).getTime() : NaN;
+  if (!Number.isFinite(start) || start >= end) start = end - 7 * 86400000;
+  const total = Math.max(60000, end - start);
+  const frac = Math.max(0, Math.min(1, left / total));
+  const state = reached ? "reached" : (left <= 0 ? "expired" : (left <= DEADLINE_URGENT_MS ? "urgent" : "running"));
+  return { end, left, frac, filled, min, missing: Math.max(0, min - filled), reached, state };
+}
+
+/* « 1 j 6 h », « 6 h 12 », « 12 min 05 » (les secondes dans la derniere heure). */
+function formatDeadlineLeft(ms, withSeconds) {
+  if (!(ms > 0)) return "0 min";
+  const m = Math.floor(ms / 60000);
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mn = m % 60;
+  if (d > 0) return h ? `${d} j ${h} h` : `${d} j`;
+  if (h > 0) return `${h} h ${String(mn).padStart(2, "0")}`;
+  if (withSeconds) {
+    const s = Math.floor((ms % 60000) / 1000);
+    return mn ? `${mn} min ${String(s).padStart(2, "0")}` : `${s} s`;
+  }
+  return mn ? `${mn} min` : "moins d'1 min";
+}
+
+/* Date limite en clair, a l'heure locale (« samedi 21 novembre à 01h00 »). */
+function formatDeadlineDate(ms) {
+  const d = new Date(ms);
+  return `${FR_DAYS[d.getDay()].toLowerCase()} ${d.getDate()} ${FR_MONTHS[d.getMonth()]} à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/* L'heure qui tourne : toutes les 30 s, puis chaque seconde dans la derniere
+   heure. Plus rien une fois la limite passee : l'affichage est fige. */
+function useDeadlineNow(endMs) {
+  const [now, setNow] = useState(() => Date.now());
+  const fast = !!endMs && endMs - now <= 3600000;
+  const over = !endMs || now > endMs;
+  useEffect(() => {
+    if (over) return undefined;
+    const id = setInterval(() => setNow(Date.now()), fast ? 1000 : 30000);
+    return () => clearInterval(id);
+  }, [endMs, fast, over]);
+  return now;
+}
+
+/* Combien de places dessiner, et combien d'occupees. */
+function deadlineSeats(ds) {
+  const n = Math.min(ds.min, DEADLINE_MAX_SEATS);
+  const taken = ds.min <= DEADLINE_MAX_SEATS ? Math.min(ds.filled, n) : Math.min(n, Math.round((ds.filled / ds.min) * n));
+  return { n, taken };
+}
+
+/* ---- La table ronde (fiche du moment) ---- */
+function DeadlineRoundTable({ ds, size = 150 }) {
+  const t = DEADLINE_TONES[ds.state];
+  const { n, taken } = deadlineSeats(ds);
+  const R = 44, circ = 2 * Math.PI * R;
+  const arcFrac = ds.state === "reached" ? 1 : ds.frac;
+  const big = ds.state === "reached" ? "Maintenu" : ds.state === "expired" ? "Annulé" : formatDeadlineLeft(ds.left, ds.left <= 3600000);
+  const small = ds.state === "reached" ? `${ds.filled} / ${ds.min}` : ds.state === "expired" ? `${ds.filled} / ${ds.min}` : "pour valider";
+  return (
+    <svg width={size} height={size} viewBox="0 0 150 150" role="img" aria-label={ds.state === "reached" ? "Quorum atteint" : ds.state === "expired" ? "Moment annulé" : `Encore ${formatDeadlineLeft(ds.left)} pour trouver ${ds.missing} joueur${ds.missing > 1 ? "s" : ""}`} style={{ flexShrink: 0, overflow: "visible" }}>
+      <circle cx="75" cy="75" r={R} fill="none" stroke={t.line} strokeWidth="7" opacity=".55" />
+      {arcFrac > 0 && (
+        <circle cx="75" cy="75" r={R} fill="none" stroke={t.arc} strokeWidth="7" strokeLinecap="round"
+          strokeDasharray={`${Math.max(0.01, arcFrac * circ)} ${circ}`} transform="rotate(-90 75 75)"
+          className={ds.state === "urgent" ? "aladj-deadline-pulse" : undefined} style={{ transition: "stroke-dasharray .6s ease" }} />
+      )}
+      <circle cx="75" cy="75" r="34" fill={t.table} stroke={t.edge} strokeWidth="1.6" />
+      <circle cx="75" cy="75" r="29" fill="none" stroke={t.edge} strokeWidth=".8" strokeDasharray="2 3" opacity=".45" />
+      {ds.state === "reached" && <path d="M64 66 l7 7 l13 -14" fill="none" stroke={t.edge} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />}
+      <text x="75" y={ds.state === "reached" ? 89 : 77} textAnchor="middle" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: big.length > 8 ? 13 : 15, fill: t.ink }}>{big}</text>
+      {ds.state !== "reached" && <text x="75" y="91" textAnchor="middle" style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 10, fill: t.ink, opacity: .8 }}>{small}</text>}
+      {Array.from({ length: n }).map((_, i) => {
+        const a = (-90 + (360 * (i + 0.5)) / n) * Math.PI / 180;
+        const x = 75 + 62 * Math.cos(a) - 12, y = 75 + 62 * Math.sin(a) - 12;
+        const on = i < taken;
+        return (
+          <g key={i} transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}>
+            {on
+              ? <g className="aladj-seat" style={{ animationDelay: `${i * 90}ms` }}><path d={MEEPLE_PATH} fill={ds.state === "expired" ? "#9A8F7E" : C.teal} /></g>
+              : <path d={MEEPLE_PATH} fill="none" stroke={t.edge} strokeWidth="1.5" strokeDasharray="2.5 2" opacity=".85" />}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* L'encart complet de la fiche : la table, et ce qu'elle veut dire en mots. */
+function DeadlinePanel({ e }) {
+  const endMs = e && e.deadline ? new Date(e.deadline).getTime() : null;
+  const now = useDeadlineNow(endMs);
+  const ds = deadlineState(e, now);
+  if (!ds) return null;
+  const t = DEADLINE_TONES[ds.state];
+  const plural = (k, w) => `${k} ${w}${k > 1 ? "s" : ""}`;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", background: t.soft, border: `1.5px solid ${t.line}`, borderRadius: 16, padding: "12px 16px", marginBottom: 16 }}>
+      <DeadlineRoundTable ds={ds} />
+      <div style={{ flex: "1 1 180px", minWidth: 0, color: C.navy }}>
+        {ds.state === "expired" ? (
+          <>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Moment annulé</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 4 }}>Le quorum n'a pas été atteint avant la fin du délai de validation ({formatDeadlineDate(ds.end)}). Son créateur ou un admin peut prolonger le délai pour le réactiver.</div>
+          </>
+        ) : ds.state === "reached" ? (
+          <>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Quorum atteint</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 4 }}>Le moment jeux est maintenu : {plural(ds.filled, "inscrit")} pour {ds.min} requis.</div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Plus que {formatDeadlineLeft(ds.left, ds.left <= 3600000)}</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5, marginTop: 2 }}>pour trouver <b>{plural(ds.missing, "joueur")} de plus</b> ({ds.filled} / {ds.min} inscrits).</div>
+            <div style={{ fontSize: 12.5, color: "#7a6c5a", marginTop: 4 }}>Sans quorum, le moment sera annulé le {formatDeadlineDate(ds.end)}.</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Le double anneau miniature (cartes et calendrier) ---- */
+function DeadlineMiniRing({ ds, size = 22 }) {
+  const t = DEADLINE_TONES[ds.state];
+  const { n, taken } = deadlineSeats(ds);
+  const R1 = 17, c1 = 2 * Math.PI * R1;
+  const R2 = 10, c2 = 2 * Math.PI * R2;
+  const gap = n > 1 ? 2.4 : 0;
+  const seg = c2 / n - gap;
+  const seats = `${seg.toFixed(2)} ${gap.toFixed(2)}`;
+  const takenDash = taken > 0 ? `${Array.from({ length: taken }).map(() => seats).join(" ")} ${Math.max(0.01, c2 - taken * (seg + gap)).toFixed(2)}` : `0 ${c2.toFixed(2)}`;
+  const rot = -90 + (gap / c2) * 180;
+  const arcFrac = ds.state === "reached" ? 1 : ds.frac;
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" style={{ flexShrink: 0, display: "block" }}>
+      <circle cx="20" cy="20" r={R1} fill="none" stroke={t.line} strokeWidth="4.5" opacity=".6" />
+      {arcFrac > 0 && <circle cx="20" cy="20" r={R1} fill="none" stroke={t.arc} strokeWidth="4.5" strokeLinecap="round" strokeDasharray={`${Math.max(0.01, arcFrac * c1).toFixed(2)} ${c1.toFixed(2)}`} transform="rotate(-90 20 20)" className={ds.state === "urgent" ? "aladj-deadline-pulse" : undefined} />}
+      <circle cx="20" cy="20" r={R2} fill="none" stroke={t.line} strokeWidth="4.5" strokeDasharray={n > 1 ? seats : undefined} transform={`rotate(${rot.toFixed(2)} 20 20)`} opacity=".6" />
+      <circle cx="20" cy="20" r={R2} fill="none" stroke={ds.state === "expired" ? "#9A8F7E" : C.teal} strokeWidth="4.5" strokeDasharray={takenDash} transform={`rotate(${rot.toFixed(2)} 20 20)`} />
+    </svg>
+  );
+}
+
+/* Pastille des cartes : le double anneau et le temps qui reste. Seulement
+   tant que le delai court : « Confirmé » et « Annulé » ont deja leur etiquette. */
+function DeadlineChip({ e, compact }) {
+  const endMs = e && e.deadline ? new Date(e.deadline).getTime() : null;
+  const now = useDeadlineNow(endMs);
+  const ds = deadlineState(e, now);
+  if (!ds || (ds.state !== "running" && ds.state !== "urgent")) return null;
+  const t = DEADLINE_TONES[ds.state];
+  return (
+    <span title={`Sans ${ds.missing} joueur${ds.missing > 1 ? "s" : ""} de plus, le moment sera annulé le ${formatDeadlineDate(ds.end)}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 26, padding: "0 10px 0 4px", borderRadius: 999, background: t.soft, boxShadow: `inset 0 0 0 1.5px ${t.line}`,
+        color: t.ink, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>
+      <DeadlineMiniRing ds={ds} size={compact ? 18 : 22} />
+      {formatDeadlineLeft(ds.left, ds.left <= 3600000)}{compact ? "" : " pour valider"}
+    </span>
+  );
+}
+
+/* Point du calendrier : la couleur du moment au centre, entoure du temps qui
+   reste quand un delai court. */
+function DeadlineCalendarDot({ ev, color }) {
+  const endMs = ev && ev.deadline ? new Date(ev.deadline).getTime() : null;
+  const now = useDeadlineNow(endMs);
+  const ds = deadlineState(ev, now);
+  if (!ds || (ds.state !== "running" && ds.state !== "urgent")) {
+    return <span style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />;
+  }
+  const t = DEADLINE_TONES[ds.state];
+  const c = 2 * Math.PI * 4.6;
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ display: "block", marginTop: -3 }}>
+      <circle cx="6" cy="6" r="4.6" fill="none" stroke={t.line} strokeWidth="1.6" />
+      <circle cx="6" cy="6" r="4.6" fill="none" stroke={t.arc} strokeWidth="1.6" strokeLinecap="round" strokeDasharray={`${Math.max(0.01, ds.frac * c).toFixed(2)} ${c.toFixed(2)}`} transform="rotate(-90 6 6)" className={ds.state === "urgent" ? "aladj-deadline-pulse" : undefined} />
+      <circle cx="6" cy="6" r="2.2" fill={color} />
+    </svg>
+  );
+}
+
 // ---- Fenetre d'inscription a un moment jeux ----
 // Deux verrous se cumulent, le plus proche l'emporte :
 //   * 48 h APRES le debut du moment : plus aucun ajout possible (regle fixe) ;
@@ -5745,7 +5962,11 @@ function Navbar({ page, setPage, onAuth }) {
         </nav>
 
         {menu === "jeux" && (
-          <div role="menu" aria-label="Jeux" className="aladj-desktop-nav" style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 20,
+          /* (lot AQ) Centre par un conteneur pleine largeur, et non plus par
+             transform : l'animation popIn reecrivait transform et faisait
+             partir le panneau de la droite avant qu'il ne se recentre. */
+          <div className="aladj-desktop-nav" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, zIndex: 20, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+          <div role="menu" aria-label="Jeux" style={{ pointerEvents: "auto",
             width: 940, maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", background: "#fff", borderRadius: 32, padding: 22,
             boxShadow: "0 30px 70px rgba(12,31,48,.38), 0 0 0 1px rgba(18,41,63,.05)", animation: "popIn .16s ease" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
@@ -5797,6 +6018,7 @@ function Navbar({ page, setPage, onAuth }) {
                 })}
               </div>
             )}
+          </div>
           </div>
         )}
 
@@ -6670,6 +6892,22 @@ function Dice({ color, n, style }) {
    automatiquement fidèles à l'interface.
    ============================================================================= */
 // Encadré d'illustration d'une réponse du guide.
+/* (lot AQ) Demonstration du delai de validation pour le Guide : un moment
+   fictif, cree il y a cinq jours, a qui il reste 30 heures et 2 joueurs. */
+function DeadlineGuideDemo() {
+  const [demo] = useState(() => ({
+    deadline: new Date(Date.now() + 30 * 3600000).toISOString(),
+    createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+    min: 4, players: [{ id: "demo-1", name: "A" }, { id: "demo-2", name: "B" }], guests: [],
+  }));
+  return (
+    <div style={{ width: "100%", maxWidth: 460 }}>
+      <DeadlinePanel e={demo} />
+      <div style={{ display: "flex", justifyContent: "center" }}><DeadlineChip e={demo} /></div>
+    </div>
+  );
+}
+
 function Illu({ children, caption }) {
   return (
     <div style={{ margin: "12px 0 4px" }}>
@@ -7260,6 +7498,9 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Une case <b>« Moment jeux privé »</b> (décochée par défaut) permet de réserver le moment aux personnes que vous invitez — voir la question dédiée ci-dessous.</p>
             <p style={{ margin: "0 0 8px" }}>Le <b>nombre de joueurs maximum est obligatoire</b> : c'est lui qui ferme les inscriptions une fois la table complète. Si vous l'oubliez, un message vous le rappelle avant l'enregistrement — auparavant, la création échouait sur un message technique incompréhensible.</p>
             <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. De même, <b>toute désinscription prévient les autres participants</b>, en signalant le cas échéant que le minimum n'est plus atteint. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
+            <p style={{ margin: "8px 0 0" }}>Ce délai se lit <b>en un coup d'œil</b>. Sur la fiche du moment, une <b>table ronde</b> : le temps qui reste tourne autour du plateau, les inscrits y sont assis en <b>meeples verts</b>, les places encore à prendre attendent <b>en pointillés</b>. L'anneau est <b>ambre</b> tant que le délai court, passe au <b>rouge</b> et pulse doucement dans les <b>dernières 24 heures</b> (le compte à rebours affiche alors les secondes dans la dernière heure), devient <b>vert</b> dès que le minimum est atteint, et <b>noir</b> si le moment est annulé.</p>
+            <Illu caption="Exemple : 2 inscrits sur 4, un peu plus d'un jour pour trouver les 2 autres"><DeadlineGuideDemo /></Illu>
+            <p style={{ margin: "8px 0 0" }}>Sur les cartes de la liste et de l'accueil, un <b>double anneau</b> miniature résume la même chose : dehors le temps qui reste, dedans une case par joueur attendu, suivi du temps restant (« 1 j 6 h pour valider »). Dans le petit calendrier, un anneau entoure le point des moments dont le délai court.</p>
           </>,
         },
         {
@@ -7866,6 +8107,7 @@ function GuidePage() {
             <Illu caption="Les blocs que l'on peut ajouter à la suite de l'article">
               <MockBtn soft>Paragraphe</MockBtn><MockBtn soft>Intertitre</MockBtn><MockBtn soft>Image</MockBtn><MockBtn soft>Citation</MockBtn><MockBtn soft>Les + / les −</MockBtn><MockBtn soft>Fiche de jeu</MockBtn>
             </Illu>
+            <p style={{ margin: "8px 0 8px" }}><b>Insérer un bloc au milieu</b> : entre deux blocs (et tout en haut du texte), un petit rond <b style={{ color: C.teal }}>+</b> est posé sur un fil pointillé. Touchez-le : le bandeau « Insérer ici » s'ouvre à cet endroit précis, avec les mêmes choix. Le nouveau bloc prend place entre les deux, et la page vient se placer dessus, curseur prêt. Pratique pour glisser une photo entre deux paragraphes d'un article déjà écrit, sans l'ajouter en bas puis la remonter bloc après bloc.</p>
             <p style={{ margin: "8px 0 8px" }}>L'article <b>naît en brouillon</b> : vous seul le voyez (et vos co-auteurs si vous en invitez), pas même les administrateurs. Enregistrez autant de fois que vous voulez, relisez-le avec le bouton <b>« Aperçu »</b>, puis cliquez sur <b>« Publier »</b> quand il est prêt. Vous pouvez ensuite le corriger, ou le <b>repasser en brouillon</b>.</p>
             <p style={{ margin: 0 }}>Un filet de sécurité garde ce que vous écrivez <b>sur votre appareil, au fil de la frappe</b> : si la page se recharge ou si le téléphone se met en veille avant que vous ayez enregistré, votre texte vous est rendu à la réouverture de l'éditeur.</p>
           </>,
@@ -10773,6 +11015,52 @@ function MagAutoArea({ value, onText, placeholder, minRows = 3 }) {
   );
 }
 
+/* (lot AQ) Les types de blocs, en boutons : la barre « Ajouter à la suite »
+   en bas de l'article, et le bandeau du « + » entre deux blocs. */
+function MagBlockTypeBar({ onPick }) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {MAG_BLOCK_TYPES.map((t) => {
+        const TIcon = t.icon;
+        return (
+          <button key={t.type} type="button" onClick={() => onPick(t.type)} style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 11, cursor: "pointer",
+            fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, border: "1.5px solid #e6dcc9", background: "#fff", color: C.navy,
+          }}><TIcon size={15} color={C.teal} /> {t.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* (lot AQ) Le « + » glissé entre deux blocs. Discret (un fil et un petit
+   rond), toujours visible pour qu'on le trouve aussi au doigt ; il s'ouvre en
+   bandeau pour choisir quoi insérer à cet endroit précis — une photo entre
+   deux paragraphes, sans tout remonter depuis le bas. */
+function MagInsertSlot({ open, onToggle, onPick }) {
+  if (open) {
+    return (
+      <div style={{ background: "rgba(30,138,138,.07)", border: `2px dashed ${C.teal}66`, borderRadius: 14, padding: "10px 12px", animation: "popIn .14s ease" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5 }}>Insérer ici</span>
+          <button type="button" onClick={onToggle} title="Fermer" aria-label="Fermer" style={{ ...magIconBtn, marginLeft: "auto" }}><X size={14} /></button>
+        </div>
+        <MagBlockTypeBar onPick={onPick} />
+      </div>
+    );
+  }
+  return (
+    <div className="aladj-mag-slot" style={{ position: "relative", height: 22, margin: "-6px 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span aria-hidden="true" className="aladj-mag-slot-line" style={{ position: "absolute", left: 18, right: 18, top: "50%", borderTop: "2px dashed #e2d6c2" }} />
+      <button type="button" onClick={onToggle} title="Insérer un bloc ici" aria-label="Insérer un bloc ici" className="aladj-mag-slot-btn"
+        style={{ position: "relative", width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${C.teal}55`, background: "#fff", color: C.teal,
+          display: "grid", placeItems: "center", padding: 0, cursor: "pointer", boxShadow: "0 2px 6px rgba(18,41,63,.08)", transition: "transform .12s, background .12s" }}>
+        <Plus size={16} />
+      </button>
+    </div>
+  );
+}
+
 function MagBlockEditor({ b, index, total, games, onChange, onMove, onRemove }) {
   const t = magBlockType(b.type);
   const Icon = t.icon;
@@ -10939,6 +11227,26 @@ function MagEditor({ articleId, onClose, setToast }) {
   };
   const removeBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setDirty(true); };
   const addBlock = (type) => { setBlocks((bs) => [...bs, { id: magNewId(), type }]); setDirty(true); };
+  // (lot AQ) Insérer un bloc à un endroit précis : le « + » entre deux blocs.
+  // insertAt = position du « + » ouvert (0 = tout en haut), null = aucun.
+  const [insertAt, setInsertAt] = useState(null);
+  const [focusBlockId, setFocusBlockId] = useState(null);
+  const insertBlock = (type, at) => {
+    const nb = { id: magNewId(), type };
+    setBlocks((bs) => { const k = Math.max(0, Math.min(at, bs.length)); return [...bs.slice(0, k), nb, ...bs.slice(k)]; });
+    setInsertAt(null); setFocusBlockId(nb.id); setDirty(true);
+  };
+  // Le bloc tout juste inséré vient se placer sous les yeux, curseur dedans.
+  useEffect(() => {
+    if (!focusBlockId) return;
+    const el = typeof document !== "undefined" ? document.querySelector(`[data-mag-block="${focusBlockId}"]`) : null;
+    if (el) {
+      try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (err) { /* vieux navigateur */ }
+      const field = el.querySelector("textarea, input[type=text], input:not([type])");
+      if (field) { try { field.focus({ preventScroll: true }); } catch (err) { field.focus(); } }
+    }
+    setFocusBlockId(null);
+  }, [focusBlockId]);
 
   const coHits = useMemo(() => {
     const n = normTitle(coQuery);
@@ -11173,23 +11481,19 @@ function MagEditor({ articleId, onClose, setToast }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
             {blocks.map((b, i) => (
-              <MagBlockEditor key={b.id} b={b} index={i} total={blocks.length} games={games}
-                onChange={(patch) => changeBlock(b.id, patch)} onMove={(dir) => moveBlock(i, dir)} onRemove={() => removeBlock(b.id)} />
+              <React.Fragment key={b.id}>
+                {/* (lot AQ) Le « + » au-dessus de chaque bloc : on insère à cet endroit */}
+                <MagInsertSlot open={insertAt === i} onToggle={() => setInsertAt((v) => (v === i ? null : i))} onPick={(type) => insertBlock(type, i)} />
+                <div data-mag-block={b.id}>
+                  <MagBlockEditor b={b} index={i} total={blocks.length} games={games}
+                    onChange={(patch) => changeBlock(b.id, patch)} onMove={(dir) => moveBlock(i, dir)} onRemove={() => removeBlock(b.id)} />
+                </div>
+              </React.Fragment>
             ))}
           </div>
           <div style={{ marginTop: 12, background: "rgba(26,58,92,.04)", border: "2px dashed #d9cbb4", borderRadius: 16, padding: "12px 14px" }}>
             <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, color: C.navy, fontSize: 13.5, marginBottom: 8 }}>Ajouter à la suite</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {MAG_BLOCK_TYPES.map((t) => {
-                const TIcon = t.icon;
-                return (
-                  <button key={t.type} type="button" onClick={() => addBlock(t.type)} style={{
-                    display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 11, cursor: "pointer",
-                    fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13.5, border: "1.5px solid #e6dcc9", background: "#fff", color: C.navy,
-                  }}><TIcon size={15} color={C.teal} /> {t.label}</button>
-                );
-              })}
-            </div>
+            <MagBlockTypeBar onPick={addBlock} />
           </div>
 
           {/* Réglages réservés à l'auteur */}
@@ -14844,7 +15148,11 @@ function EventCardMini({ e, onOpen }) {
         <div style={{ marginTop: 12, height: 7, borderRadius: 99, background: "#eee4d2", overflow: "hidden" }}>
           <div style={{ height: "100%", width: `${e.max ? Math.min(100, (filled / e.max) * 100) : (reached ? 100 : (filled / Math.max(e.min, 1)) * 100)}%`, background: accent, transition: "width .4s" }} />
         </div>
-        <div style={{ fontSize: 12.5, color: "#9c8d79", marginTop: 8 }}>Proposée par {e.hostName}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <span style={{ fontSize: 12.5, color: "#9c8d79" }}>Proposée par {e.hostName}</span>
+          {/* (lot AQ) Le delai de validation, en double anneau */}
+          {e.deadline && <DeadlineChip e={e} compact />}
+        </div>
       </div>
     </button>
   );
@@ -14986,6 +15294,8 @@ function MomentCard({ e, onOpen, onJoin, onAuth }) {
           {when && tag(when, "rgba(232,163,23,.18)", "#7A5200")}
           {expired ? tag("Annulé — quorum non atteint", "#2B2B2B", "#fff")
             : tone.reached ? tag("Confirmé", "rgba(30,138,138,.14)", "#12605F") : tag(`En attente · ${Math.max(0, (e.min || 0) - filled)} de plus pour confirmer`, "rgba(181,40,58,.1)", C.red)}
+          {/* (lot AQ) Le delai de validation, en double anneau */}
+          {!expired && e.deadline && <DeadlineChip e={e} />}
           {e.online && tag("En ligne", "rgba(107,58,122,.12)", C.purple)}
           {e.isPrivate && tag(isEventDimmed(e, currentUser) ? "Privé · vue admin" : "Privé · sur invitation", "rgba(120,110,95,.14)", "#5e5346")}
         </div>
@@ -15097,7 +15407,7 @@ function MomentMiniCalendar({ cal, monthCursor, setMonthCursor, users, currentUs
               {bd.length > 0 && <span aria-hidden="true" style={{ position: "absolute", top: 1, right: 2, fontSize: 9, lineHeight: 1 }}>🎂</span>}
               {hasEv && (
                 <span style={{ position: "absolute", left: 0, right: 0, bottom: 4, display: "flex", justifyContent: "center", gap: 2 }}>
-                  {cell.events.slice(0, 3).map((ev) => <span key={ev.id} style={{ width: 6, height: 6, borderRadius: "50%", background: momentTone(ev, currentUser).c2 }} />)}
+                  {cell.events.slice(0, 3).map((ev) => <DeadlineCalendarDot key={ev.id} ev={ev} color={momentTone(ev, currentUser).c2} />)}
                 </span>
               )}
             </button>
@@ -15108,6 +15418,11 @@ function MomentMiniCalendar({ cal, monthCursor, setMonthCursor, users, currentUs
         <Legend color={C.teal} label="Confirmé" /><Legend color={C.red} label="En attente" />
         <Legend color={C.purple} label="En ligne, confirmé" /><Legend color={C.amber} label="En ligne, en attente" />
         <Legend color="#2B2B2B" label="Annulé" />{currentUser?.admin && <Legend color="#9A8F7E" label="Privé (vue admin)" />}
+      </div>
+      {/* (lot AQ) L'anneau autour d'un point : un delai de validation court. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12.5, color: "#6e6256" }}>
+        <svg width="14" height="14" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6" fill="none" stroke="rgba(232,163,23,.4)" strokeWidth="1.6" /><circle cx="6" cy="6" r="4.6" fill="none" stroke={C.amber} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="10 28.9" transform="rotate(-90 6 6)" /><circle cx="6" cy="6" r="2.2" fill={C.red} /></svg>
+        Anneau : temps restant pour atteindre le minimum
       </div>
       <p style={{ margin: "10px 2px 0", fontSize: 12.5, color: "#8a7c6a", lineHeight: 1.45 }}>
         {currentUser ? "Touchez un jour libre pour y proposer un moment jeux." : "Touchez un jour pour voir le moment jeux."}
@@ -15784,13 +16099,9 @@ function EventDetailModal({ e, onClose, onJoin, onRemove, onAuth }) {
               </span>
             </a>
           )}
-          {/* date limite */}
-          {deadlineStr && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: reached ? "rgba(30,138,138,.1)" : "rgba(232,163,23,.12)", borderRadius: 11, padding: "9px 14px", marginBottom: 16, fontSize: 13, color: reached ? C.teal : "#9a7b2a", fontWeight: 600 }}>
-              <Clock size={15} />
-              {expired ? "Le quorum n'a pas été atteint avant la fin du délai de validation : ce moment est annulé. Son créateur ou un admin peut prolonger le délai pour le réactiver." : reached ? "Quorum atteint, le moment jeux est maintenu." : `À valider avant le ${formatDateFr(deadlineStr.toISOString().slice(0,10))} à ${deadlineStr.toTimeString().slice(0,5)}`}
-            </div>
-          )}
+          {/* date limite — (lot AQ) la table ronde : le temps tourne autour
+              du plateau, les inscrits y sont assis, les places libres attendent */}
+          {deadlineStr && <DeadlinePanel e={e} />}
 
           {/* fenetre d'inscription */}
           {!expired && currentUser && signupCloseDate && (
@@ -26252,6 +26563,15 @@ export default function App() {
         @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
         @keyframes aladjLivePulse { 0%,100% { box-shadow: 0 0 0 3px rgba(181,40,58,.28); } 50% { box-shadow: 0 0 0 8px rgba(181,40,58,0); } }
         .aladj-spin { animation: spin 1s linear infinite; }
+        /* (lot AQ) Le « + » entre deux blocs du Mag : plus franc au survol. */
+        .aladj-mag-slot-btn:hover, .aladj-mag-slot-btn:focus-visible { background: #1E8A8A !important; color: #fff !important; transform: scale(1.12); }
+        .aladj-mag-slot:hover .aladj-mag-slot-line { border-top-color: rgba(30,138,138,.5) !important; }
+        /* (lot AQ) Delai de validation : un meeple s'assoit, l'urgence pulse. */
+        @keyframes aladjSeat { 0% { opacity: 0; transform: translateY(-9px) scale(.6); } 70% { opacity: 1; transform: translateY(1px) scale(1.08); } 100% { opacity: 1; transform: none; } }
+        .aladj-seat { transform-box: fill-box; transform-origin: 50% 100%; animation: aladjSeat .5s cubic-bezier(.3,1.4,.5,1) both; }
+        @keyframes aladjDeadlinePulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+        .aladj-deadline-pulse { animation: aladjDeadlinePulse 1.6s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .aladj-seat, .aladj-deadline-pulse { animation: none; } }
         /* (lot V) Etincelles du feu d'artifice des victoires cooperatives. */
         @keyframes aladjSpark {
           0%   { opacity: 0; transform: translate(0,0) scale(.4); }
