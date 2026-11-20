@@ -4052,23 +4052,25 @@ function isEventExpired(e) {
 }
 
 /* =============================================================================
-   (lot AQ) LE DELAI DE VALIDATION, EN IMAGE
+   (lot AQ, dessin revu au lot AR) LE DELAI DE VALIDATION, EN IMAGE
    Un moment jeux peut avoir une date limite : s'il n'a pas reuni son minimum
    de joueurs (le quorum) a temps, il est annule. Plutot qu'une ligne de texte,
-   on montre la course entre le temps qui file et les places a remplir :
-     * sur la fiche du moment, une TABLE RONDE : le temps restant tourne autour
-       du plateau, les inscrits sont assis en meeples colores, les places
-       encore libres restent en pointilles ;
-     * sur les cartes et dans le calendrier, un DOUBLE ANNEAU miniature :
-       dehors le temps, dedans une case par joueur attendu.
-   Quatre etats, une couleur chacun : en cours (ambre), urgent a moins de 24 h
-   (rouge, qui pulse doucement), maintenu (vert) et annule (noir). La regle
-   d'annulation reste celle d'isEventExpired : rien ne change sur le fond.
+   on montre une BOMBE A RETARDEMENT :
+     * la meche se consume a mesure que le temps file (de la creation du
+       moment jusqu'a sa date limite) ;
+     * l'ecran du boitier affiche le compte a rebours ;
+     * un voyant par joueur attendu : rouge qui clignote tant que la place est
+       libre, vert des qu'elle est prise.
+   Sur la fiche, la bombe en grand ; sur les cartes, la meme en miniature ;
+   dans le petit calendrier, un simple anneau autour du point (une bombe y
+   serait illisible). Quatre etats : en cours, urgent a moins de 24 h (boitier
+   cercle de rouge, chiffres qui clignotent), desamorce (quorum atteint :
+   batons verts et tampon) et annule (BOUM). La regle d'annulation reste celle
+   d'isEventExpired : rien ne change sur le fond.
    ============================================================================= */
-const MEEPLE_PATH = "M12 2a3.5 3.5 0 0 1 3.4 4.4c2.9.8 6.6 2.3 6.6 4.1 0 1.2-1.6 1.6-3.8 1.6l3.3 7.4c.3.7-.2 1.5-1 1.5h-4.6L12 16.5 8.1 21h-4.6c-.8 0-1.3-.8-1-1.5l3.3-7.4C3.6 12.1 2 11.7 2 10.5c0-1.8 3.7-3.3 6.6-4.1A3.5 3.5 0 0 1 12 2z";
 const DEADLINE_URGENT_MS = 24 * 3600 * 1000;
-// Au-dela, les places de la table se regroupent (une place dessinee vaut
-// alors plusieurs joueurs) : une table de 8 reste lisible, une de 15 non.
+// Au-dela, les voyants se regroupent (un voyant vaut alors plusieurs
+// joueurs) : 8 voyants restent lisibles sur le boitier, 15 non.
 const DEADLINE_MAX_SEATS = 8;
 const DEADLINE_TONES = {
   running: { arc: C.amber, ink: "#8a5a00", soft: "rgba(232,163,23,.13)", line: "rgba(232,163,23,.4)", table: "#FDF1DA", edge: "#B47A06" },
@@ -4130,51 +4132,173 @@ function useDeadlineNow(endMs) {
   return now;
 }
 
-/* Combien de places dessiner, et combien d'occupees. */
+/* Combien de voyants dessiner, et combien d'allumes en vert. */
 function deadlineSeats(ds) {
   const n = Math.min(ds.min, DEADLINE_MAX_SEATS);
   const taken = ds.min <= DEADLINE_MAX_SEATS ? Math.min(ds.filled, n) : Math.min(n, Math.round((ds.filled / ds.min) * n));
   return { n, taken };
 }
 
-/* ---- La table ronde (fiche du moment) ---- */
-function DeadlineRoundTable({ ds, size = 150 }) {
-  const t = DEADLINE_TONES[ds.state];
+/* ---- La bombe a retardement ---- */
+// La meche est une courbe de Bezier : on en garde le morceau qui reste a
+// bruler (de t a 1, par l'algorithme de De Casteljau) et l'etincelle se pose
+// au point t. Tout se calcule, aucune mesure dans la page n'est necessaire.
+const BOMB_FUSE = [[6, 26], [26, 46], [48, 4], [72, 33]];
+const BOMB_SPARK = "9,0 3.23,1.34 6.36,6.36 1.34,3.23 0,9 -1.34,3.23 -6.36,6.36 -3.23,1.34 -9,0 -3.23,-1.34 -6.36,-6.36 -1.34,-3.23 0,-9 1.34,-3.23 6.36,-6.36 3.23,-1.34";
+function bezierPoint(p, t) {
+  const u = 1 - t;
+  return [0, 1].map((k) => u * u * u * p[0][k] + 3 * u * u * t * p[1][k] + 3 * u * t * t * p[2][k] + t * t * t * p[3][k]);
+}
+function bezierTail(p, t) {
+  const lerp = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const a = lerp(p[0], p[1]), b = lerp(p[1], p[2]), c = lerp(p[2], p[3]);
+  const d = lerp(a, b), e = lerp(b, c);
+  return [lerp(d, e), e, c, p[3]];
+}
+function bezierPath(p) {
+  const f = (q) => `${q[0].toFixed(1)} ${q[1].toFixed(1)}`;
+  return `M${f(p[0])} C${f(p[1])} ${f(p[2])} ${f(p[3])}`;
+}
+/* Ce qu'affiche l'ecran : « 1j 06h », « 06:12 », puis « 12:05 » (minutes et
+   secondes) dans la derniere heure. « OFF » une fois desamorcee. */
+function bombDisplay(ds) {
+  if (ds.state === "reached") return "OFF";
+  if (ds.state === "expired") return "00:00";
+  const p = (x) => String(x).padStart(2, "0");
+  const s = Math.max(0, Math.floor(ds.left / 1000)), m = Math.floor(s / 60);
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  if (d > 0) return `${d}j ${p(h)}h`;
+  if (h > 0) return `${p(h)}:${p(m % 60)}`;
+  return `${p(m % 60)}:${p(s % 60)}`;
+}
+
+function DeadlineBomb({ ds, mini = false }) {
+  const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const reached = ds.state === "reached", expired = ds.state === "expired", urgent = ds.state === "urgent";
+  const live = !reached && !expired;
   const { n, taken } = deadlineSeats(ds);
-  const R = 44, circ = 2 * Math.PI * R;
-  const arcFrac = ds.state === "reached" ? 1 : ds.frac;
-  const big = ds.state === "reached" ? "Maintenu" : ds.state === "expired" ? "Annulé" : formatDeadlineLeft(ds.left, ds.left <= 3600000);
-  const small = ds.state === "reached" ? `${ds.filled} / ${ds.min}` : ds.state === "expired" ? `${ds.filled} / ${ds.min}` : "pour valider";
+  const disp = bombDisplay(ds);
+  const ghost = disp.replace(/\d/g, "8");
+  const hz = `aladj-hz-${uid}`;
+  const stickFill = reached ? "#1D9E75" : "#C8323F";
+  const caseEdge = urgent ? "#E24B4A" : "#1B252C";
+  const digit = reached ? "#5DCAA5" : "#FF5A5A";
+
+  // Un baton : relief (reflet, ombre), plis du papier, bouchon a chaque bout.
+  const stick = (x, y, w, h) => (
+    <g key={`s${y}`}>
+      <rect x={x} y={y} width={w} height={h} rx={h / 4} fill={stickFill} />
+      <rect x={x} y={y + h * 0.66} width={w} height={h * 0.34} rx={h / 5} fill="#000" opacity=".16" />
+      <rect x={x + h * 0.5} y={y + h * 0.14} width={w - h} height={h * 0.17} rx={h * 0.08} fill="#fff" opacity=".3" />
+      {[0.2, 0.82, 0.9].map((k) => <line key={k} x1={x + w * k} y1={y + 1} x2={x + w * k} y2={y + h - 1} stroke="#000" strokeWidth=".7" opacity=".14" />)}
+      <rect x={x} y={y} width={h * 0.42} height={h} rx={h / 4} fill="#F1E3C6" />
+      <rect x={x + h * 0.3} y={y} width={h * 0.12} height={h} fill="#000" opacity=".1" />
+      <circle cx={x + h * 0.2} cy={y + h / 2} r={h * 0.09} fill="#2C2C2A" opacity=".75" />
+      <rect x={x + w - h * 0.3} y={y} width={h * 0.3} height={h} rx={h / 4} fill="#000" opacity=".12" />
+    </g>
+  );
+  // Une sangle jaune rayee de noir.
+  const tape = (x, y, w, h) => (
+    <g key={`t${x}`}>
+      <rect x={x} y={y} width={w} height={h} rx="1.5" fill={`url(#${hz})`} />
+      <rect x={x} y={y} width={w * 0.3} height={h} rx="1" fill="#fff" opacity=".18" />
+      <rect x={x} y={y} width={w} height={h} rx="1.5" fill="none" stroke="#1F1F1F" strokeWidth={mini ? 0.6 : 0.9} />
+    </g>
+  );
+  const screw = (x, y, r) => (
+    <g key={`v${x}${y}`}>
+      <circle cx={x} cy={y} r={r} fill="#8A969E" />
+      <line x1={x - r * 0.6} y1={y} x2={x + r * 0.6} y2={y} stroke="#000" strokeWidth=".7" opacity=".55" />
+    </g>
+  );
+  // Un voyant par joueur attendu, centres sous l'ecran.
+  const leds = (cx, y, r, step) => Array.from({ length: n }).map((_, i) => {
+    const x = cx + (i - (n - 1) / 2) * step;
+    const on = i < taken;
+    return (
+      <g key={`l${i}`}>
+        <circle cx={x} cy={y} r={r * 1.4} fill="#111" stroke="#555" strokeWidth=".7" />
+        <circle cx={x} cy={y} r={r} fill={on ? "#5DCAA5" : "#E24B4A"} className={!on && live ? "aladj-bomb-blink" : undefined} />
+        <circle cx={x - r * 0.35} cy={y - r * 0.35} r={r * 0.3} fill="#fff" opacity=".55" />
+      </g>
+    );
+  });
+  const boom = (x, y, s) => (
+    <g transform={`translate(${x} ${y}) scale(${s})`}>
+      <g transform="scale(3)"><polygon points={BOMB_SPARK} fill="#EF9F27" /></g>
+      <g transform="scale(1.8) rotate(22)"><polygon points={BOMB_SPARK} fill="#FAC775" /></g>
+      <text y="4" textAnchor="middle" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 11, fill: "#791F1F" }}>BOUM</text>
+    </g>
+  );
+  const pattern = (
+    <defs>
+      <pattern id={hz} width={mini ? 4 : 7} height={mini ? 4 : 7} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width={mini ? 4 : 7} height={mini ? 4 : 7} fill="#F5C518" />
+        <rect width={mini ? 1.8 : 3.2} height={mini ? 4 : 7} fill="#1F1F1F" />
+      </pattern>
+    </defs>
+  );
+  const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontWeight: 700 };
+
+  if (mini) {
+    return (
+      <svg viewBox="0 0 96 46" width="100%" aria-hidden="true" style={{ display: "block", overflow: "visible" }}>
+        {pattern}
+        <ellipse cx="48" cy="43.5" rx="42" ry="2" fill="#000" opacity=".1" />
+        {stick(4, 5, 88, 11)}{stick(4, 17.5, 88, 11)}{stick(4, 30, 88, 11)}
+        {tape(11, 3, 6, 40)}{tape(79, 3, 6, 40)}
+        <rect x="21" y="5" width="54" height="36" rx="4" fill="#2F3B44" stroke={caseEdge} strokeWidth="1.3" />
+        {screw(24.5, 8.5, 1.3)}{screw(71.5, 8.5, 1.3)}
+        <rect x="25" y="9" width="46" height="18" rx="2" fill="#0E1A1F" />
+        <text x="48" y="22" textAnchor="middle" style={{ ...mono, fontSize: 11, fill: digit, opacity: 0.13 }}>{ghost}</text>
+        <text x="48" y="22" textAnchor="middle" className={urgent ? "aladj-bomb-blink" : undefined} style={{ ...mono, fontSize: 11, fill: digit }}>{disp}</text>
+        {leds(48, 34, n > 5 ? 1.5 : 1.9, Math.min(8, 40 / n))}
+        {expired && boom(48, 22, 0.55)}
+      </svg>
+    );
+  }
+
+  const f = 1 - ds.frac; // part de meche deja brulee
+  const t = Math.min(0.999, Math.max(0, f));
+  const [sx, sy] = bezierPoint(BOMB_FUSE, t);
   return (
-    <svg width={size} height={size} viewBox="0 0 150 150" role="img" aria-label={ds.state === "reached" ? "Quorum atteint" : ds.state === "expired" ? "Moment annulé" : `Encore ${formatDeadlineLeft(ds.left)} pour trouver ${ds.missing} joueur${ds.missing > 1 ? "s" : ""}`} style={{ flexShrink: 0, overflow: "visible" }}>
-      <circle cx="75" cy="75" r={R} fill="none" stroke={t.line} strokeWidth="7" opacity=".55" />
-      {arcFrac > 0 && (
-        <circle cx="75" cy="75" r={R} fill="none" stroke={t.arc} strokeWidth="7" strokeLinecap="round"
-          strokeDasharray={`${Math.max(0.01, arcFrac * circ)} ${circ}`} transform="rotate(-90 75 75)"
-          className={ds.state === "urgent" ? "aladj-deadline-pulse" : undefined} style={{ transition: "stroke-dasharray .6s ease" }} />
+    <svg viewBox="0 0 210 104" width="100%" aria-hidden="true" style={{ display: "block", overflow: "visible" }}>
+      {pattern}
+      <ellipse cx="139" cy="99" rx="72" ry="4" fill="#000" opacity=".1" />
+      {/* la meche : cendre en pointilles, puis ce qui reste a bruler */}
+      <path d={bezierPath(BOMB_FUSE)} fill="none" stroke="#B4B2A9" strokeWidth="3" strokeDasharray="2 4" strokeLinecap="round" />
+      {live && <path d={bezierPath(bezierTail(BOMB_FUSE, t))} fill="none" stroke="#854F0B" strokeWidth="4" strokeLinecap="round" />}
+      {stick(72, 22, 134, 20)}{stick(72, 44, 134, 20)}{stick(72, 66, 134, 20)}
+      {tape(86, 17, 9, 74)}{tape(190, 17, 9, 74)}
+      <path d="M103 38 C94 38 97 24 90 23" fill="none" stroke="#E24B4A" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M179 38 C188 38 186 24 194 23" fill="none" stroke="#378ADD" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M103 72 C93 74 96 88 90 90" fill="none" stroke="#EF9F27" strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="90" cy="23" r="1.8" fill="#C9C6BC" /><circle cx="194" cy="23" r="1.8" fill="#C9C6BC" /><circle cx="90" cy="90" r="1.8" fill="#C9C6BC" />
+      <rect x="102" y="25" width="78" height="57" rx="7" fill="#2F3B44" stroke={caseEdge} strokeWidth="2" />
+      <rect x="104.5" y="27.5" width="73" height="52" rx="5.5" fill="none" stroke="#fff" strokeWidth=".8" opacity=".1" />
+      {screw(107.5, 30.5, 2.2)}{screw(174.5, 30.5, 2.2)}{screw(107.5, 76.5, 2.2)}{screw(174.5, 76.5, 2.2)}
+      <rect x="109" y="34" width="64" height="27" rx="3" fill="#0E1A1F" stroke="#000" strokeWidth="1" />
+      <text x="141" y="53" textAnchor="middle" style={{ ...mono, fontSize: 14, fill: digit, opacity: 0.13 }}>{ghost}</text>
+      <text x="141" y="53" textAnchor="middle" className={urgent ? "aladj-bomb-blink" : undefined} style={{ ...mono, fontSize: 14, fill: digit }}>{disp}</text>
+      <rect x="111" y="35.5" width="60" height="5" rx="2" fill="#fff" opacity=".06" />
+      {leds(141, 71, n > 6 ? 2.4 : 3.1, Math.min(14, 60 / n))}
+      {live && (
+        <g transform={`translate(${sx.toFixed(1)} ${sy.toFixed(1)})`}>
+          <g className="aladj-fuse-spark"><polygon points={BOMB_SPARK} fill="#EF9F27" /><circle r="3.2" fill="#FAC775" /></g>
+        </g>
       )}
-      <circle cx="75" cy="75" r="34" fill={t.table} stroke={t.edge} strokeWidth="1.6" />
-      <circle cx="75" cy="75" r="29" fill="none" stroke={t.edge} strokeWidth=".8" strokeDasharray="2 3" opacity=".45" />
-      {ds.state === "reached" && <path d="M64 66 l7 7 l13 -14" fill="none" stroke={t.edge} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />}
-      <text x="75" y={ds.state === "reached" ? 89 : 77} textAnchor="middle" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: big.length > 8 ? 13 : 15, fill: t.ink }}>{big}</text>
-      {ds.state !== "reached" && <text x="75" y="91" textAnchor="middle" style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 700, fontSize: 10, fill: t.ink, opacity: .8 }}>{small}</text>}
-      {Array.from({ length: n }).map((_, i) => {
-        const a = (-90 + (360 * (i + 0.5)) / n) * Math.PI / 180;
-        const x = 75 + 62 * Math.cos(a) - 12, y = 75 + 62 * Math.sin(a) - 12;
-        const on = i < taken;
-        return (
-          <g key={i} transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}>
-            {on
-              ? <g className="aladj-seat" style={{ animationDelay: `${i * 90}ms` }}><path d={MEEPLE_PATH} fill={ds.state === "expired" ? "#9A8F7E" : C.teal} /></g>
-              : <path d={MEEPLE_PATH} fill="none" stroke={t.edge} strokeWidth="1.5" strokeDasharray="2.5 2" opacity=".85" />}
-          </g>
-        );
-      })}
+      {expired && boom(141, 54, 1)}
+      {reached && (
+        <g transform="translate(141 56) rotate(-8)">
+          <rect x="-46" y="-12" width="92" height="24" rx="5" fill="#E0F3F1" stroke="#1D9E75" strokeWidth="2.2" />
+          <text y="5" textAnchor="middle" style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 13, fill: "#0F6E56" }}>Désamorcé</text>
+        </g>
+      )}
     </svg>
   );
 }
 
-/* L'encart complet de la fiche : la table, et ce qu'elle veut dire en mots. */
+/* L'encart complet de la fiche : la bombe, et ce qu'elle veut dire en mots. */
 function DeadlinePanel({ e }) {
   const endMs = e && e.deadline ? new Date(e.deadline).getTime() : null;
   const now = useDeadlineNow(endMs);
@@ -4184,17 +4308,20 @@ function DeadlinePanel({ e }) {
   const plural = (k, w) => `${k} ${w}${k > 1 ? "s" : ""}`;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", background: t.soft, border: `1.5px solid ${t.line}`, borderRadius: 16, padding: "12px 16px", marginBottom: 16 }}>
-      <DeadlineRoundTable ds={ds} />
+      <div style={{ flex: "0 1 250px", minWidth: 190 }} role="img"
+        aria-label={ds.state === "reached" ? "Bombe désamorcée : quorum atteint" : ds.state === "expired" ? "Bombe explosée : moment annulé" : `Bombe à retardement : encore ${formatDeadlineLeft(ds.left)} pour trouver ${ds.missing} joueur${ds.missing > 1 ? "s" : ""}`}>
+        <DeadlineBomb ds={ds} />
+      </div>
       <div style={{ flex: "1 1 180px", minWidth: 0, color: C.navy }}>
         {ds.state === "expired" ? (
           <>
-            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Moment annulé</div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Boum : moment annulé</div>
             <div style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 4 }}>Le quorum n'a pas été atteint avant la fin du délai de validation ({formatDeadlineDate(ds.end)}). Son créateur ou un admin peut prolonger le délai pour le réactiver.</div>
           </>
         ) : ds.state === "reached" ? (
           <>
-            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Quorum atteint</div>
-            <div style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 4 }}>Le moment jeux est maintenu : {plural(ds.filled, "inscrit")} pour {ds.min} requis.</div>
+            <div style={{ fontFamily: "'Fredoka',sans-serif", fontWeight: 700, fontSize: 18, color: t.ink }}>Désamorcé !</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 4 }}>Quorum atteint : le moment jeux est maintenu ({plural(ds.filled, "inscrit")} pour {ds.min} requis).</div>
           </>
         ) : (
           <>
@@ -4208,29 +4335,7 @@ function DeadlinePanel({ e }) {
   );
 }
 
-/* ---- Le double anneau miniature (cartes et calendrier) ---- */
-function DeadlineMiniRing({ ds, size = 22 }) {
-  const t = DEADLINE_TONES[ds.state];
-  const { n, taken } = deadlineSeats(ds);
-  const R1 = 17, c1 = 2 * Math.PI * R1;
-  const R2 = 10, c2 = 2 * Math.PI * R2;
-  const gap = n > 1 ? 2.4 : 0;
-  const seg = c2 / n - gap;
-  const seats = `${seg.toFixed(2)} ${gap.toFixed(2)}`;
-  const takenDash = taken > 0 ? `${Array.from({ length: taken }).map(() => seats).join(" ")} ${Math.max(0.01, c2 - taken * (seg + gap)).toFixed(2)}` : `0 ${c2.toFixed(2)}`;
-  const rot = -90 + (gap / c2) * 180;
-  const arcFrac = ds.state === "reached" ? 1 : ds.frac;
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true" style={{ flexShrink: 0, display: "block" }}>
-      <circle cx="20" cy="20" r={R1} fill="none" stroke={t.line} strokeWidth="4.5" opacity=".6" />
-      {arcFrac > 0 && <circle cx="20" cy="20" r={R1} fill="none" stroke={t.arc} strokeWidth="4.5" strokeLinecap="round" strokeDasharray={`${Math.max(0.01, arcFrac * c1).toFixed(2)} ${c1.toFixed(2)}`} transform="rotate(-90 20 20)" className={ds.state === "urgent" ? "aladj-deadline-pulse" : undefined} />}
-      <circle cx="20" cy="20" r={R2} fill="none" stroke={t.line} strokeWidth="4.5" strokeDasharray={n > 1 ? seats : undefined} transform={`rotate(${rot.toFixed(2)} 20 20)`} opacity=".6" />
-      <circle cx="20" cy="20" r={R2} fill="none" stroke={ds.state === "expired" ? "#9A8F7E" : C.teal} strokeWidth="4.5" strokeDasharray={takenDash} transform={`rotate(${rot.toFixed(2)} 20 20)`} />
-    </svg>
-  );
-}
-
-/* Pastille des cartes : le double anneau et le temps qui reste. Seulement
+/* Pastille des cartes : la bombe miniature et le temps qui reste. Seulement
    tant que le delai court : « Confirmé » et « Annulé » ont deja leur etiquette. */
 function DeadlineChip({ e, compact }) {
   const endMs = e && e.deadline ? new Date(e.deadline).getTime() : null;
@@ -4240,9 +4345,9 @@ function DeadlineChip({ e, compact }) {
   const t = DEADLINE_TONES[ds.state];
   return (
     <span title={`Sans ${ds.missing} joueur${ds.missing > 1 ? "s" : ""} de plus, le moment sera annulé le ${formatDeadlineDate(ds.end)}`}
-      style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 26, padding: "0 10px 0 4px", borderRadius: 999, background: t.soft, boxShadow: `inset 0 0 0 1.5px ${t.line}`,
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, minHeight: 26, padding: "3px 11px 3px 5px", borderRadius: 12, background: t.soft, boxShadow: `inset 0 0 0 1.5px ${t.line}`,
         color: t.ink, fontFamily: "'Fredoka',sans-serif", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>
-      <DeadlineMiniRing ds={ds} size={compact ? 18 : 22} />
+      <span style={{ display: "block", width: compact ? 50 : 62, flexShrink: 0 }}><DeadlineBomb ds={ds} mini /></span>
       {formatDeadlineLeft(ds.left, ds.left <= 3600000)}{compact ? "" : " pour valider"}
     </span>
   );
@@ -7498,9 +7603,9 @@ function GuidePage() {
             <p style={{ margin: "0 0 8px" }}>Une case <b>« Moment jeux privé »</b> (décochée par défaut) permet de réserver le moment aux personnes que vous invitez — voir la question dédiée ci-dessous.</p>
             <p style={{ margin: "0 0 8px" }}>Le <b>nombre de joueurs maximum est obligatoire</b> : c'est lui qui ferme les inscriptions une fois la table complète. Si vous l'oubliez, un message vous le rappelle avant l'enregistrement — auparavant, la création échouait sur un message technique incompréhensible.</p>
             <p style={{ margin: 0 }}>Le <b>minimum de joueurs</b> définit le quorum : tant qu'il n'est pas atteint, le moment est « en attente ». Dès qu'il l'est, les inscrits reçoivent une notification — et une autre si on repasse en dessous. De même, <b>toute désinscription prévient les autres participants</b>, en signalant le cas échéant que le minimum n'est plus atteint. Si une <b>date limite de validation</b> a été fixée et qu'elle passe sans quorum, le moment devient <b>noir « annulé »</b> : plus aucune inscription ni action n'est possible, sauf pour son créateur ou un admin, qui peut prolonger le délai pour le réactiver.</p>
-            <p style={{ margin: "8px 0 0" }}>Ce délai se lit <b>en un coup d'œil</b>. Sur la fiche du moment, une <b>table ronde</b> : le temps qui reste tourne autour du plateau, les inscrits y sont assis en <b>meeples verts</b>, les places encore à prendre attendent <b>en pointillés</b>. L'anneau est <b>ambre</b> tant que le délai court, passe au <b>rouge</b> et pulse doucement dans les <b>dernières 24 heures</b> (le compte à rebours affiche alors les secondes dans la dernière heure), devient <b>vert</b> dès que le minimum est atteint, et <b>noir</b> si le moment est annulé.</p>
+            <p style={{ margin: "8px 0 0" }}>Ce délai se lit <b>en un coup d'œil</b>, sous la forme d'une <b>bombe à retardement</b>. Sur la fiche du moment, sa <b>mèche se consume</b> à mesure que le temps passe, l'<b>écran</b> affiche le compte à rebours (minutes et secondes dans la dernière heure) et <b>chaque voyant est un joueur attendu</b> : rouge clignotant tant que la place est libre, <b>vert</b> dès qu'elle est prise. Dans les <b>dernières 24 heures</b>, le boîtier se cercle de rouge et les chiffres clignotent. Dès que le minimum est atteint, les bâtons passent au vert et un tampon <b>« Désamorcé »</b> apparaît : le moment est maintenu. Si le délai expire sans quorum, c'est <b>« BOUM »</b> : le moment est annulé.</p>
             <Illu caption="Exemple : 2 inscrits sur 4, un peu plus d'un jour pour trouver les 2 autres"><DeadlineGuideDemo /></Illu>
-            <p style={{ margin: "8px 0 0" }}>Sur les cartes de la liste et de l'accueil, un <b>double anneau</b> miniature résume la même chose : dehors le temps qui reste, dedans une case par joueur attendu, suivi du temps restant (« 1 j 6 h pour valider »). Dans le petit calendrier, un anneau entoure le point des moments dont le délai court.</p>
+            <p style={{ margin: "8px 0 0" }}>Sur les cartes de la liste et de l'accueil, une <b>bombe miniature</b> reprend le même écran et les mêmes voyants, suivie du temps restant (« 1 j 6 h pour valider »). Dans le petit calendrier, un anneau entoure le point des moments dont le délai court.</p>
           </>,
         },
         {
@@ -26566,12 +26671,16 @@ export default function App() {
         /* (lot AQ) Le « + » entre deux blocs du Mag : plus franc au survol. */
         .aladj-mag-slot-btn:hover, .aladj-mag-slot-btn:focus-visible { background: #1E8A8A !important; color: #fff !important; transform: scale(1.12); }
         .aladj-mag-slot:hover .aladj-mag-slot-line { border-top-color: rgba(30,138,138,.5) !important; }
-        /* (lot AQ) Delai de validation : un meeple s'assoit, l'urgence pulse. */
-        @keyframes aladjSeat { 0% { opacity: 0; transform: translateY(-9px) scale(.6); } 70% { opacity: 1; transform: translateY(1px) scale(1.08); } 100% { opacity: 1; transform: none; } }
-        .aladj-seat { transform-box: fill-box; transform-origin: 50% 100%; animation: aladjSeat .5s cubic-bezier(.3,1.4,.5,1) both; }
+        /* (lot AR) Bombe du delai de validation : l'etincelle de la meche
+           crepite, voyants libres et chiffres de l'urgence clignotent. */
+        @keyframes aladjFuseSpark { from { transform: scale(1) rotate(0deg); } to { transform: scale(.7) rotate(20deg); } }
+        .aladj-fuse-spark { transform-box: fill-box; transform-origin: center; animation: aladjFuseSpark .35s ease-in-out infinite alternate; }
+        @keyframes aladjBombBlink { 50% { opacity: .25; } }
+        .aladj-bomb-blink { animation: aladjBombBlink 1s steps(2) infinite; }
+        /* (lot AQ) Anneau du petit calendrier : l'urgence pulse. */
         @keyframes aladjDeadlinePulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
         .aladj-deadline-pulse { animation: aladjDeadlinePulse 1.6s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .aladj-seat, .aladj-deadline-pulse { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .aladj-fuse-spark, .aladj-bomb-blink, .aladj-deadline-pulse { animation: none; } }
         /* (lot V) Etincelles du feu d'artifice des victoires cooperatives. */
         @keyframes aladjSpark {
           0%   { opacity: 0; transform: translate(0,0) scale(.4); }
